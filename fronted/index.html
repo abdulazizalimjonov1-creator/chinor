@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chinor — Kirish</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+    <main class="app-shell">
+
+        <div class="screen active" id="screenLogin">
+            <div class="login-card">
+                <div class="brand-block">
+                    <div class="logo-wrap">
+                        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" class="logo">
+                          <!-- Oq fon -->
+                          <circle cx="100" cy="100" r="100" fill="#ffffff"/>
+                          <!-- Qora chegara -->
+                          <circle cx="100" cy="100" r="95" fill="none" stroke="#1a1a1a" stroke-width="7"/>
+
+                          <!-- Maysazor (ot) -->
+                          <ellipse cx="100" cy="138" rx="42" ry="6" fill="#3d9142"/>
+                          <path d="M62 138 Q66 128 70 138" fill="#4caf50"/>
+                          <path d="M72 138 Q76 126 80 138" fill="#43a047"/>
+                          <path d="M82 138 Q86 129 90 138" fill="#4caf50"/>
+                          <path d="M92 138 Q96 127 100 138" fill="#43a047"/>
+                          <path d="M102 138 Q106 129 110 138" fill="#4caf50"/>
+                          <path d="M112 138 Q116 127 120 138" fill="#43a047"/>
+                          <path d="M122 138 Q126 130 130 138" fill="#4caf50"/>
+                          <path d="M132 138 Q136 128 140 138" fill="#43a047"/>
+
+                          <!-- Tana (poya) -->
+                          <rect x="91" y="105" width="18" height="36" rx="5" fill="#3d9142"/>
+                          <!-- Shox chap -->
+                          <path d="M100 110 Q80 100 72 85" stroke="#3d9142" stroke-width="8" fill="none" stroke-linecap="round"/>
+                          <!-- Shox o'ng -->
+                          <path d="M100 110 Q120 100 128 85" stroke="#3d9142" stroke-width="8" fill="none" stroke-linecap="round"/>
+                          <!-- Shox yuqori -->
+                          <path d="M100 110 Q98 92 100 78" stroke="#3d9142" stroke-width="7" fill="none" stroke-linecap="round"/>
+                          <!-- Kichik shoxlar -->
+                          <path d="M82 93 Q75 82 68 76" stroke="#3d9142" stroke-width="5" fill="none" stroke-linecap="round"/>
+                          <path d="M118 93 Q125 82 132 76" stroke="#3d9142" stroke-width="5" fill="none" stroke-linecap="round"/>
+
+                          <!-- Barg toji — asosiy katta dumaloq -->
+                          <circle cx="100" cy="72" r="38" fill="#4caf50"/>
+                          <!-- Yon barglar -->
+                          <circle cx="68"  cy="80" r="26" fill="#43a047"/>
+                          <circle cx="132" cy="80" r="26" fill="#43a047"/>
+                          <circle cx="78"  cy="55" r="22" fill="#4caf50"/>
+                          <circle cx="122" cy="55" r="22" fill="#4caf50"/>
+                          <circle cx="100" cy="44" r="22" fill="#66bb6a"/>
+                          <!-- Yorug'lik effekti -->
+                          <circle cx="88"  cy="58" r="12" fill="#81c784" opacity="0.6"/>
+                          <circle cx="112" cy="52" r="9"  fill="#a5d6a7" opacity="0.5"/>
+
+                          <!-- CHINOR yozuvi -->
+                          <text x="100" y="162" text-anchor="middle"
+                                font-family="Arial Black, Impact, sans-serif"
+                                font-size="22" font-weight="900"
+                                fill="#3d9142" letter-spacing="2">CHINOR</text>
+                          <!-- Telefon -->
+                          <text x="100" y="178" text-anchor="middle"
+                                font-family="Arial, sans-serif"
+                                font-size="13" font-weight="700"
+                                fill="#4caf50">77877-55-99</text>
+                        </svg>
+                    </div>
+                    <h1 class="brand-name">Chinor</h1>
+                    <p class="brand-subtitle">Xizmatlar va boshqaruv platformasi</p>
+                </div>
+
+                <form id="loginForm" novalidate autocomplete="on">
+                    <div class="form-group">
+                        <label for="loginInput">Login</label>
+                        <div class="input-wrap" id="loginWrap">
+                            <span class="input-icon">👤</span>
+                            <input type="text" id="loginInput" placeholder="Loginni kiriting" autocomplete="username" required autofocus>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="passwordInput">Parol</label>
+                        <div class="input-wrap" id="passwordWrap">
+                            <span class="input-icon">🔒</span>
+                            <input type="password" id="passwordInput" placeholder="Parolni kiriting" autocomplete="current-password" required>
+                            <button class="toggle-password" type="button" id="togglePassBtn" aria-label="Parolni ko'rsatish/yashirish">👁️</button>
+                        </div>
+                        <div class="password-strength" id="strengthBars"><span></span><span></span><span></span></div>
+                        <div class="strength-label" id="strengthLabel"></div>
+                    </div>
+
+                    <div class="login-options">
+                        <label class="remember">
+                            <input type="checkbox" id="rememberMe"> Eslab qolish
+                        </label>
+                        <a href="#" class="forgot-link" onclick="alert('Admin bilan bog\'laning: +998 99 123 45 67'); return false;">Parolni unutdingizmi?</a>
+                    </div>
+
+                    <button class="login-btn" type="submit" id="loginBtn">
+                        <span class="btn-text">Kirish</span>
+                        <span class="spinner"></span>
+                    </button>
+
+                    <div class="error-message" id="errorMessage">Xatolik yuz berdi</div>
+                </form>
+            </div>
+        </div>
+
+        <div class="screen" id="screenAdmin">
+            <div class="dash-header">
+                <div class="dash-user">
+                    <div class="dash-avatar" id="adminAvatar">A</div>
+                    <div class="dash-user-info">
+                        <h2 id="adminName">Admin</h2>
+                        <p><span class="dash-role-badge role-admin">Admin</span></p>
+                    </div>
+                </div>
+                <button class="dash-logout-btn" id="logoutBtnAdmin" title="Chiqish">🚪</button>
+            </div>
+            <div class="stats-row">
+                <div class="stat-card"><div class="stat-num" id="dashClients">—</div><div class="stat-label">Foydalanuvchilar</div></div>
+                <div class="stat-card"><div class="stat-num" id="dashOrders">—</div><div class="stat-label">Buyurtmalar</div></div>
+                <div class="stat-card"><div class="stat-num" id="dashRevenue">—</div><div class="stat-label">Obrorot so'm</div></div>
+            </div>
+            <h3 class="section-title">⚙️ Boshqaruv paneli</h3>
+            <div class="quick-grid">
+                <button class="quick-card card-red" onclick="handleAction('Foydalanuvchilar')"><span class="card-icon">👥</span><h4>Foydalanuvchilar</h4><p>Barcha foydalanuvchilar</p></button>
+                <button class="quick-card card-orange" onclick="openProducts('admin')"><span class="card-icon">📦</span><h4>Mahsulotlar</h4><p>Katalogni boshqarish</p></button>
+                <button class="quick-card card-green" onclick="handleAction('Buyurtmalar')"><span class="card-icon">📋</span><h4>Buyurtmalar</h4><p>Barcha buyurtmalar</p></button>
+                <button class="quick-card card-purple" onclick="openStats()"><span class="card-icon">📊</span><h4>Hisobotlar</h4><p>Moliyaviy tahlil</p></button>
+                <button class="quick-card card-blue" onclick="handleAction('Xodimlar')"><span class="card-icon">👔</span><h4>Xodimlar</h4><p>Xodimlar ro'yxati</p></button>
+                <button class="quick-card card-navy" onclick="handleAction('Sozlamalar')"><span class="card-icon">⚙️</span><h4>Sozlamalar</h4><p>Tizim sozlamalari</p></button>
+                <button class="quick-card card-teal full" onclick="openPOS()"><span class="card-icon">💸</span><h4>POS Sotuv tizimi</h4><p>Savdo operatsiyalarini boshqarish</p></button>
+            </div>
+        </div>
+
+        <div class="screen" id="screenClient">
+            <div class="dash-header">
+                <div class="dash-user">
+                    <div class="dash-avatar" id="clientAvatar">A</div>
+                    <div class="dash-user-info">
+                        <h2 id="clientName">Klient</h2>
+                        <p><span class="dash-role-badge role-client">Klient</span></p>
+                    </div>
+                </div>
+                <button class="dash-logout-btn" id="logoutBtnClient" title="Chiqish">🚪</button>
+            </div>
+            <div style="border-radius:24px;overflow:hidden;margin-bottom:18px;background:var(--primary-light);padding:28px 20px;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.04);">
+                <span style="font-size:48px;">🌳</span>
+                <h3 style="font-size:18px;font-weight:800;margin:8px 0 4px;">Chinor platformasiga xush kelibsiz!</h3>
+                <p style="font-size:13px;color:var(--muted);">Mahsulotlar, xizmatlar va aksiyalardan boxabar bo'ling</p>
+            </div>
+            <h3 class="section-title">🛍️ Asosiy bo'limlar</h3>
+            <div class="quick-grid">
+                <button class="quick-card card-green" onclick="openProducts('client')"><span class="card-icon">📦</span><h4>Mahsulotlar</h4><p>Katalogni ko'rish</p></button>
+                <button class="quick-card card-blue" onclick="handleAction('Xizmatlar')"><span class="card-icon">🛠️</span><h4>Xizmatlar</h4><p>Xizmat turlari</p></button>
+                <button class="quick-card card-orange" onclick="handleAction('Buyurtma berish')"><span class="card-icon">🛒</span><h4>Buyurtma berish</h4><p>Online buyurtma</p></button>
+                <button class="quick-card card-purple" onclick="handleAction('Aksiyalar')"><span class="card-icon">🔥</span><h4>Aksiyalar</h4><p>Chegirmalar</p></button>
+                <button class="quick-card card-teal" onclick="handleAction('Aloqa')"><span class="card-icon">📞</span><h4>Aloqa</h4><p>Biz bilan bog'lanish</p></button>
+                <button class="quick-card card-pink" onclick="openAccount()"><span class="card-icon">👤</span><h4>Mening hisobim</h4><p>Qarz, buyurtmalar</p></button>
+            </div>
+        </div>
+
+        <div class="screen" id="screenProducts">
+            <div class="list-header">
+                <button class="list-back" onclick="goBackFromList()">← Orqaga</button>
+                <h2 id="productsTitle">📦 Mahsulotlar</h2>
+                <button id="prodAddBtn" class="add-btn" onclick="openProductForm(0)" style="display:none">➕ Yangi</button>
+            </div>
+            <div class="search-bar">
+                <span class="search-ic">🔍</span>
+                <input type="text" id="productSearch" placeholder="Nom yoki shtrix-kod..." autocomplete="off">
+                <button id="productSearchClear" class="search-clear" style="display:none">✕</button>
+                <button class="scan-btn" onclick="scanInto('product')" title="Skaner">📷</button>
+            </div>
+            <div id="productsList" class="prod-list"></div>
+            <div id="productsStatus" class="list-status"></div>
+            <button id="productsMore" class="more-btn" style="display:none" onclick="loadMoreProducts()">Yana yuklash ↓</button>
+        </div>
+
+        <div class="screen" id="screenProdDetail">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenProducts')">← Orqaga</button>
+                <h2>📦 Mahsulot</h2>
+            </div>
+            <div id="prodDetailBody"></div>
+        </div>
+
+        <div class="screen" id="screenProdForm">
+            <div class="list-header">
+                <button class="list-back" onclick="prodFormBack()">← Orqaga</button>
+                <h2 id="prodFormTitle">✏️ Tahrirlash</h2>
+            </div>
+            <div class="form-card">
+                <div class="img-upload" id="prodImgWrap" onclick="pickProductImage()">
+                    <img id="prodImgPreview" alt="" style="display:none">
+                    <div id="prodImgPlaceholder">📷<br><span>Rasm yuklash</span></div>
+                </div>
+                <input type="file" id="prodImgInput" accept="image/*" style="display:none">
+                <label>Nomi *</label><input type="text" id="pfName" placeholder="Mahsulot nomi">
+                <label>Sotish narxi (so'm) *</label><input type="number" id="pfSell" inputmode="decimal" placeholder="0">
+                <label>Tannarxi (so'm)</label><input type="number" id="pfCost" inputmode="decimal" placeholder="0">
+                <label>Optom narxi (so'm)</label><input type="number" id="pfWhs" inputmode="decimal" placeholder="0 (ixtiyoriy)">
+                <div class="form-row">
+                    <div style="flex:1"><label>Miqdori</label><input type="number" id="pfQty" inputmode="decimal" placeholder="0"></div>
+                    <div style="width:110px"><label>O'lchov</label><select id="pfUnit"><option value="dona">dona</option><option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option><option value="m">m</option><option value="sm">sm</option></select></div>
+                </div>
+                <label>Shtrix-kod</label>
+                <div class="bc-row">
+                    <input type="text" id="pfBarcode" placeholder="Shtrix-kod raqami">
+                    <button type="button" class="scan-btn" onclick="scanIntoField('pfBarcode')">📷</button>
+                </div>
+                <label>Tavsifi</label><textarea id="pfDesc" rows="2" placeholder="(ixtiyoriy)"></textarea>
+                <button class="save-btn" id="pfSaveBtn" onclick="saveProduct()">💾 Saqlash</button>
+                <div id="pfStatus" class="list-status"></div>
+            </div>
+        </div>
+
+        <div class="screen" id="screenStats">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
+                <h2>📊 Statistika</h2>
+            </div>
+            <div id="statsBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
+        <div class="screen" id="screenAccount">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenClient')">← Orqaga</button>
+                <h2>👤 Mening hisobim</h2>
+            </div>
+            <div id="accountBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
+        <div class="screen" id="screenPOS">
+            <div class="list-header">
+                <button class="list-back" onclick="goBackFromPOS()">← Orqaga</button>
+                <h2>🧾 Kassa</h2>
+            </div>
+            <div class="search-bar">
+                <span class="search-ic">🔍</span>
+                <input type="text" id="posSearch" placeholder="Mahsulot nomi yoki kodi..." autocomplete="off">
+                <button id="posSearchClear" class="search-clear" style="display:none">✕</button>
+                <button class="scan-btn" onclick="scanInto('pos')" title="Skaner">📷</button>
+            </div>
+            <div id="posList" class="prod-list"></div>
+            <div id="posStatus" class="list-status"></div>
+            <button id="posMore" class="more-btn" style="display:none" onclick="loadMorePOS()">Yana yuklash ↓</button>
+            <div id="cartBar" class="cart-bar" style="display:none" onclick="openCart()">
+                <span id="cartBarCount">🛒 0 ta</span>
+                <span id="cartBarTotal">0 so'm</span>
+                <span class="cart-bar-go">Kassa →</span>
+            </div>
+        </div>
+
+        <div class="screen" id="screenCart">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenPOS')">← Mahsulotlar</button>
+                <h2>🛒 Savat</h2>
+            </div>
+            <div id="cartItems" class="prod-list"></div>
+            <div class="stat-block" id="cartCheckout" style="margin-top:14px;">
+                <div class="stat-row"><span class="lbl">Oraliq jami</span><span class="val" id="cartSubtotal">0 so'm</span></div>
+                <div class="stat-row">
+                    <span class="lbl">Chegirma (so'm)</span>
+                    <input type="number" id="cartDiscount" placeholder="0" style="width:120px;text-align:right;border:1px solid #e5e7eb;border-radius:10px;padding:7px 9px;font-size:14px;" oninput="updateCartTotals()">
+                </div>
+                <div class="stat-row"><span class="lbl">To'lash kerak</span><span class="val val-green" id="cartTotal">0 so'm</span></div>
+                <div style="display:flex;gap:10px;margin-top:14px;">
+                    <button class="pay-btn" id="payCashBtn" onclick="finishSale('cash')">💵 Naqd</button>
+                    <button class="pay-btn pay-card" id="payCardBtn" onclick="finishSale('card')">💳 Karta</button>
+                </div>
+                <button class="more-btn" style="margin-top:10px;background:#fee2e2;color:#b91c1c;" onclick="clearCart()">🗑 Savatni tozalash</button>
+            </div>
+            <div id="cartStatus" class="list-status"></div>
+        </div>
+
+        <div id="scanOverlay">
+            <div class="scan-top">
+                <span class="scan-title">📷 Kodni ramkaga tuting</span>
+                <button class="scan-close" onclick="stopScan()">✕ Yopish</button>
+            </div>
+            <div id="reader"></div>
+            <div class="scan-hint" id="scanHint">QR yoki shtrix-kodni kamera ramkasi ichiga joylang</div>
+        </div>
+
+        <div class="screen" id="screenRegister">
+            <div class="reg-card">
+                <button class="reg-back" id="regBackBtn">← Orqaga</button>
+                <div class="brand-block" style="margin-bottom:22px;">
+                    <h1 class="brand-name" style="font-size:22px;">Ro'yxatdan o'tish</h1>
+                    <p class="brand-subtitle">Yangi hisob yarating</p>
+                </div>
+                <form id="registerForm" novalidate>
+                    <div class="form-group"><label for="regLogin">Login</label>
+                        <div class="input-wrap" id="regLoginWrap"><span class="input-icon">👤</span><input type="text" id="regLogin" placeholder="Loginni kiriting" required></div>
+                    </div>
+                    <div class="form-group"><label for="regName">Ismingiz</label>
+                        <div class="input-wrap"><span class="input-icon">✏️</span><input type="text" id="regName" placeholder="Ismingizni kiriting" required></div>
+                    </div>
+                    <div class="form-group"><label for="regPhone">Telefon raqam</label>
+                        <div class="input-wrap"><span class="input-icon">📱</span><input type="tel" id="regPhone" placeholder="+998 XX XXX XX XX" required></div>
+                    </div>
+                    <div class="form-group"><label for="regPassword">Parol</label>
+                        <div class="input-wrap" id="regPassWrap"><span class="input-icon">🔒</span><input type="password" id="regPassword" placeholder="Parolni kiriting" required>
+                        <button class="toggle-password" type="button" id="toggleRegPassBtn">👁️</button></div>
+                    </div>
+                    <div class="form-group"><label for="regPasswordConfirm">Parolni takrorlang</label>
+                        <div class="input-wrap" id="regPassConfirmWrap"><span class="input-icon">🔒</span><input type="password" id="regPasswordConfirm" placeholder="Parolni qayta kiriting" required></div>
+                    </div>
+                    <button class="login-btn" type="submit" id="regBtn"><span class="btn-text">Ro'yxatdan o'tish</span><span class="spinner"></span></button>
+                    <div class="error-message" id="regErrorMessage">Xatolik</div>
+                </form>
+                <div class="reg-success" id="regSuccess">
+                    <div class="icon">✅</div>
+                    <h3>Muvaffaqiyatli ro'yxatdan o'tdingiz!</h3>
+                    <p>Endi login va parolingiz bilan tizimga kirishingiz mumkin</p>
+                    <button class="login-btn" onclick="showScreen('screenLogin')">Kirish</button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+    <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
+    <script src="app.js"></script>
+</body>
+</html>

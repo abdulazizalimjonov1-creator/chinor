@@ -1,0 +1,1144 @@
+"""HTTPS API qatlami — Mini App login uchun aiohttp serveri.
+
+Bu modul bot bilan birgalikda (`main.py`) ishga tushadi va Mini App'ga
+quyidagi endpoint'larni taqdim etadi:
+
+  POST /api/login    — login+password+initData → {ok, role, user}
+  GET  /api/health   — server tirikmi tekshirish
+
+Xavfsizlik:
+  • Telegram `initData` HMAC-SHA256 imzo bilan tekshiriladi (sender'ning
+    haqiqiy Telegram foydalanuvchi ekanligini Telegram tasdiqlaydi).
+  • Parol PBKDF2-SHA256 bilan tekshiriladi.
+  • Rate limit (`attempt_tracker`) — bot ichidagi va API'dagi urinishlar
+    birgalikda hisoblanadi.
+  • Strict telegram_id binding — hisob boshqa TG ID ga biriktirilgan
+    bo'lsa, API kirishni rad qiladi.
+  • CORS — faqat sozlangan origin (Netlify) ga ruxsat.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import mimetypes
+import json as _json
+import sqlite3
+import logging
+import secrets
+from urllib.parse import urlparse
+from aiohttp import web
+
+from bot.auth import (
+    verify_login, attempt_tracker, verify_telegram_init_data,
+    LoginAttemptTracker,
+)
+from bot.config import BOT_TOKEN, CORS_ALLOW_ORIGIN, GLAVNIY_ADMIN_ID, CHANNEL_ID
+
+logger = logging.getLogger(__name__)
+
+ROUTES = web.RouteTableDef()
+
+# Session token store — SQLite'ga yoziladi, bot qayta ishganda ham saqlanadi
+_SESSION_TTL = 1800  # 30 daqiqa
+
+def _sess_db() -> sqlite3.Connection:
+    from database._helpers import DB_PATH
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE IF NOT EXISTS web_sessions (
+        token TEXT PRIMARY KEY,
+        data  TEXT NOT NULL,
+        expires REAL NOT NULL
+    )""")
+    conn.commit()
+    return conn
+
+def _create_session(auth: dict) -> str:
+    """Yangi session token yaratib, SQLite'ga saqlaydi."""
+    token = secrets.token_urlsafe(32)
+    expires = time.time() + _SESSION_TTL
+    conn = _sess_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO web_sessions(token, data, expires) VALUES(?,?,?)",
+            (token, _json.dumps(auth), expires)
+        )
+        conn.execute("DELETE FROM web_sessions WHERE expires < ?", (time.time(),))
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+def _check_session(token: str) -> dict | None:
+    """Token haqiqiy va muddati o'tmagan bo'lsa auth dict qaytaradi."""
+    if not token:
+        return None
+    conn = _sess_db()
+    try:
+        row = conn.execute(
+            "SELECT data, expires FROM web_sessions WHERE token=?", (token,)
+        ).fetchone()
+        if not row:
+            return None
+        if row["expires"] < time.time():
+            conn.execute("DELETE FROM web_sessions WHERE token=?", (token,))
+            conn.commit()
+            return None
+        return _json.loads(row["data"])
+    finally:
+        conn.close()
+
+# Mini App orqali yuklangan mahsulot rasmlari shu papkada saqlanadi
+UPLOAD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"
+)
+UPLOAD_DIR = os.path.realpath(UPLOAD_DIR)  # Absolute path for security
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+# ─── CORS middleware ────────────────────────────────────────────────────────
+
+def _is_origin_allowed(origin: str, request: "web.Request | None" = None) -> bool:
+    """Origin whitelist tekshiruvi. CORS_ALLOW_ORIGIN'ni whitelist sifatida
+    qabul qilamiz (vergul bilan ajratilgan).
+    Qo'shimcha: ngrok, localhost va so'rovning o'z hosti avtomatik ruxsat."""
+    if not origin:
+        return False
+
+    # Same-host: so'rov qaysi hostga kelsa, o'sha origin avtomatik ruxsat
+    if request is not None:
+        req_host = request.host or ""  # "example.ngrok-free.app" yoki "localhost:8765"
+        origin_host = origin.split("://")[-1].rstrip("/")
+        if req_host and origin_host == req_host:
+            return True
+
+    # ngrok domenlarini avtomatik ruxsat (*.ngrok-free.app, *.ngrok.io)
+    origin_clean = origin.split("://")[-1].rstrip("/")
+    if origin_clean.endswith(".ngrok-free.app") or origin_clean.endswith(".ngrok.io") \
+            or origin_clean.endswith(".ngrok-free.dev"):
+        return True
+
+    # localhost (local test)
+    if origin_clean.startswith("localhost") or origin_clean.startswith("127.0.0.1"):
+        return True
+
+    allowed = (CORS_ALLOW_ORIGIN or "").strip()
+    if not allowed:
+        return False
+    if allowed == "*":
+        return True
+    # Vergul bilan ajratilgan domenlar (explicit whitelist)
+    for domain in allowed.split(","):
+        domain = domain.strip()
+        if domain == origin:
+            return True
+        if origin.endswith(domain):
+            return True
+    return False
+
+
+def _cors_headers(request: web.Request = None) -> dict:
+    """CORS sarlavhalari. Faqat whitelist'dagi origin'larga ruxsat."""
+    req_origin = ""
+    if request is not None:
+        req_origin = request.headers.get("Origin", "") or ""
+    
+    # /api/img/* endpoint'lar uchun public resource — CORS permissive
+    req_path = request.path if request else ""
+    if req_path.startswith("/api/img/"):
+        # Rasm public resource — barcha origin'lardan access
+        allow = req_origin if req_origin else "*"
+    elif _is_origin_allowed(req_origin, request):
+        allow = req_origin
+    else:
+        # Protected endpoint — Origin header bo'sh bo'lsa ruxsat bermaydi
+        allow = ""
+    
+    return {
+        "Access-Control-Allow-Origin": allow,
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers":
+            "Content-Type, ngrok-skip-browser-warning, X-Telegram-Init-Data, X-Session-Token",
+        "Access-Control-Max-Age": "86400",
+        "Vary": "Origin",
+    }
+
+
+@web.middleware
+async def cors_middleware(request: web.Request, handler):
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=_cors_headers(request))
+    try:
+        resp = await handler(request)
+        # ✅ CORS headers'ni successful response'larni qo'sh!
+        resp.headers.update(_cors_headers(request))
+        return resp
+    except web.HTTPException as e:
+        # Allow CORS even on HTTP exceptions
+        e.headers.update(_cors_headers(request))
+        raise
+    except Exception:
+        body = _json.dumps({"ok": False, "error": "server error"})
+        return web.Response(
+            status=500, body=body, content_type="application/json",
+            headers=_cors_headers(request)
+        )
+    for k, v in _cors_headers(request).items():
+        resp.headers[k] = v
+    return resp
+
+
+# ─── Autentifikatsiya yordamchisi (har so'rovda initData orqali) ────────────
+
+async def _authenticate(request: web.Request, db):
+    """Har bir himoyalangan so'rov uchun: session token yoki initData ni
+    tekshirib, foydalanuvchini (admin yoki mijoz) va rolini aniqlaydi.
+
+    Autentifikatsiya tartibi:
+      1. X-Session-Token header (login'dan keyin saqlanadi)
+      2. X-Telegram-Init-Data header
+      3. GET query: ?initData=...
+      4. POST body (JSON): {"initData": "..."}
+
+    Qaytaradi:
+      None — autentifikatsiya muvaffaqiyatsiz
+      {"role": "admin"|"client", "tg_id": int, "user": dict, "is_glavniy": bool}
+    """
+    # 1) Session token orqali (eng tez, login'dan keyin ishlaydi)
+    session_token = request.headers.get("X-Session-Token", "") or ""
+    if session_token:
+        auth = _check_session(session_token)
+        if auth:
+            return auth
+
+    init_data = request.headers.get("X-Telegram-Init-Data", "") or ""
+    if not init_data:
+        init_data = request.query.get("initData", "") or ""
+    if not init_data and request.method == "POST":
+        try:
+            body = await request.json()
+            init_data = body.get("initData", "") or ""
+            request["_json_body"] = body   # keyin qayta o'qimaslik uchun kesh
+        except Exception:
+            pass
+    parsed = verify_telegram_init_data(init_data, BOT_TOKEN)
+    if not parsed:
+        return None
+    try:
+        tg_id = int((parsed.get("user") or {}).get("id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    if not tg_id:
+        return None
+
+    is_glavniy = (tg_id == GLAVNIY_ADMIN_ID)
+    if is_glavniy or await db.is_admin(tg_id):
+        admin = await db.get_admin(tg_id)
+        return {
+            "role": "admin", "tg_id": tg_id,
+            "user": admin or {"telegram_id": tg_id, "full_name": "Admin"},
+            "is_glavniy": is_glavniy,
+        }
+    client = await db.get_client_by_tg(tg_id)
+    if client:
+        return {"role": "client", "tg_id": tg_id, "user": client,
+                "is_glavniy": False}
+    return None
+
+
+async def _read_json(request: web.Request) -> dict:
+    """Body JSON ni keshlangan holatdan yoki qaytadan o'qiydi."""
+    if "_json_body" in request:
+        return request["_json_body"]
+    try:
+        return await request.json()
+    except Exception:
+        return {}
+
+
+def _err(msg: str, status: int = 400):
+    return web.json_response({"ok": False, "error": msg}, status=status)
+
+
+# ─── Narx hisoblash (rolga qarab) ───────────────────────────────────────────
+
+def _price_pair(p: dict, ctype: str) -> tuple:
+    """(USD, so'm) — mijoz turiga qarab dona yoki optom narxi."""
+    if str(ctype).startswith("opt"):
+        whs_usd = float(p.get("wholesale_price_usd", 0) or 0)
+        whs_sum = float(p.get("wholesale_price", 0) or 0)
+        if whs_usd > 0 or whs_sum > 0:
+            return whs_usd, whs_sum
+    return float(p.get("sell_price_usd", 0) or 0), float(p.get("sell_price", 0) or 0)
+
+
+def _product_json(p: dict, role: str, ctype: str) -> dict:
+    usd, summ = _price_pair(p, ctype)
+    out = {
+        "id": p["id"],
+        "name": p.get("name", ""),
+        "description": p.get("description", ""),
+        "qty": float(p.get("qty", 0) or 0),
+        "unit": p.get("unit", "dona"),
+        "barcode": p.get("barcode", "") or "",
+        "price_usd": usd,
+        "price_sum": summ,
+        "image_url": p.get("image_url", "") or "",
+        "has_image": bool(p.get("image_file_id") or p.get("image_url")),
+    }
+    if role == "admin":
+        # Admin'ga tannarx va optom ham ko'rinadi
+        out["cost_price_sum"] = float(p.get("cost_price", 0) or 0)
+        out["cost_price_usd"] = float(p.get("cost_price_usd", 0) or 0)
+        out["wholesale_sum"] = float(p.get("wholesale_price", 0) or 0)
+        out["wholesale_usd"] = float(p.get("wholesale_price_usd", 0) or 0)
+        out["sell_price_sum"] = float(p.get("sell_price", 0) or 0)
+        out["sell_price_usd"] = float(p.get("sell_price_usd", 0) or 0)
+    return out
+
+
+# ─── Health ─────────────────────────────────────────────────────────────────
+
+@ROUTES.get("/api/health")
+async def health(request: web.Request):
+    return web.json_response({"ok": True, "service": "pos-bot-api"})
+
+
+# ─── Joriy foydalanuvchi ────────────────────────────────────────────────────
+
+@ROUTES.get("/api/me")
+async def api_me(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    u = auth["user"]
+    role = auth["role"]
+    rate = _db.get_usd_rate()
+    data = {
+        "ok": True,
+        "role": role,
+        "is_glavniy": auth.get("is_glavniy", False),
+        "rate": rate,
+    }
+    if role == "admin":
+        data["name"] = u.get("full_name") or u.get("username") or "Admin"
+        data["admin_role"] = u.get("role", "full")
+    else:
+        data["name"] = u.get("shop_name") or u.get("username") or "Mijoz"
+        data["client_type"] = (u.get("client_type") or "dona").lower()
+        data["debt_sum"] = float(u.get("debt", 0) or 0)
+        data["debt_usd"] = float(u.get("debt_usd", 0) or 0)
+    return web.json_response(data)
+
+
+# ─── Mahsulotlar ────────────────────────────────────────────────────────────
+
+@ROUTES.get("/api/products")
+async def api_products(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    role = auth["role"]
+    ctype = "dona"
+    if role == "client":
+        ctype = (auth["user"].get("client_type") or "dona").lower()
+
+    q = (request.query.get("q") or "").strip()
+    try:
+        page = max(0, int(request.query.get("page", "0") or 0))
+    except ValueError:
+        page = 0
+    page_size = 20
+
+    if q:
+        prods = await _db.search_products(q, limit=200)
+        # qidiruvni jurnalga yozamiz (AI analitika uchun)
+        try:
+            await _db.log_search(auth["tg_id"], q, len(prods),
+                                  source=f"miniapp_{role}")
+        except Exception:
+            pass
+    else:
+        prods = await _db.get_all_products(active_only=True)
+        # Mijozga faqat qoldig'i borlar; adminga hammasi
+        if role == "client":
+            prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
+
+    total = len(prods)
+    start = page * page_size
+    page_items = prods[start:start + page_size]
+    items = [_product_json(p, role, ctype) for p in page_items]
+    return web.json_response({
+        "ok": True,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": (start + page_size) < total,
+        "rate": _db.get_usd_rate(),
+        "role": role,
+        "items": items,
+    })
+
+
+@ROUTES.get(r"/api/product/{pid:\d+}")
+async def api_product_detail(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        pid = int(request.match_info["pid"])
+    except (KeyError, ValueError):
+        return _err("Noto'g'ri ID")
+    p = await _db.get_product_any(pid)
+    if not p or not p.get("is_active", 1):
+        return _err("Mahsulot topilmadi", 404)
+    role = auth["role"]
+    ctype = "dona"
+    if role == "client":
+        ctype = (auth["user"].get("client_type") or "dona").lower()
+    return web.json_response({"ok": True, "product": _product_json(p, role, ctype)})
+
+
+# ─── Mahsulot CRUD (admin) ──────────────────────────────────────────────────
+
+async def _admin_guard(request, db, perm):
+    """Admin + ruxsat tekshiruvi. (auth, error_response) qaytaradi."""
+    from bot.permissions import has_permission
+    auth = await _authenticate(request, db)
+    if not auth:
+        return None, _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return None, _err("Faqat adminlar uchun", 403)
+    if not await has_permission(db, auth["tg_id"], perm):
+        return None, _err("Bu amal uchun ruxsat yo'q", 403)
+    return auth, None
+
+
+def _to_float(v, default=0.0):
+    try:
+        return float(str(v).replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+
+
+@ROUTES.post("/api/product/save")
+async def api_product_save(request: web.Request):
+    """Yangi mahsulot qo'shadi (id=0) yoki mavjudini tahrirlaydi.
+    Narxlar SO'M da keladi (admin so'mda kiritadi) — USD kanonik qiymat
+    joriy kurs bo'yicha hisoblanadi."""
+    from database.channel_db import db as _db
+    from database._helpers import sum_to_usd
+    body = await _read_json(request)
+    pid = int(body.get("id") or 0)
+    perm = "products_edit" if pid else "products_add"
+    auth, err = await _admin_guard(request, _db, perm)
+    if err:
+        return err
+
+    name = (body.get("name") or "").strip()
+    if not name:
+        return _err("Mahsulot nomi bo'sh")
+    rate = _db.get_usd_rate()
+    sell_sum = _to_float(body.get("sell_price_sum"))
+    cost_sum = _to_float(body.get("cost_price_sum"))
+    whs_sum  = _to_float(body.get("wholesale_sum"))
+    qty      = _to_float(body.get("qty"))
+    unit     = (body.get("unit") or "dona").strip() or "dona"
+    barcode  = (body.get("barcode") or "").strip()
+    desc     = (body.get("description") or "").strip()
+    cat_id   = int(body.get("category_id") or 0)
+    sup_id   = int(body.get("supplier_id") or 0)
+
+    sell_usd = round(sum_to_usd(sell_sum, rate), 4) if sell_sum else 0
+    cost_usd = round(sum_to_usd(cost_sum, rate), 4) if cost_sum else 0
+    whs_usd  = round(sum_to_usd(whs_sum, rate), 4) if whs_sum else 0
+
+    # Shtrix-kod boshqa mahsulotda bormi?
+    if barcode:
+        ex = await _db.get_product_by_barcode(barcode)
+        if ex and ex.get("id") != pid:
+            return _err(f"Bu shtrix-kod «{ex['name']}» da bor", 409)
+
+    if pid:
+        p = await _db.get_product_any(pid)
+        if not p:
+            return _err("Mahsulot topilmadi", 404)
+        await _db.update_product(
+            pid, name=name, description=desc,
+            sell_price_usd=sell_usd, cost_price_usd=cost_usd,
+            wholesale_price_usd=whs_usd,
+            qty=qty, unit=unit, barcode=barcode,
+            category_id=cat_id, supplier_id=sup_id,
+        )
+        new_id = pid
+    else:
+        new_id = await _db.add_product(
+            name=name, description=desc,
+            sell_price_usd=sell_usd, cost_price_usd=cost_usd,
+            qty=qty, unit=unit, wholesale_price_usd=whs_usd,
+            barcode=barcode, category_id=cat_id, supplier_id=sup_id,
+        )
+    p = await _db.get_product_any(new_id)
+    return web.json_response({"ok": True, "id": new_id,
+                              "product": _product_json(p, "admin", "dona")})
+
+
+@ROUTES.post("/api/product/qty")
+async def api_product_qty(request: web.Request):
+    """Prixod — mavjud qoldiqqa qo'shadi (yoki ayiradi)."""
+    from database.channel_db import db as _db
+    auth, err = await _admin_guard(request, _db, "products_qty")
+    if err:
+        return err
+    body = await _read_json(request)
+    pid = int(body.get("id") or 0)
+    delta = _to_float(body.get("delta"))
+    if not pid or delta == 0:
+        return _err("ID yoki miqdor noto'g'ri")
+    p = await _db.get_product_any(pid)
+    if not p:
+        return _err("Mahsulot topilmadi", 404)
+    await _db.change_qty(pid, delta)
+    p = await _db.get_product_any(pid)
+    return web.json_response({"ok": True, "qty": float(p.get("qty", 0) or 0)})
+
+
+@ROUTES.post("/api/product/delete")
+async def api_product_delete(request: web.Request):
+    from database.channel_db import db as _db
+    auth, err = await _admin_guard(request, _db, "products_del")
+    if err:
+        return err
+    body = await _read_json(request)
+    pid = int(body.get("id") or 0)
+    if not pid:
+        return _err("ID yo'q")
+    await _db.deactivate_product(pid)
+    return web.json_response({"ok": True})
+
+
+@ROUTES.post("/api/product/image")
+async def api_product_image(request: web.Request):
+    """Mahsulot rasmini yuklaydi (multipart). image_url ni saqlaydi."""
+    from database.channel_db import db as _db
+    # Multipart bo'lgani uchun initData header orqali keladi
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err:
+        logger.warning(f"📸 products_edit ruxsati yo'q: {err}")
+        # Yangi mahsulotga rasm qo'yishda products_add ham bo'lishi mumkin
+        auth2, err2 = await _admin_guard(request, _db, "products_add")
+        if err2:
+            logger.warning(f"📸 products_add ruxsati yo'q: {err2}")
+            return err2
+        auth = auth2
+
+    pid = 0
+    file_bytes = None
+    fname_in = "photo.jpg"
+    try:
+        post = await request.post()   # multipart'ni xotiraga o'qiydi (oddiy, ishonchli)
+        pid = int(post.get("id") or 0)
+        field = post.get("photo")
+        if field is not None:
+            # aiohttp FileField: .file (fayl-obyekt), .filename
+            if hasattr(field, "file"):
+                fname_in = (getattr(field, "filename", None) or "photo.jpg")
+                file_bytes = field.file.read()
+            elif isinstance(field, (bytes, bytearray)):
+                file_bytes = bytes(field)
+    except Exception as e:
+        logger.error(f"📸 Faylni o'qib bo'lmadi: {e}")
+        return _err(f"Faylni o'qib bo'lmadi: {e}", 400)
+
+    if not file_bytes:
+        logger.warning("📸 Rasm topilmadi (photo maydoni bo'sh)")
+        return _err("Rasm topilmadi (photo maydoni bo'sh)")
+    logger.info(f"📸 Rasm o'qildi: {fname_in} ({len(file_bytes)} bytes)")
+    if len(file_bytes) > 25 * 1024 * 1024:
+        logger.warning(f"📸 Rasm juda katta: {len(file_bytes)} bytes")
+        return _err("Rasm 25MB dan katta")
+
+    # Kengaytmani aniqlaymiz (iPhone HEIC ham bo'lishi mumkin)
+    fn = (fname_in or "photo.jpg").lower()
+    file_ext = ".jpg"
+    for e in (".png", ".jpeg", ".jpg", ".webp", ".gif", ".heic", ".heif"):
+        if fn.endswith(e):
+            file_ext = ".jpg" if e == ".jpeg" else e
+            break
+
+    fname = f"prod_{pid or 'new'}_{int(time.time())}{file_ext}"
+    fpath = os.path.join(UPLOAD_DIR, fname)
+    try:
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        with open(fpath, "wb") as f:
+            f.write(file_bytes)
+        logger.info(f"📸 Rasm saqland'i: {fpath}")
+    except Exception as e:
+        logger.error(f"📸 Saqlanmadi: {e}")
+        return _err(f"Saqlanmadi: {e}", 500)
+
+    url = f"/api/img/{fname}"
+    if pid:
+        try:
+            await _db.update_product(pid, image_url=url)
+            logger.info(f"📸 Database'ga saqland'i: pid={pid}, url={url}")
+        except Exception as e:
+            logger.error(f"📸 Bazaga yozilmadi: {e}")
+            return _err(f"Bazaga yozilmadi: {e}", 500)
+
+        # Kanalga yuborish
+        bot = getattr(_db, "_bot", None)
+        if bot and CHANNEL_ID and _db.is_channel_enabled():
+            try:
+                from aiogram.types import FSInputFile
+                from database._formatters import _fmt_product
+                p = await _db.get_product_any(pid)
+                cap = _fmt_product(p) if p else ""
+                markup = _db._buy_markup(pid)
+                msg = await bot.send_photo(
+                    CHANNEL_ID,
+                    FSInputFile(fpath),
+                    caption=cap,
+                    parse_mode="HTML",
+                    reply_markup=markup,
+                )
+                tg_file_id = msg.photo[-1].file_id
+                mid = msg.message_id
+                await _db.update_product(pid,
+                    image_file_id=tg_file_id,
+                    channel_msg_id=mid,
+                )
+                logger.info(f"📢 Kanalga yuborildi: mid={mid}, file_id={tg_file_id[:20]}...")
+            except Exception as e:
+                logger.warning(f"📢 Kanalga yuborishda xato (kritik emas): {e}")
+    else:
+        logger.warning("📸 pid=0, rasm saqland'i lekin database'ga yozilmadi")
+    logger.info(f"📸 Yuklash muvaffaqiyatli: {url}")
+    return web.json_response({"ok": True, "image_url": url})
+
+
+@ROUTES.get(r"/api/img/{name}")
+async def api_img(request: web.Request):
+    """Yuklangan rasmni qaytaradi (CORS bilan). Path traversal tekshiruvi bilan."""
+    name = request.match_info.get("name", "")
+    if not name:
+        return _err("Fayl nomi kerak", 400)
+    
+    # Yo'l traversal himoyasi — realpath orqali tekshirish
+    fpath = os.path.realpath(os.path.join(UPLOAD_DIR, name))
+    
+    # Haqiqiy yo'l UPLOAD_DIR ichida ekanligini tekshirish
+    if not fpath.startswith(UPLOAD_DIR):
+        logger.warning(f"Path traversal attempt: {name} -> {fpath}")
+        return _err("Noto'g'ri nom", 400)
+    
+    if not os.path.isfile(fpath):
+        return _err("Topilmadi", 404)
+    
+    ctype = mimetypes.guess_type(fpath)[0] or "application/octet-stream"
+    try:
+        with open(fpath, "rb") as f:
+            data = f.read()
+        return web.Response(body=data, content_type=ctype,
+                            headers={"Cache-Control": "public, max-age=86400"})
+    except OSError as e:
+        logger.error(f"Failed to read image {fpath}: {e}")
+        return _err("Faylni o'qib bo'lmadi", 500)
+
+
+# ─── Statistika (admin) ─────────────────────────────────────────────────────
+
+@ROUTES.get("/api/stats")
+async def api_stats(request: web.Request):
+    from database.channel_db import db as _db
+    from database._helpers import now_local
+    from bot.permissions import has_permission
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    # 'stats' ruxsati (bosh admin har doim ega)
+    if not await has_permission(_db, auth["tg_id"], "stats"):
+        return _err("Statistika ruxsati yo'q", 403)
+
+    today = now_local().strftime("%Y-%m-%d")
+    month = now_local().strftime("%Y-%m")
+    st_today = await _db.stats_day(today)
+    st_month = await _db.stats_month(month)
+    top = await _db.top_products(month, limit=7)
+    rate = _db.get_usd_rate()
+
+    def block(s):
+        return {
+            "sale_count": s.get("sale_count", 0),
+            "order_count": s.get("order_count", 0),
+            "revenue_sum": float(s.get("revenue", 0) or 0),
+            "revenue_usd": float(s.get("revenue_usd", 0) or 0),
+            "profit_sum": float(s.get("profit", 0) or 0),
+            "profit_usd": float(s.get("profit_usd", 0) or 0),
+            "cost_sum": float(s.get("cost", 0) or 0),
+        }
+
+    top_list = [{
+        "name": t.get("name", ""),
+        "qty": float(t.get("qty", 0) or 0),
+        "revenue_sum": float(t.get("revenue", 0) or 0),
+    } for t in top]
+
+    return web.json_response({
+        "ok": True,
+        "rate": rate,
+        "today": block(st_today),
+        "month": block(st_month),
+        "month_label": now_local().strftime("%Y-%m"),
+        "top_products": top_list,
+    })
+
+
+# ─── Mijoz hisobim ──────────────────────────────────────────────────────────
+
+@ROUTES.get("/api/my-account")
+async def api_my_account(request: web.Request):
+    from database.channel_db import db as _db
+    from database._helpers import now_local
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "client":
+        return _err("Faqat mijozlar uchun", 403)
+    c = auth["user"]
+    cid = c["id"]
+    month = now_local().strftime("%Y-%m")
+    rep = await _db.client_monthly_report(cid, month)
+    try:
+        orders = await _db.get_client_orders(cid)
+    except Exception:
+        orders = []
+    order_list = [{
+        "id": o["id"],
+        "total": float(o.get("total", 0) or 0),
+        "status": o.get("status", ""),
+        "created_at": (o.get("created_at", "") or "")[:16],
+    } for o in (orders or [])[:15]]
+
+    return web.json_response({
+        "ok": True,
+        "name": c.get("shop_name", ""),
+        "phone": c.get("phone", ""),
+        "client_type": (c.get("client_type") or "dona").lower(),
+        "debt_sum": float(c.get("debt", 0) or 0),
+        "debt_usd": float(c.get("debt_usd", 0) or 0),
+        "month_ordered": float(rep.get("total_ordered", 0) or 0),
+        "month_paid": float(rep.get("total_paid", 0) or 0),
+        "orders": order_list,
+        "rate": _db.get_usd_rate(),
+    })
+
+
+# ─── Login ─────────────────────────────────────────────────────────────────
+
+@ROUTES.post("/api/login")
+async def login(request: web.Request):
+    # DB ni har chaqiriqda olamiz (singletondan)
+    from database.channel_db import db as _db
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response(
+            {"ok": False, "error": "Noto'g'ri JSON"}, status=400
+        )
+
+    login_in    = (data.get("login") or "").strip()
+    password_in = (data.get("password") or "").strip()  # bo'sh joylarni olib tashlash
+    init_data   = data.get("initData") or ""
+
+    # 1) Maydonlarni tekshirish
+    if not login_in or not password_in:
+        return web.json_response(
+            {"ok": False, "error": "Login yoki parol bo'sh"}, status=400
+        )
+    if len(login_in) > 64 or len(password_in) > 128:
+        return web.json_response(
+            {"ok": False, "error": "Maydon juda uzun"}, status=400
+        )
+
+    # 2) Telegram WebApp initData HMAC tekshiruvi
+    if init_data == "LOCAL_TEST":
+        # Local test rejimi
+        tg_id = 6787907623  # GLAVNIY_ADMIN_ID
+        tg_user = {"id": tg_id, "first_name": "LocalTest"}
+    else:
+        parsed = verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not parsed:
+            return web.json_response({
+                "ok": False,
+                "error": "Telegram WebApp imzosi noto'g'ri. Iltimos, Mini App'ni "
+                         "Telegram bot ichidan oching.",
+            }, status=401)
+        tg_user = parsed.get("user") or {}
+        try:
+            tg_id = int(tg_user.get("id") or 0)
+        except (TypeError, ValueError):
+            tg_id = 0
+        if not tg_id:
+            return web.json_response({
+                "ok": False, "error": "Telegram foydalanuvchi aniqlanmadi"
+            }, status=401)
+
+    # 3) Rate limit
+    locked, remaining = attempt_tracker.is_locked(tg_id)
+    if locked:
+        mins = max(1, remaining // 60)
+        return web.json_response({
+            "ok": False,
+            "error": (f"Juda ko'p noto'g'ri urinish. "
+                       f"{mins} daqiqadan keyin qayta urinib ko'ring."),
+            "locked": True,
+            "lock_remaining_seconds": remaining,
+        }, status=429)
+
+    # 4) Asosiy tekshiruv
+    result = await verify_login(_db, login_in, password_in)
+    if not result:
+        count, just_locked = attempt_tracker.record_failure(tg_id)
+        body = {
+            "ok": False,
+            "error": "Login yoki parol noto'g'ri",
+            "remaining_attempts": max(
+                0, LoginAttemptTracker.LOCK_THRESHOLD - count
+            ),
+            "just_locked": just_locked,
+        }
+        return web.json_response(body, status=401)
+
+    # 5) Strict TG ID binding
+    user = result["user"]
+    role = result["role"]
+    bound_tg = user.get("telegram_id") or 0
+    if bound_tg and int(bound_tg) != tg_id:
+        attempt_tracker.record_failure(tg_id)
+        return web.json_response({
+            "ok": False,
+            "error": ("Bu hisob boshqa Telegram akkauntiga biriktirilgan. "
+                       "Agar bu sizning hisobingiz bo'lsa, admin bilan bog'laning."),
+        }, status=403)
+
+    # Birinchi muvaffaqiyatli mijoz login — TG ID ni biriktirib qo'yamiz
+    if role == "client" and not bound_tg:
+        try:
+            await _db.set_client_tg_id(user["id"], tg_id)
+        except Exception as e:
+            print(f"[api login] set_client_tg_id xato: {e}")
+
+    # 6) Muvaffaqiyat
+    attempt_tracker.clear(tg_id)
+    display_name = (
+        user.get("full_name") if role == "admin"
+        else user.get("shop_name")
+    ) or user.get("username") or login_in
+
+    auth_info = {
+        "role": role,
+        "tg_id": tg_id,
+        "user": user,
+        "is_glavniy": (tg_id == GLAVNIY_ADMIN_ID),
+    }
+    session_token = _create_session(auth_info)
+
+    return web.json_response({
+        "ok": True,
+        "role": role,
+        "session_token": session_token,
+        "user": {
+            "id": int(user.get("telegram_id") or user.get("id") or 0),
+            "name": display_name,
+            "username": user.get("username", ""),
+        }
+    })
+
+
+# ─── POS Sotuv (admin) ──────────────────────────────────────────────────────
+
+@ROUTES.post("/api/sale")
+async def api_sale(request: web.Request):
+    from database.channel_db import db as _db
+    from database._helpers import sum_to_usd
+    from bot.permissions import has_permission
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    if not await has_permission(_db, auth["tg_id"], "sale"):
+        return _err("Kassada sotuv ruxsati yo'q", 403)
+
+    body = await _read_json(request)
+    items_in = body.get("items") or []
+    payment = (body.get("payment") or "cash").lower()
+    if payment not in ("cash", "card"):
+        payment = "cash"
+    try:
+        discount_sum = float(body.get("discount_sum") or 0)
+    except (TypeError, ValueError):
+        discount_sum = 0
+    if not items_in:
+        return _err("Savat bo'sh")
+
+    rate = _db.get_usd_rate()
+    sale_items = []
+    # Mahsulotlarni tekshirib, narxni SERVER hisoblaydi (mijoz narxiga ishonmaymiz)
+    for it in items_in:
+        try:
+            pid = int(it.get("product_id"))
+            qty = float(it.get("qty") or 0)
+        except (TypeError, ValueError):
+            return _err("Noto'g'ri savat elementi")
+        if qty <= 0:
+            continue
+        p = await _db.get_product_any(pid)
+        if not p or not p.get("is_active", 1):
+            return _err(f"Mahsulot topilmadi (ID {pid})", 404)
+        avail = float(p.get("qty", 0) or 0)
+        if qty > avail:
+            return _err(f"«{p['name']}» — faqat {avail:g} {p.get('unit','dona')} bor")
+        price_usd = float(p.get("sell_price_usd", 0) or 0)
+        if price_usd <= 0:
+            price_usd = round(sum_to_usd(float(p.get("sell_price", 0) or 0), rate), 4)
+        sale_items.append({"product_id": pid, "qty": qty, "price": price_usd})
+
+    if not sale_items:
+        return _err("Savat bo'sh")
+
+    # Jami (chegirma bilan)
+    subtotal_sum = 0.0
+    for si in sale_items:
+        subtotal_sum += round(si["price"] * rate, 2) * si["qty"]
+    override_sum = 0
+    if discount_sum > 0 and discount_sum < subtotal_sum:
+        override_sum = subtotal_sum - discount_sum
+
+    eff_sum = override_sum if override_sum > 0 else subtotal_sum
+
+    try:
+        kw = {}
+        if payment == "cash":
+            kw = {"paid_cash": eff_sum}
+        else:
+            kw = {"paid_card": eff_sum}
+        sale = await _db.create_sale(
+            auth["tg_id"],
+            auth["user"].get("full_name") or "Mini App",
+            sale_items,
+            paid_currency="sum",
+            override_total_sum=override_sum,
+            **kw,
+        )
+    except Exception as e:
+        return _err(f"Sotuvni saqlashda xato: {e}", 500)
+
+    return web.json_response({
+        "ok": True,
+        "sale_id": sale["id"],
+        "total_sum": float(sale.get("total", 0) or 0),
+        "items_count": len(sale_items),
+        "change_sum": float(sale.get("change", 0) or 0),
+    })
+
+
+# ─── Foydalanuvchilar (admin) ──────────────────────────────────────────────
+
+@ROUTES.get("/api/clients")
+async def api_clients(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    clients = await _db.get_all_clients()
+    items = []
+    for c in clients:
+        items.append({
+            "id": c.get("id", 0),
+            "shop_name": c.get("shop_name", ""),
+            "phone": c.get("phone", ""),
+            "debt_sum": float(c.get("debt", 0) or 0),
+            "debt_usd": float(c.get("debt_usd", 0) or 0),
+            "client_type": c.get("client_type", "dona"),
+            "telegram_id": c.get("telegram_id", 0),
+            "created_at": (c.get("created_at", "") or "")[:16],
+        })
+    return web.json_response({"ok": True, "items": items, "total": len(items)})
+
+
+@ROUTES.get("/api/orders")
+async def api_orders(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    try:
+        orders = await _db.get_recent_orders(limit=50)
+    except Exception:
+        orders = []
+    items = []
+    for o in orders:
+        items.append({
+            "id": o.get("id", 0),
+            "client_id": o.get("client_id", 0),
+            "shop_name": o.get("shop_name", ""),
+            "phone": o.get("phone", ""),
+            "total": float(o.get("total", 0) or 0),
+            "status": o.get("status", ""),
+            "note": o.get("note", ""),
+            "created_at": (o.get("created_at", "") or "")[:16],
+        })
+    return web.json_response({"ok": True, "items": items, "total": len(items)})
+
+
+@ROUTES.get("/api/admins")
+async def api_admins(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    admins = await _db.get_all_admins()
+    items = []
+    for a in admins:
+        items.append({
+            "telegram_id": a.get("telegram_id", 0),
+            "full_name": a.get("full_name", ""),
+            "role": a.get("role", "full"),
+            "username": a.get("username", ""),
+            "created_at": (a.get("created_at", "") or "")[:16],
+        })
+    return web.json_response({"ok": True, "items": items, "total": len(items)})
+
+
+@ROUTES.get("/api/settings")
+async def api_settings(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    rate = _db.get_usd_rate()
+    settings = {
+        "usd_rate": rate,
+        "wholesale_enabled": _db.is_wholesale_enabled(),
+        "dona_enabled": _db.is_dona_enabled(),
+        "barcode_enabled": _db.is_barcode_enabled(),
+        "channel_enabled": _db.is_channel_enabled(),
+        "client_orders_enabled": _db.is_client_orders_enabled(),
+        "nasiya_enabled": _db.is_nasiya_enabled(),
+        "categories_enabled": _db.is_categories_enabled(),
+        "suppliers_enabled": _db.is_suppliers_enabled(),
+        "mini_app_enabled": _db.is_mini_app_enabled(),
+        "ai_consult_enabled": _db.is_ai_consult_enabled(),
+        "ai_analytics_enabled": _db.is_ai_analytics_enabled(),
+    }
+    return web.json_response({"ok": True, "settings": settings})
+
+
+@ROUTES.post("/api/settings")
+async def api_settings_save(request: web.Request):
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    body = await _read_json(request)
+    rate = body.get("usd_rate")
+    if rate is not None:
+        try:
+            _db.set_usd_rate(float(rate))
+        except (TypeError, ValueError):
+            pass
+    # Toggle settings
+    toggle_map = {
+        "wholesale_enabled": "set_wholesale_enabled",
+        "dona_enabled": "set_dona_enabled",
+        "barcode_enabled": "set_barcode_enabled",
+        "channel_enabled": "set_channel_enabled",
+        "client_orders_enabled": "set_client_orders_enabled",
+        "nasiya_enabled": "set_nasiya_enabled",
+        "categories_enabled": "set_categories_enabled",
+        "suppliers_enabled": "set_suppliers_enabled",
+        "mini_app_enabled": "set_mini_app_enabled",
+        "ai_consult_enabled": "set_ai_consult_enabled",
+        "ai_analytics_enabled": "set_ai_analytics_enabled",
+    }
+    for key, setter in toggle_map.items():
+        if key in body:
+            val = body[key]
+            if isinstance(val, bool):
+                getattr(_db, setter)(val)
+            elif isinstance(val, str):
+                getattr(_db, setter)(val.lower() in ("1", "true", "on"))
+    return web.json_response({"ok": True})
+
+
+# ─── Static frontend serving ──────────────────────────────────────────────
+
+FRONTEND_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fronted"
+)
+FRONTEND_DIR = os.path.realpath(FRONTEND_DIR)
+
+
+async def frontend_index(request: web.Request):
+    """Frontend index.html ni qaytaradi — Mini App shu yerda ishlaydi."""
+    idx = os.path.join(FRONTEND_DIR, "index.html")
+    if not os.path.isfile(idx):
+        return _err("Frontend topilmadi", 404)
+    return web.FileResponse(idx)
+
+
+async def frontend_static(request: web.Request):
+    """Frontend static fayllar: style.css, app.js, logo.png, favicon, etc.
+    Faqat /api/ bilan boshlanmaydigan va ma'lum kengaytmali fayllarni qaytaradi."""
+    name = request.match_info.get("filename", "")
+    # /api/ so'rovlarini static serving orqali o'tkazmaymiz
+    if not name or name.startswith("api/") or ".." in name or "/" in name:
+        # Ehtimol bu API endpoint — 404 berish o'rniga handler topilmasin
+        raise web.HTTPNotFound()
+    # Faqat ma'lum kengaytmali fayllarni serving qilamiz
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in (".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".json", ".woff", ".woff2", ".ttf"):
+        raise web.HTTPNotFound()
+    fpath = os.path.realpath(os.path.join(FRONTEND_DIR, name))
+    if not fpath.startswith(FRONTEND_DIR):
+        raise web.HTTPNotFound()
+    if not os.path.isfile(fpath):
+        raise web.HTTPNotFound()
+    return web.FileResponse(fpath)
+
+
+# ─── App factory ────────────────────────────────────────────────────────────
+
+def create_app() -> web.Application:
+    """aiohttp app yaratadi. main.py shu yerdan oladi."""
+    # iPhone rasmlari 25MB-100MB bo'lishi mumkin, limit'ni oshiramiz
+    app = web.Application(
+        middlewares=[cors_middleware],
+        client_max_size=100*1024*1024  # 100MB limit
+    )
+    # API route'larini qo'shamiz
+    app.add_routes(ROUTES)
+    # Frontend statik fayllar
+    app.router.add_get("/", frontend_index)
+    app.router.add_get("/{filename}", frontend_static)
+    return app

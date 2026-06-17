@@ -1,0 +1,13 @@
+aiogram==3.7.0
+python-dotenv==1.0.0
+openpyxl==3.1.2
+# Shtrix-kod (barcode) rasmidan o'qish uchun (ixtiyoriy, lekin tavsiya etiladi):
+# - pyzbar + Pillow eng yaxshi natija beradi (EAN-13, UPC, Code-128, va h.k.)
+# - Tizimda 'zbar' kutubxonasi o'rnatilgan bo'lishi kerak
+#   (Ubuntu/Debian: sudo apt install libzbar0)
+pyzbar==0.1.9
+Pillow>=10.0.0
+
+# AI analitika (Google Gemini). Ixtiyoriy — kalit bo'lmasa, bot ushbu paket
+# o'rnatilmasa ham normal ishlaydi, faqat '🤖 AI Analitika' tugmasi o'chiq turadi.
+google-generativeai>=0.7.0

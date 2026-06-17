@@ -1,0 +1,210 @@
+"""Kassa sotuvlari."""
+
+import json
+import sqlite3
+from typing import Optional, List, Dict, Callable, Tuple
+
+from bot.config import CHANNEL_ID, LOW_STOCK_THRESHOLD, USD_RATE_DEFAULT
+from database._helpers import (
+    DB_PATH, SCHEMA, now_local, _now,
+    fmt_usd, fmt_sum, fmt_money, usd_to_sum, sum_to_usd,
+)
+from database._formatters import (
+    _fmt_product, _fmt_client, _fmt_order, _fmt_sale, _fmt_payment, _fmt_admin,
+)
+
+
+class SalesMixin:
+    # ── Sotuv (kassa) ────────────────────────────────────────────────────────
+    async def create_sale(self, cashier_id: int, cashier_name: str,
+                          items: list,
+                          paid_cash: float = 0, paid_cash_usd: float = 0,
+                          paid_card: float = 0, paid_card_usd: float = 0,
+                          paid_other: float = 0, paid_other_usd: float = 0,
+                          paid_currency: str = "sum",
+                          client_id: int = 0, is_nasiya: bool = False,
+                          override_total_usd: float = 0,
+                          override_total_sum: float = 0) -> dict:
+        """Sotuv yaratadi.
+        items — dictlar ro'yxati: {product_id, qty, price (USD)}.
+        override_total_* — sotuvchining 'yumaloqlangan' jami summasi (chegirma).
+                          Faqat birini bersangiz, ikkinchisi joriy kurs bo'yicha hisoblanadi.
+        paid_*_usd — agar to'lov USDda qabul qilingan bo'lsa, USD qiymati bilan birga keladi.
+        paid_currency — 'sum' yoki 'usd' (sotuv qaysi valyutada amalga oshganini belgilaydi)."""
+        created = _now()
+        rate = self.get_usd_rate()
+        sale_items = []
+        subtotal_usd = 0.0
+        subtotal_sum = 0.0
+
+        for it in items:
+            p = await self.get_product_any(it["product_id"])
+            name = p["name"] if p else "?"
+            unit = p.get("unit", "dona") if p else "dona"
+            cost_usd = float(p.get("cost_price_usd", 0)) if p else 0.0
+            cost_sum = float(p.get("cost_price", 0)) if p else 0.0
+            price_usd = float(it["price"])
+            price_sum = round(usd_to_sum(price_usd, rate), 2)
+            line_usd = price_usd * it["qty"]
+            line_sum = round(price_sum * it["qty"], 2)
+            subtotal_usd += line_usd
+            subtotal_sum += line_sum
+            sale_items.append({
+                "product_id": it["product_id"],
+                "name": name,
+                "qty": it["qty"],
+                "unit": unit,
+                "price": price_sum,
+                "total": line_sum,
+                "cost_price": cost_sum,
+                "price_usd": price_usd,
+                "total_usd": line_usd,
+                "cost_price_usd": cost_usd,
+            })
+            if p:
+                await self.change_qty(it["product_id"], -it["qty"])
+
+        # Chegirma + jami (override) hisobi
+        if override_total_usd and not override_total_sum:
+            override_total_sum = round(usd_to_sum(override_total_usd, rate), 2)
+        elif override_total_sum and not override_total_usd:
+            override_total_usd = round(sum_to_usd(override_total_sum, rate), 4)
+
+        if override_total_usd > 0 or override_total_sum > 0:
+            total_usd = float(override_total_usd)
+            total_sum = float(override_total_sum)
+        else:
+            total_usd = subtotal_usd
+            total_sum = subtotal_sum
+        discount_usd = max(0.0, subtotal_usd - total_usd)
+        discount_sum = max(0.0, subtotal_sum - total_sum)
+
+        # Nasiya — to'liq qarzga (USDda kanonik, so'mda kesh)
+        if is_nasiya and client_id:
+            paid_total = 0.0
+            paid_total_usd = 0.0
+            paid_cash = paid_card = paid_other = 0
+            paid_cash_usd = paid_card_usd = paid_other_usd = 0
+            await self.add_debt(client_id, amount_sum=total_sum,
+                                amount_usd=total_usd)
+        else:
+            # Berilmagan USD qiymatlarini joriy kurs bo'yicha to'ldiramiz
+            if paid_cash and not paid_cash_usd:
+                paid_cash_usd = round(sum_to_usd(paid_cash, rate), 4)
+            elif paid_cash_usd and not paid_cash:
+                paid_cash = round(usd_to_sum(paid_cash_usd, rate), 2)
+            if paid_card and not paid_card_usd:
+                paid_card_usd = round(sum_to_usd(paid_card, rate), 4)
+            elif paid_card_usd and not paid_card:
+                paid_card = round(usd_to_sum(paid_card_usd, rate), 2)
+            if paid_other and not paid_other_usd:
+                paid_other_usd = round(sum_to_usd(paid_other, rate), 4)
+            paid_total = paid_cash + paid_card + paid_other
+            paid_total_usd = paid_cash_usd + paid_card_usd + paid_other_usd
+
+        if paid_currency not in ("sum", "usd"):
+            paid_currency = "sum"
+
+        if paid_total > 0:
+            change = max(0.0, paid_total - total_sum)
+            change_usd = max(0.0, paid_total_usd - total_usd)
+        else:
+            change = 0.0
+            change_usd = 0.0
+
+        client_name = ""
+        if client_id:
+            c = await self.get_client_by_id(client_id)
+            if c:
+                client_name = c.get("shop_name", "")
+
+        with self._lock:
+            conn = self._conn()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO sales(cashier_id, cashier_name, items, "
+                    "total, total_usd, "
+                    "subtotal, subtotal_usd, discount, discount_usd, "
+                    "usd_rate, paid_cash, paid_cash_usd, "
+                    "paid_card, paid_card_usd, paid_other, paid_other_usd, "
+                    "paid_total, paid_total_usd, paid_currency, "
+                    "change_amount, change_usd, "
+                    "is_nasiya, client_id, client_name, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (cashier_id, cashier_name,
+                     json.dumps(sale_items, ensure_ascii=False),
+                     total_sum, total_usd,
+                     subtotal_sum, subtotal_usd, discount_sum, discount_usd,
+                     rate, paid_cash, paid_cash_usd,
+                     paid_card, paid_card_usd, paid_other, paid_other_usd,
+                     paid_total, paid_total_usd, paid_currency,
+                     change, change_usd,
+                     1 if is_nasiya else 0, client_id, client_name, created)
+                )
+                sid = cur.lastrowid
+                conn.commit()
+            finally:
+                conn.close()
+
+        data = {
+            "id": sid, "cashier_id": cashier_id, "cashier_name": cashier_name,
+            "items": sale_items,
+            "total": total_sum, "total_usd": total_usd,
+            "subtotal": subtotal_sum, "subtotal_usd": subtotal_usd,
+            "discount": discount_sum, "discount_usd": discount_usd,
+            "usd_rate": rate,
+            "paid_cash": paid_cash, "paid_cash_usd": paid_cash_usd,
+            "paid_card": paid_card, "paid_card_usd": paid_card_usd,
+            "paid_other": paid_other, "paid_other_usd": paid_other_usd,
+            "paid_total": paid_total, "paid_total_usd": paid_total_usd,
+            "paid_currency": paid_currency,
+            "change": change, "change_usd": change_usd,
+            "is_nasiya": is_nasiya, "client_id": client_id,
+            "client_name": client_name, "created_at": created
+        }
+        mid = await self._send(_fmt_sale(data))
+        if mid:
+            with self._lock:
+                conn = self._conn()
+                try:
+                    conn.execute(
+                        "UPDATE sales SET channel_msg_id=? WHERE id=?", (mid, sid)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        return data
+
+    async def get_sale(self, sid: int) -> Optional[dict]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                r = conn.execute("SELECT * FROM sales WHERE id=?", (sid,)).fetchone()
+                return self._row_to_sale(r) if r else None
+            finally:
+                conn.close()
+
+    def _sales_by_prefix(self, prefix: str) -> List[dict]:
+        """created_at boshlanishi `prefix` ga mos sotuvlar (sana yoki oy).
+        Sinxron — _in_thread orqali ishchi oqimda chaqiriladi."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM sales WHERE created_at LIKE ? ORDER BY id",
+                    (f"{prefix}%",)
+                ).fetchall()
+                return [self._row_to_sale(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def get_sales_by_date(self, date: str) -> List[dict]:
+        return await self._in_thread(self._sales_by_prefix, date)
+
+    async def get_sales_by_month(self, month: str) -> List[dict]:
+        return await self._in_thread(self._sales_by_prefix, month)
+
+    async def get_all_sales(self) -> List[dict]:
+        # Og'ir o'qish — ishchi oqimda
+        return await self._in_thread(self._all_sales)
+
