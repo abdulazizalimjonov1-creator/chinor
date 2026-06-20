@@ -17,23 +17,31 @@ from database._formatters import (
 class StatsMixin:
     # ── Statistika ───────────────────────────────────────────────────────────
     def _stats_from_sales(self, sales: list) -> dict:
-        """Sotuvlar ro'yxatidan so'm va USD bo'yicha jami metrikalar."""
-        rev_sum = sum(s.get("total", 0) or 0 for s in sales)
-        rev_usd = sum(s.get("total_usd", 0) or 0 for s in sales)
+        """Sotuvlar ro'yxatidan so'm va USD bo'yicha jami metrikalar.
+        «Chinor» ichki rasxod sotuvlari (is_internal) daromad/foyda hisobiga
+        KIRMAYDI — ular alohida 'expense' (rasxod, tannarx bo'yicha) sifatida
+        qaytariladi."""
+        normal = [s for s in sales if not s.get("is_internal")]
+        internal = [s for s in sales if s.get("is_internal")]
+        rev_sum = sum(s.get("total", 0) or 0 for s in normal)
+        rev_usd = sum(s.get("total_usd", 0) or 0 for s in normal)
         cost_sum = 0.0
         cost_usd = 0.0
-        for s in sales:
+        for s in normal:
             for i in s.get("items", []):
                 cost_sum += float(i.get("cost_price", 0) or 0) * float(i.get("qty", 0) or 0)
                 cost_usd += float(i.get("cost_price_usd", 0) or 0) * float(i.get("qty", 0) or 0)
-        cash_sum = sum(s.get("paid_cash", 0) or 0 for s in sales)
-        cash_usd = sum(s.get("paid_cash_usd", 0) or 0 for s in sales)
-        card_sum = sum(s.get("paid_card", 0) or 0 for s in sales)
-        card_usd = sum(s.get("paid_card_usd", 0) or 0 for s in sales)
-        nasiya_sum = sum(s.get("total", 0) or 0 for s in sales if s.get("is_nasiya"))
-        nasiya_usd = sum(s.get("total_usd", 0) or 0 for s in sales if s.get("is_nasiya"))
-        disc_sum = sum(s.get("discount", 0) or 0 for s in sales)
-        disc_usd = sum(s.get("discount_usd", 0) or 0 for s in sales)
+        cash_sum = sum(s.get("paid_cash", 0) or 0 for s in normal)
+        cash_usd = sum(s.get("paid_cash_usd", 0) or 0 for s in normal)
+        card_sum = sum(s.get("paid_card", 0) or 0 for s in normal)
+        card_usd = sum(s.get("paid_card_usd", 0) or 0 for s in normal)
+        nasiya_sum = sum(s.get("total", 0) or 0 for s in normal if s.get("is_nasiya"))
+        nasiya_usd = sum(s.get("total_usd", 0) or 0 for s in normal if s.get("is_nasiya"))
+        disc_sum = sum(s.get("discount", 0) or 0 for s in normal)
+        disc_usd = sum(s.get("discount_usd", 0) or 0 for s in normal)
+        # «Chinor» ichki rasxod (tovar tannarx narxida chiqarilgan)
+        expense_sum = sum(s.get("total", 0) or 0 for s in internal)
+        expense_usd = sum(s.get("total_usd", 0) or 0 for s in internal)
         return {
             "revenue": rev_sum, "revenue_usd": rev_usd,
             "cost": cost_sum, "cost_usd": cost_usd,
@@ -42,6 +50,9 @@ class StatsMixin:
             "card_total": card_sum, "card_total_usd": card_usd,
             "nasiya_total": nasiya_sum, "nasiya_total_usd": nasiya_usd,
             "discount_total": disc_sum, "discount_total_usd": disc_usd,
+            "expense": expense_sum, "expense_usd": expense_usd,
+            "expense_count": len(internal),
+            "sale_count": len(normal),
         }
 
     async def stats_day(self, date: str) -> dict:
@@ -55,9 +66,8 @@ class StatsMixin:
                 ).fetchone()
             finally:
                 conn.close()
-        m = self._stats_from_sales(sales)
+        m = self._stats_from_sales(sales)  # sale_count = ichki bo'lmagan sotuvlar
         m.update({
-            "sale_count": len(sales),
             "order_count": ord_row["c"] if ord_row else 0,
             "order_revenue": ord_row["t"] if ord_row else 0,
         })
@@ -74,9 +84,8 @@ class StatsMixin:
                 ).fetchone()
             finally:
                 conn.close()
-        m = self._stats_from_sales(sales)
+        m = self._stats_from_sales(sales)  # sale_count = ichki bo'lmagan sotuvlar
         m.update({
-            "sale_count": len(sales),
             "order_count": ord_row["c"] if ord_row else 0,
             "order_revenue": ord_row["t"] if ord_row else 0,
         })
@@ -88,7 +97,7 @@ class StatsMixin:
             conn = self._conn()
             try:
                 rows = conn.execute(
-                    "SELECT items, total, total_usd FROM sales"
+                    "SELECT items, total, total_usd, is_internal FROM sales"
                 ).fetchall()
             finally:
                 conn.close()
@@ -98,9 +107,11 @@ class StatsMixin:
                 items = json.loads(r["items"])
             except Exception:
                 items = []
+            keys = r.keys()
             sales.append({
                 "total": r["total"] or 0,
-                "total_usd": (r["total_usd"] if "total_usd" in r.keys() else 0) or 0,
+                "total_usd": (r["total_usd"] if "total_usd" in keys else 0) or 0,
+                "is_internal": (r["is_internal"] if "is_internal" in keys else 0) or 0,
                 "items": items,
             })
         m = self._stats_from_sales(sales)
@@ -108,6 +119,7 @@ class StatsMixin:
             "revenue": m["revenue"], "revenue_usd": m["revenue_usd"],
             "cost": m["cost"], "cost_usd": m["cost_usd"],
             "profit": m["profit"], "profit_usd": m["profit_usd"],
+            "expense": m["expense"], "expense_usd": m["expense_usd"],
         }
 
     async def stats_all_time(self) -> dict:

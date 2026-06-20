@@ -1,0 +1,67 @@
+{
+  "name": "chinor-kassa",
+  "version": "1.6.0",
+  "description": "Chinor offline kassa — Windows desktop POS (Electron)",
+  "main": "main.js",
+  "author": "Chinor",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "dist:portable": "electron-builder --win portable",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "uz.chinor.kassa",
+    "productName": "Chinor Kassa",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dir",
+        "zip"
+      ],
+      "artifactName": "ChinorKassa-mac-${version}.${ext}",
+      "icon": "renderer/icon_mac.png",
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "renderer/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Chinor Kassa",
+      "artifactName": "ChinorKassa-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "ChinorKassa-portable-${version}.exe"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://unnatural-vibes-praying.ngrok-free.dev/updates/"
+      }
+    ]
+  }
+}

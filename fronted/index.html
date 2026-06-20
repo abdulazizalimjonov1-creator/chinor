@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -16,58 +16,7 @@
             <div class="login-card">
                 <div class="brand-block">
                     <div class="logo-wrap">
-                        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" class="logo">
-                          <!-- Oq fon -->
-                          <circle cx="100" cy="100" r="100" fill="#ffffff"/>
-                          <!-- Qora chegara -->
-                          <circle cx="100" cy="100" r="95" fill="none" stroke="#1a1a1a" stroke-width="7"/>
-
-                          <!-- Maysazor (ot) -->
-                          <ellipse cx="100" cy="138" rx="42" ry="6" fill="#3d9142"/>
-                          <path d="M62 138 Q66 128 70 138" fill="#4caf50"/>
-                          <path d="M72 138 Q76 126 80 138" fill="#43a047"/>
-                          <path d="M82 138 Q86 129 90 138" fill="#4caf50"/>
-                          <path d="M92 138 Q96 127 100 138" fill="#43a047"/>
-                          <path d="M102 138 Q106 129 110 138" fill="#4caf50"/>
-                          <path d="M112 138 Q116 127 120 138" fill="#43a047"/>
-                          <path d="M122 138 Q126 130 130 138" fill="#4caf50"/>
-                          <path d="M132 138 Q136 128 140 138" fill="#43a047"/>
-
-                          <!-- Tana (poya) -->
-                          <rect x="91" y="105" width="18" height="36" rx="5" fill="#3d9142"/>
-                          <!-- Shox chap -->
-                          <path d="M100 110 Q80 100 72 85" stroke="#3d9142" stroke-width="8" fill="none" stroke-linecap="round"/>
-                          <!-- Shox o'ng -->
-                          <path d="M100 110 Q120 100 128 85" stroke="#3d9142" stroke-width="8" fill="none" stroke-linecap="round"/>
-                          <!-- Shox yuqori -->
-                          <path d="M100 110 Q98 92 100 78" stroke="#3d9142" stroke-width="7" fill="none" stroke-linecap="round"/>
-                          <!-- Kichik shoxlar -->
-                          <path d="M82 93 Q75 82 68 76" stroke="#3d9142" stroke-width="5" fill="none" stroke-linecap="round"/>
-                          <path d="M118 93 Q125 82 132 76" stroke="#3d9142" stroke-width="5" fill="none" stroke-linecap="round"/>
-
-                          <!-- Barg toji — asosiy katta dumaloq -->
-                          <circle cx="100" cy="72" r="38" fill="#4caf50"/>
-                          <!-- Yon barglar -->
-                          <circle cx="68"  cy="80" r="26" fill="#43a047"/>
-                          <circle cx="132" cy="80" r="26" fill="#43a047"/>
-                          <circle cx="78"  cy="55" r="22" fill="#4caf50"/>
-                          <circle cx="122" cy="55" r="22" fill="#4caf50"/>
-                          <circle cx="100" cy="44" r="22" fill="#66bb6a"/>
-                          <!-- Yorug'lik effekti -->
-                          <circle cx="88"  cy="58" r="12" fill="#81c784" opacity="0.6"/>
-                          <circle cx="112" cy="52" r="9"  fill="#a5d6a7" opacity="0.5"/>
-
-                          <!-- CHINOR yozuvi -->
-                          <text x="100" y="162" text-anchor="middle"
-                                font-family="Arial Black, Impact, sans-serif"
-                                font-size="22" font-weight="900"
-                                fill="#3d9142" letter-spacing="2">CHINOR</text>
-                          <!-- Telefon -->
-                          <text x="100" y="178" text-anchor="middle"
-                                font-family="Arial, sans-serif"
-                                font-size="13" font-weight="700"
-                                fill="#4caf50">77877-55-99</text>
-                        </svg>
+                        <img src="logo.png?v=2" alt="Chinor" class="logo">
                     </div>
                     <h1 class="brand-name">Chinor</h1>
                     <p class="brand-subtitle">Xizmatlar va boshqaruv platformasi</p>
@@ -139,29 +88,100 @@
         </div>
 
         <div class="screen" id="screenClient">
-            <div class="dash-header">
-                <div class="dash-user">
+            <!-- Header -->
+            <div class="cl-header">
+                <div class="cl-header-left">
                     <div class="dash-avatar" id="clientAvatar">A</div>
-                    <div class="dash-user-info">
-                        <h2 id="clientName">Klient</h2>
-                        <p><span class="dash-role-badge role-client">Klient</span></p>
+                    <div>
+                        <div class="cl-greeting" id="clientGreeting">Salom!</div>
+                        <div class="cl-name" id="clientName">Klient</div>
                     </div>
                 </div>
                 <button class="dash-logout-btn" id="logoutBtnClient" title="Chiqish">🚪</button>
             </div>
-            <div style="border-radius:24px;overflow:hidden;margin-bottom:18px;background:var(--primary-light);padding:28px 20px;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.04);">
-                <span style="font-size:48px;">🌳</span>
-                <h3 style="font-size:18px;font-weight:800;margin:8px 0 4px;">Chinor platformasiga xush kelibsiz!</h3>
-                <p style="font-size:13px;color:var(--muted);">Mahsulotlar, xizmatlar va aksiyalardan boxabar bo'ling</p>
+
+            <!-- Hero banner -->
+            <div class="cl-hero">
+                <div class="cl-hero-text">
+                    <div class="cl-hero-title">🌳 Chinor Do'koni</div>
+                    <div class="cl-hero-sub">Sifatli mahsulotlar eng yaxshi narxda</div>
+                </div>
+                <button class="cl-search-btn" onclick="openClientSearch()">🔍 Qidirish</button>
             </div>
-            <h3 class="section-title">🛍️ Asosiy bo'limlar</h3>
-            <div class="quick-grid">
-                <button class="quick-card card-green" onclick="openProducts('client')"><span class="card-icon">📦</span><h4>Mahsulotlar</h4><p>Katalogni ko'rish</p></button>
-                <button class="quick-card card-blue" onclick="handleAction('Xizmatlar')"><span class="card-icon">🛠️</span><h4>Xizmatlar</h4><p>Xizmat turlari</p></button>
-                <button class="quick-card card-orange" onclick="handleAction('Buyurtma berish')"><span class="card-icon">🛒</span><h4>Buyurtma berish</h4><p>Online buyurtma</p></button>
-                <button class="quick-card card-purple" onclick="handleAction('Aksiyalar')"><span class="card-icon">🔥</span><h4>Aksiyalar</h4><p>Chegirmalar</p></button>
-                <button class="quick-card card-teal" onclick="handleAction('Aloqa')"><span class="card-icon">📞</span><h4>Aloqa</h4><p>Biz bilan bog'lanish</p></button>
-                <button class="quick-card card-pink" onclick="openAccount()"><span class="card-icon">👤</span><h4>Mening hisobim</h4><p>Qarz, buyurtmalar</p></button>
+
+            <!-- Quick actions -->
+            <div class="cl-tabs">
+                <button class="cl-tab active" onclick="clientTab(this,'home')">🏠 Asosiy</button>
+                <button class="cl-tab" onclick="clientTab(this,'catalog')">📦 Katalog</button>
+                <button class="cl-tab" onclick="clientTab(this,'ai')">💬 AI Sotuvchi</button>
+                <button class="cl-tab" onclick="clientTab(this,'account')">👤 Hisob</button>
+            </div>
+
+            <!-- HOME TAB -->
+            <div id="clTabHome">
+                <!-- Top sellers -->
+                <div class="cl-section">
+                    <div class="cl-section-head">
+                        <span>🔥 Ko'p sotilayotgan</span>
+                        <button onclick="clientTab(document.querySelector('.cl-tab:nth-child(2)'),'catalog')" class="cl-see-all">Barchasi →</button>
+                    </div>
+                    <div class="cl-hscroll" id="clTopList"><div class="cl-loading">Yuklanmoqda...</div></div>
+                </div>
+
+                <!-- New arrivals -->
+                <div class="cl-section">
+                    <div class="cl-section-head">
+                        <span>✨ Yangi tovarlar</span>
+                        <button onclick="clientTab(document.querySelector('.cl-tab:nth-child(2)'),'catalog')" class="cl-see-all">Barchasi →</button>
+                    </div>
+                    <div class="cl-hscroll" id="clNewList"><div class="cl-loading">Yuklanmoqda...</div></div>
+                </div>
+
+                <!-- AI promo banner -->
+                <div class="cl-ai-banner" onclick="clientTab(document.querySelector('.cl-tab:nth-child(3)'),'ai')">
+                    <span style="font-size:32px">🤖</span>
+                    <div>
+                        <div style="font-weight:700;font-size:15px">AI Sotuvchi-Konsultant</div>
+                        <div style="font-size:12px;opacity:0.85">Kerakli tovarni topishda yordam beraman</div>
+                    </div>
+                    <span style="margin-left:auto;font-size:20px">→</span>
+                </div>
+            </div>
+
+            <!-- CATALOG TAB -->
+            <div id="clTabCatalog" style="display:none">
+                <div class="search-bar" style="margin:0 0 12px">
+                    <span class="search-ic">🔍</span>
+                    <input type="text" id="clCatalogSearch" placeholder="Mahsulot qidirish..." autocomplete="off" oninput="loadClientCatalog()">
+                    <button id="clCatalogClear" class="search-clear" style="display:none" onclick="$('clCatalogSearch').value='';loadClientCatalog()">✕</button>
+                </div>
+                <div id="clCatalogList"><div class="cl-loading">Yuklanmoqda...</div></div>
+                <button id="clCatalogMore" class="more-btn" style="display:none" onclick="loadClientCatalogMore()">Yana yuklash ↓</button>
+            </div>
+
+            <!-- AI TAB -->
+            <div id="clTabAi" style="display:none">
+                <div class="cl-chat-box" id="clChatBox">
+                    <div class="cl-chat-intro">
+                        <div style="font-size:48px">🤖</div>
+                        <div style="font-weight:700;font-size:16px;margin:8px 0">AI Sotuvchi-Konsultant</div>
+                        <div style="font-size:13px;color:var(--muted)">Savol bering — tovar tanlashga yordam beraman</div>
+                        <div class="cl-hints">
+                            <button class="cl-hint" onclick="clSendHint(this)">Oshxona uchun nima bor?</button>
+                            <button class="cl-hint" onclick="clSendHint(this)">Eng arzon tovarlar?</button>
+                            <button class="cl-hint" onclick="clSendHint(this)">Sovg'a uchun nima tavsiya qilasiz?</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="cl-chat-input-row">
+                    <input type="text" id="clChatInput" placeholder="Savolingizni yozing..." class="cl-chat-input" onkeydown="if(event.key==='Enter')clSendMsg()">
+                    <button class="cl-chat-send" onclick="clSendMsg()">➤</button>
+                </div>
+            </div>
+
+            <!-- ACCOUNT TAB -->
+            <div id="clTabAccount" style="display:none">
+                <div id="clAccountBody"><div class="cl-loading">Yuklanmoqda...</div></div>
             </div>
         </div>
 
@@ -269,11 +289,17 @@
                     <span class="lbl">Chegirma (so'm)</span>
                     <input type="number" id="cartDiscount" placeholder="0" style="width:120px;text-align:right;border:1px solid #e5e7eb;border-radius:10px;padding:7px 9px;font-size:14px;" oninput="updateCartTotals()">
                 </div>
+                <div class="stat-row">
+                    <span class="lbl">👤 Mijoz</span>
+                    <span class="val" id="cartClientName" style="cursor:pointer;color:#2563eb;font-weight:700;" onclick="openClientPick()">Tanlash ›</span>
+                </div>
                 <div class="stat-row"><span class="lbl">To'lash kerak</span><span class="val val-green" id="cartTotal">0 so'm</span></div>
-                <div style="display:flex;gap:10px;margin-top:14px;">
+                <div style="display:flex;gap:10px;margin-top:14px;" id="cartPayRow">
                     <button class="pay-btn" id="payCashBtn" onclick="finishSale('cash')">💵 Naqd</button>
                     <button class="pay-btn pay-card" id="payCardBtn" onclick="finishSale('card')">💳 Karta</button>
                 </div>
+                <button class="pay-btn" id="payNasiyaBtn" style="display:none;width:100%;margin-top:10px;background:#f59e0b;color:#fff;" onclick="finishSale('nasiya')">🤝 Qarzga (nasiya)</button>
+                <button class="pay-btn" id="payInternalBtn" style="display:none;width:100%;margin-top:10px;background:#7c3aed;color:#fff;" onclick="finishSale('internal')">🔻 Chinor rasxodi (tannarxda)</button>
                 <button class="more-btn" style="margin-top:10px;background:#fee2e2;color:#b91c1c;" onclick="clearCart()">🗑 Savatni tozalash</button>
             </div>
             <div id="cartStatus" class="list-status"></div>
@@ -286,6 +312,17 @@
             </div>
             <div id="reader"></div>
             <div class="scan-hint" id="scanHint">QR yoki shtrix-kodni kamera ramkasi ichiga joylang</div>
+        </div>
+
+        <div id="clientPickModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;padding:40px 16px;">
+            <div style="background:#fff;border-radius:16px;max-width:440px;margin:0 auto;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;">
+                <div style="padding:14px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #eee;">
+                    <h3 style="flex:1;font-size:16px;font-weight:800;margin:0;">👤 Mijoz tanlash</h3>
+                    <button onclick="closeClientPick()" style="border:none;background:#f1f5f9;border-radius:8px;padding:6px 11px;cursor:pointer;font-size:15px;">✕</button>
+                </div>
+                <input id="clientPickSearch" placeholder="🔍 Ism yoki telefon..." oninput="renderClientPick()" style="margin:10px 16px 4px;padding:9px 12px;border:1px solid #e5e7eb;border-radius:10px;font-size:14px;">
+                <div id="clientPickList" style="overflow-y:auto;padding:8px 16px 16px;"></div>
+            </div>
         </div>
 
         <div class="screen" id="screenRegister">
@@ -326,6 +363,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>

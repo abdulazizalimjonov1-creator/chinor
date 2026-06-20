@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chinor Kassa</title>
+  <link rel="stylesheet" href="kassa.css">
+</head>
+<body>
+
+  <!-- ── LOGIN ────────────────────────────────────────────────── -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <img src="logo.png" alt="Chinor" class="login-logo">
+      <h1>Chinor Kassa</h1>
+      <p class="login-sub">Offline kassa terminali</p>
+      <div class="field">
+        <label>Login</label>
+        <input id="loginInput" type="text" placeholder="Login" autocomplete="username" autofocus>
+      </div>
+      <div class="field">
+        <label>Parol</label>
+        <input id="passInput" type="password" placeholder="Parol" autocomplete="current-password">
+      </div>
+      <details class="server-box">
+        <summary>Server manzili va kassa raqami</summary>
+        <input id="serverInput" type="text" placeholder="https://...">
+        <label style="display:block;margin-top:8px;font-size:13px;color:var(--muted)">Kassa raqami (chek raqami prefiksi, masalan 1, 2, 3)</label>
+        <input id="kassaInput" type="number" min="1" max="999" step="1" placeholder="1">
+      </details>
+      <button id="loginBtn" class="btn-primary">Kirish</button>
+      <div id="loginErr" class="login-err"></div>
+    </div>
+  </div>
+
+  <!-- ── KASSA ────────────────────────────────────────────────── -->
+  <div id="kassaScreen" class="kassa-screen hidden">
+    <header class="topbar">
+      <div class="brand">
+        <img src="logo.png" alt="" class="topbar-logo">
+        <span>Chinor Kassa</span>
+      </div>
+      <div class="topbar-right">
+        <button id="updateBtn" class="btn-update hidden"></button>
+        <span id="clientChip" class="badge badge-client hidden"></span>
+        <span id="netBadge" class="badge badge-off">● Offline</span>
+        <span id="pendingBadge" class="badge badge-pending hidden">⏳ 0</span>
+        <button id="bindBtn" class="btn-ghost" title="Shtrix-kod biriktirish rejimi"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1"/><line x1="7" y1="9" x2="7" y2="15"/><line x1="10.5" y1="9" x2="10.5" y2="15"/><line x1="13.5" y1="9" x2="13.5" y2="15"/><line x1="17" y1="9" x2="17" y2="15"/></svg><span id="bindBtnLabel">Shtrix</span></button>
+        <button id="shiftBtn" class="btn-ghost" title="Smena"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg><span id="shiftBtnLabel">Smena</span></button>
+        <button id="lockBtn" class="btn-ghost" title="Kassani qulflash (almashtirish)"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Qulflash</button>
+        <button id="hotkeyBtn" class="btn-ghost" title="Tezkor tugmalar"><svg class="ico" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6" y2="9"/><line x1="10" y1="9" x2="10" y2="9"/><line x1="14" y1="9" x2="14" y2="9"/><line x1="18" y1="9" x2="18" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg></button>
+        <button id="syncBtn" class="btn-ghost" title="Sinxronlash"><svg class="ico" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sinxron</button>
+        <button id="logoutBtn" class="btn-ghost" title="Chiqish"><svg class="ico" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Chiqish</button>
+      </div>
+    </header>
+
+    <div class="workarea">
+      <!-- Chap ustun: savat (tepa) + qidiruv + mahsulotlar (past) -->
+      <div class="leftcol">
+        <!-- SAVAT (tepada) -->
+        <div class="cart-wrap">
+          <div class="cart-head-row">
+            <span class="c-num">№</span>
+            <span class="c-name">Nomi <small>SKU / Shtrix-kod</small></span>
+            <span class="c-price">Narxi</span>
+            <span class="c-qty">Miqdor</span>
+            <span class="c-stock">Qoldiq</span>
+            <span class="c-disc">Chegirma</span>
+            <span class="c-sum">Summa</span>
+          </div>
+          <div id="cartBody" class="cart-body">
+            <div class="cart-empty">Savat bo'sh — mahsulot qo'shing</div>
+          </div>
+        </div>
+
+        <!-- CHEK TAB'LARI -->
+        <div id="checkTabs" class="check-tabs"></div>
+
+        <!-- Shtrix biriktirish rejimi banneri -->
+        <div id="bindBar" class="bind-bar hidden"></div>
+
+        <!-- QIDIRUV -->
+        <div class="search-row">
+          <div class="search-wrap">
+            <svg class="ico search-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="scanInput" class="scan-input" type="text" autocomplete="off"
+                   placeholder="Nomi yoki SKU bilan qidiring · shtrix-kodni skaner qiling">
+          </div>
+        </div>
+
+        <!-- MAHSULOTLAR (pastda) -->
+        <div class="plist-wrap">
+          <div class="plist-head">
+            <span class="ph-sku">SKU</span>
+            <span class="ph-name">Nomi</span>
+            <span class="ph-qty">Qoldiq</span>
+            <span class="ph-price">Dona narx</span>
+            <span class="ph-whole">Ulgurji</span>
+          </div>
+          <div id="productList" class="product-list"></div>
+        </div>
+      </div>
+
+      <!-- O'ng ustun: o'chirish + rejim + raqamli klaviatura + to'lov -->
+      <aside class="rightcol">
+        <div class="action-row">
+          <button id="clientBtn" class="act-btn"><kbd class="key-hint">F2</kbd><svg class="ico" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Klient</button>
+          <button id="checksBtn" class="act-btn"><kbd class="key-hint">F3</kbd><svg class="ico" viewBox="0 0 24 24"><path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Cheklar</button>
+          <button id="draftBtn" class="act-btn"><kbd class="key-hint">F1</kbd><svg class="ico" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>Qoralama</button>
+        </div>
+        <button id="delRowBtn" class="btn-del"><svg class="ico" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Qatorni o'chirish</button>
+
+        <div class="mode-row">
+          <button class="mode-btn active" data-mode="qty">Miqdor</button>
+          <button class="mode-btn" data-mode="price">Narx</button>
+        </div>
+
+        <div class="keypad">
+          <button class="kp" data-d="7">7</button>
+          <button class="kp" data-d="8">8</button>
+          <button class="kp" data-d="9">9</button>
+          <button class="kp" data-d="4">4</button>
+          <button class="kp" data-d="5">5</button>
+          <button class="kp" data-d="6">6</button>
+          <button class="kp" data-d="1">1</button>
+          <button class="kp" data-d="2">2</button>
+          <button class="kp" data-d="3">3</button>
+          <button class="kp" data-d="00">00</button>
+          <button class="kp" data-d="0">0</button>
+          <button class="kp kp-back" id="kpBack">⌫</button>
+        </div>
+
+        <div class="print-toggle-row">
+          <button class="print-toggle active" data-print="1x"><svg class="ico" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>1x</button>
+          <button class="print-toggle" data-print="no"><svg class="ico" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>—</button>
+        </div>
+
+        <div class="pay-row">
+          <button class="pay-toggle active" data-pay="cash"><kbd class="key-hint">F6</kbd><svg class="ico" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>Naqd</button>
+          <button class="pay-toggle" data-pay="card"><svg class="ico" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>Karta</button>
+          <button class="pay-toggle" data-pay="click"><svg viewBox="0 0 24 24" width="19" height="19" style="flex:0 0 auto"><defs><linearGradient id="clkg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#2BC4FF"/><stop offset="1" stop-color="#0A6BFF"/></linearGradient></defs><path d="M12 1.8c5 .25 8.4 4.3 8.4 9.9 0 5.9-3.9 10.5-8.4 10.5S3.6 17.6 3.6 11.7C3.6 6.1 7 2.05 12 1.8Zm0 5.1a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Z" fill="url(#clkg)"/></svg>CLICK</button>
+          <button class="pay-toggle" data-pay="nasiya"><svg class="ico" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 0 1 2-2h2"/><path d="M9 9h6M9 13h4"/></svg>Qarz</button>
+        </div>
+
+        <div id="discLine" class="disc-line hidden"></div>
+        <div class="summa-box">
+          <span class="summa-label">Jami <kbd class="key-hint key-hint-light">F4</kbd></span>
+          <span id="grandTotal" class="summa-val">0</span>
+        </div>
+
+        <div class="sell-row">
+          <button id="simpleBtn" class="btn-sell-sm">📄 Chek</button>
+          <button id="payQrBtn" class="btn-sell"><kbd class="key-hint">F9</kbd>💳 To'lov</button>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span id="stCashier"></span>
+      <span id="stSync" class="muted"></span>
+    </footer>
+  </div>
+
+  <!-- Klient modal -->
+  <div id="clientModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-head"><span>👤 Klient tanlash</span><button class="modal-x" data-close>✕</button></div>
+      <input id="clientSearch" class="modal-search" type="text" placeholder="Klient nomini qidiring...">
+      <div id="clientList" class="modal-list"></div>
+      <button id="clientClear" class="modal-btn-wide">Oddiy mijoz (klientsiz)</button>
+    </div>
+  </div>
+
+  <!-- Cheklar — butun oynali (Telegram uslubi) -->
+  <div id="receiptsScreen" class="receipts-screen hidden">
+    <header class="rc-head">
+      <button id="rcBack" class="btn-ghost"><svg class="ico" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Orqaga</button>
+      <div class="rc-title">Cheklar</div>
+      <div class="rc-tabs">
+        <select id="rcPrinter" class="rc-printer" title="Chek printeri"></select>
+        <button class="rc-tab active" data-tab="sales">Hamma cheklar</button>
+        <button class="rc-tab" data-tab="drafts">Qoralamalar</button>
+      </div>
+    </header>
+    <!-- Eski cheklarni qidirish: oy / sana / to'lov turi / SKU·chek№ -->
+    <div id="rcFilters" class="rc-filters">
+      <div class="rc-f-main">
+        <div class="rc-search-wrap">
+          <svg class="rc-search-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="rcSearch" class="rc-search-input" type="text" placeholder="Chek № · mahsulot SKU · shtrix-kod · nomi · klient" autocomplete="off">
+          <button id="rcSearchClear" class="rc-search-clear hidden" title="Tozalash">✕</button>
+        </div>
+        <input id="rcDate" class="rc-date" type="date" title="Sana bo'yicha">
+      </div>
+      <div class="rc-f-chips">
+        <span class="rc-f-label">Oy</span>
+        <div id="rcMonths" class="rc-chips"></div>
+      </div>
+      <div class="rc-f-chips">
+        <span class="rc-f-label">To'lov</span>
+        <div id="rcPayFilters" class="rc-chips">
+          <button class="rc-chip active" data-pay="">Hammasi</button>
+          <button class="rc-chip" data-pay="cash">💵 Naqd</button>
+          <button class="rc-chip" data-pay="click">⚡ Click</button>
+          <button class="rc-chip" data-pay="card">💳 Karta</button>
+          <button class="rc-chip" data-pay="qarz">🤝 Qarz (nasiya)</button>
+          <button class="rc-chip" data-pay="qaytarish">↩️ Qaytarish</button>
+        </div>
+      </div>
+      <div id="rcResultMeta" class="rc-result-meta"></div>
+    </div>
+    <div class="rc-body">
+      <div id="rcList" class="rc-list"></div>
+      <div id="rcDetail" class="rc-detail"><div class="rc-empty-detail">Chekni tanlang</div></div>
+    </div>
+  </div>
+
+  <!-- Tahrirlash modal -->
+  <div id="editModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span id="editName">Tahrirlash</span><button class="modal-x" data-close>✕</button></div>
+      <div class="edit-field"><label>Narx (so'm)</label><input id="editPrice" type="number" min="0" step="500"></div>
+      <div class="edit-field"><label>Miqdor</label><input id="editQty" type="number" min="1" step="1"></div>
+      <div id="editDiscInfo" class="edit-disc">Chegirma: —</div>
+      <div class="edit-total">Jami: <b id="editTotal">0</b> so'm</div>
+      <div class="edit-actions">
+        <button id="editCancel" class="modal-btn" data-close>Bekor</button>
+        <button id="editSave" class="modal-btn primary">Saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Umumiy summa modal -->
+  <div id="totalModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>Umumiy summa</span><button class="modal-x" data-close>✕</button></div>
+      <div class="edit-total" id="totalNatural" style="text-align:left;padding-top:14px;">Hozirgi: 0 so'm</div>
+      <div class="edit-field"><label>Yakuniy summa (so'm)</label><input id="totalInput" type="number" min="0" step="1000"></div>
+      <div id="totalDiscInfo" class="edit-disc">Chegirma: —</div>
+      <div class="edit-actions">
+        <button id="totalReset" class="modal-btn">Tiklash</button>
+        <button id="totalSave" class="modal-btn primary">Saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Qaytarish (refund) modal — ikki panelli terish -->
+  <div id="returnModal" class="modal-overlay hidden">
+    <div class="modal modal-return">
+      <div class="modal-head"><span id="returnTitle">↩️ Mahsulotni qaytarish</span><button class="modal-x" data-close>✕</button></div>
+      <div class="ret-help">Chap tomondan tovar ustiga bosing → miqdorni yozib (yoki to'g'ridan-to'g'ri) <b>Enter</b> bosing → o'ngdagi qaytarish ro'yxatiga o'tadi.</div>
+      <div class="ret-panes">
+        <div class="ret-pane ret-src">
+          <div class="ret-pane-head"><span>Chekdagi tovarlar</span><button id="retAddAll" class="ret-mini">Hammasini →</button></div>
+          <div id="retSrcList" class="ret-pane-list"></div>
+        </div>
+        <div class="ret-pane ret-basket">
+          <div class="ret-pane-head"><span>↩️ Qaytariladi</span><button id="retClear" class="ret-mini">Tozalash</button></div>
+          <div id="retBasketList" class="ret-pane-list"></div>
+        </div>
+      </div>
+      <div class="return-foot">
+        <div class="ret-method-label">Pulni qanday qaytaramiz?</div>
+        <div id="returnMethods" class="ret-methods">
+          <button class="ret-m active" data-m="cash">💵 Naqd</button>
+          <button class="ret-m" data-m="card">💳 Karta</button>
+          <button class="ret-m" data-m="click">⚡ Click</button>
+          <button class="ret-m ret-m-debt hidden" data-m="debt">🤝 Qarzdan ayirish</button>
+        </div>
+        <div class="return-total">Qaytariladi: <b id="returnTotal">0</b> so'm</div>
+        <div class="edit-actions">
+          <button class="modal-btn" data-close>Bekor</button>
+          <button id="returnConfirm" class="modal-btn danger">↩️ Qaytarish</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Smena (shift) modal -->
+  <div id="shiftModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span id="shiftTitle">Smena</span><button class="modal-x" data-close>✕</button></div>
+      <div id="shiftBody" class="shift-body"></div>
+    </div>
+  </div>
+
+  <!-- Tezkor tugmalar yordami (F1) -->
+  <div id="hotkeyHelp" class="hotkey-help hidden">
+    <div class="hk-title">Tezkor tugmalar</div>
+    <div class="hk-row"><kbd>F1</kbd><span>Qoralama (savatni saqlash)</span></div>
+    <div class="hk-row"><kbd>F2</kbd><span>Klient tanlash</span></div>
+    <div class="hk-row"><kbd>F3</kbd><span>Cheklar / qaytarish</span></div>
+    <div class="hk-row"><kbd>F4</kbd><span>Umumiy summa (chegirma)</span></div>
+    <div class="hk-row"><kbd>F6</kbd><span>Naqd sotish (chek)</span></div>
+    <div class="hk-row"><kbd>F9</kbd><span>To'lov · QR</span></div>
+    <div class="hk-row"><kbd>↑ ↓</kbd><span>Qatorni tanlash</span></div>
+    <div class="hk-row"><kbd>← →</kbd><span>Miqdorni kamaytirish / oshirish</span></div>
+    <div class="hk-row"><kbd>Del</kbd><span>Qatorni o'chirish</span></div>
+    <div class="hk-row"><kbd>Esc</kbd><span>Yopish</span></div>
+  </div>
+
+  <!-- Kassani qulflashdan oldin naqdni sanash (1-tekshiruv) -->
+  <div id="lockCountModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>🔒 Kassani qulflash</span><button class="modal-x" data-close>✕</button></div>
+      <div class="lc-body">
+        <div class="lc-line">Kutilayotgan naqd: <b id="lcExpected">0</b> so'm</div>
+        <div class="edit-field"><label>Kassadagi haqiqiy naqdni sanang (so'm)</label>
+          <input id="lcCount" type="number" min="0" step="1000" inputmode="numeric"></div>
+        <div id="lcDiff" class="lock-diff"></div>
+        <div class="edit-actions">
+          <button class="modal-btn" data-close>Bekor</button>
+          <button id="lcConfirm" class="modal-btn primary">🔒 Sanadim — qulflash</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kassa qulfi (lock-ekran) — Win-lock uslubida, kassir parol bilan kiradi -->
+  <div id="lockScreen" class="lock-screen hidden">
+    <div class="lock-card">
+      <img src="logo.png" alt="" class="lock-logo">
+      <div id="lockTitle" class="lock-title">Kassa qulflangan</div>
+      <div id="lockSub" class="lock-sub">Davom etish uchun parolingizni kiriting</div>
+
+      <!-- PIN kiritish -->
+      <div id="lockPinView" class="lock-view">
+        <div id="lockDots" class="lock-dots"></div>
+        <div id="lockMsg" class="lock-msg"></div>
+        <div class="lock-pad">
+          <button class="lk" data-d="1">1</button>
+          <button class="lk" data-d="2">2</button>
+          <button class="lk" data-d="3">3</button>
+          <button class="lk" data-d="4">4</button>
+          <button class="lk" data-d="5">5</button>
+          <button class="lk" data-d="6">6</button>
+          <button class="lk" data-d="7">7</button>
+          <button class="lk" data-d="8">8</button>
+          <button class="lk" data-d="9">9</button>
+          <button class="lk lk-back" data-act="back">⌫</button>
+          <button class="lk" data-d="0">0</button>
+          <button class="lk lk-ok" data-act="ok">→</button>
+        </div>
+        <button id="lockAddCashier" class="lock-link">+ Yangi kassir qo'shish</button>
+      </div>
+
+      <!-- Smena ochish (boshlang'ich naqd) -->
+      <div id="lockOpenView" class="lock-view hidden">
+        <div class="lock-field"><label>Kassada boshlang'ich naqd (so'm)</label>
+          <input id="lockOpenCash" type="number" min="0" step="1000" value="0" inputmode="numeric"></div>
+        <div class="lock-actions">
+          <button id="lockOpenCancel" class="lk-btn">Bekor</button>
+          <button id="lockOpenConfirm" class="lk-btn primary">Smenani ochish</button>
+        </div>
+      </div>
+
+      <!-- Topshirish (kassani sanab olish — 2-tekshiruv) -->
+      <div id="lockHandoverView" class="lock-view hidden">
+        <div id="lockHandoverInfo" class="lock-handover-info"></div>
+        <div class="lock-field"><label>Kassadagi haqiqiy naqdni sanang (so'm)</label>
+          <input id="lockCountCash" type="number" min="0" step="1000" inputmode="numeric"></div>
+        <div id="lockDiff" class="lock-diff"></div>
+        <div class="lock-actions">
+          <button id="lockHandoverCancel" class="lk-btn">Bekor</button>
+          <button id="lockHandoverConfirm" class="lk-btn primary">Tasdiqlab kassani olish</button>
+        </div>
+      </div>
+
+      <!-- Kassir qo'shish -->
+      <div id="lockAddView" class="lock-view hidden">
+        <div class="lock-field"><label>Kassir ismi</label><input id="lockNewName" type="text" autocomplete="off"></div>
+        <div class="lock-field"><label>Yangi parol (4–6 raqam)</label><input id="lockNewPin" type="password" inputmode="numeric" autocomplete="off"></div>
+        <div id="lockAuthRow" class="lock-field"><label>Tasdiqlash: mavjud kassir paroli</label><input id="lockAuthPin" type="password" inputmode="numeric" autocomplete="off"></div>
+        <div class="lock-actions">
+          <button id="lockAddCancel" class="lk-btn">Bekor</button>
+          <button id="lockAddConfirm" class="lk-btn primary">Qo'shish</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chek / xabar -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="kassa.js"></script>
+</body>
+</html>

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import time
+import asyncio
 import mimetypes
 import json as _json
 import sqlite3
@@ -39,6 +40,142 @@ logger = logging.getLogger(__name__)
 
 ROUTES = web.RouteTableDef()
 
+
+async def _gemini_describe_image(fpath: str) -> str:
+    """Rasmni AI orqali tahlil qilib o'zbek tilida tavsif qaytaradi.
+    Avval Groq (tez, bepul), keyin Gemini (zaxira)."""
+    prompt = ("Bu tovar rasmi. O'zbek tilida 1-2 jumlada qisqa va jozibali tavsif yoz. "
+              "Faqat tovar haqida yoz, narx yoki do'kon haqida yozma.")
+    with open(fpath, "rb") as f:
+        img_bytes = f.read()
+    import base64
+    img_b64 = base64.b64encode(img_bytes).decode()
+
+    # 1) Groq vision (meta-llama/llama-4-scout)
+    try:
+        from bot.config import GROQ_API_KEY
+        if GROQ_API_KEY:
+            from groq import Groq
+            client = Groq(api_key=GROQ_API_KEY)
+            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
+                client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=[{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                        {"type": "text", "text": prompt}
+                    ]}],
+                    max_tokens=200,
+                )
+            )
+            desc = (resp.choices[0].message.content or "").strip()
+            if desc:
+                logger.info(f"🤖 Groq tavsif: {desc[:80]}...")
+                return desc
+    except Exception as e:
+        logger.warning(f"🤖 Groq xato: {e}")
+
+    # 2) Gemini (zaxira)
+    try:
+        from bot.config import GEMINI_API_KEY, GEMINI_MODEL
+        if GEMINI_API_KEY:
+            import importlib
+            genai = importlib.import_module("google.genai")
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            Part = genai.types.Part
+            response = await asyncio.get_event_loop().run_in_executor(None, lambda:
+                client.models.generate_content(
+                    model=GEMINI_MODEL or "gemini-2.0-flash",
+                    contents=[
+                        Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+                        prompt
+                    ]
+                )
+            )
+            desc = (response.text or "").strip()
+            if desc:
+                logger.info(f"🤖 Gemini tavsif: {desc[:80]}...")
+                return desc
+    except Exception as e:
+        logger.warning(f"🤖 Gemini xato: {e}")
+
+    return ""
+
+
+async def _post_product_to_channel(db, p: dict, pid: int):
+    """Mahsulot saqlanganidan keyin kanalga post yuboradi.
+    Rasm bo'lmasa — yuklamaydi. Gemini bilan qisqa tavsif yozadi."""
+    try:
+        if not db.is_channel_enabled():
+            return
+        bot = getattr(db, "_bot", None)
+        if not bot or not CHANNEL_ID:
+            return
+
+        # Rasmni topamiz (image_url — local fayl)
+        image_url = p.get("image_url", "") or ""
+        if not image_url:
+            return  # Rasm yo'q — kanalga yubormaymiz
+
+        fpath = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            image_url.lstrip("/").replace("api/img/", "uploads/")
+        )
+        if not os.path.exists(fpath):
+            logger.warning(f"📢 Rasm fayli topilmadi: {fpath}")
+            return
+
+        # Gemini bilan rasm tahlili
+        ai_desc = await _gemini_describe_image(fpath)
+
+        from database._formatters import _fmt_product
+        cap = _fmt_product(p, ai_desc=ai_desc)
+        markup = db._buy_markup(pid)
+
+        from aiogram.types import FSInputFile
+        # Eski kanal postini o'chirib, yangi yuboramiz
+        old_mid = p.get("channel_msg_id", 0)
+        if old_mid:
+            try:
+                await bot.delete_message(CHANNEL_ID, old_mid)
+            except Exception:
+                pass
+
+        msg = await bot.send_photo(
+            CHANNEL_ID,
+            FSInputFile(fpath),
+            caption=cap,
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+        tg_file_id = msg.photo[-1].file_id
+        mid = msg.message_id
+        # _refresh_product ni chaqirmaslik uchun to'g'ridan SQL ga yozamiz
+        # AI tavsifini description ga ham saqlaymiz (bo'sh bo'lsa)
+        from database._helpers import DB_PATH
+        def _save_ids():
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            try:
+                cur_desc = (conn.execute(
+                    "SELECT description FROM products WHERE id=?", (pid,)
+                ).fetchone() or [""])[0] or ""
+                if ai_desc and not cur_desc.strip():
+                    conn.execute(
+                        "UPDATE products SET image_file_id=?, channel_msg_id=?, description=? WHERE id=?",
+                        (tg_file_id, mid, ai_desc, pid)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE products SET image_file_id=?, channel_msg_id=? WHERE id=?",
+                        (tg_file_id, mid, pid)
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        await asyncio.get_event_loop().run_in_executor(None, _save_ids)
+        logger.info(f"📢 Kanalga yuborildi: pid={pid}, mid={mid}")
+    except Exception as e:
+        logger.warning(f"📢 Kanalga yuborishda xato: {e}")
+
 # Session token store — SQLite'ga yoziladi, bot qayta ishganda ham saqlanadi
 _SESSION_TTL = 1800  # 30 daqiqa
 
@@ -54,10 +191,11 @@ def _sess_db() -> sqlite3.Connection:
     conn.commit()
     return conn
 
-def _create_session(auth: dict) -> str:
-    """Yangi session token yaratib, SQLite'ga saqlaydi."""
+def _create_session(auth: dict, ttl: float = _SESSION_TTL) -> str:
+    """Yangi session token yaratib, SQLite'ga saqlaydi.
+    ttl — token amal qilish muddati (sekundda). Desktop kassa uchun uzunroq."""
     token = secrets.token_urlsafe(32)
-    expires = time.time() + _SESSION_TTL
+    expires = time.time() + ttl
     conn = _sess_db()
     try:
         conn.execute(
@@ -335,6 +473,76 @@ async def api_me(request: web.Request):
 
 # ─── Mahsulotlar ────────────────────────────────────────────────────────────
 
+@ROUTES.get("/api/client/top")
+async def api_client_top(request: web.Request):
+    """Klientlar uchun: ko'p sotilgan va yangi tovarlar."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        top = await _db.top_selling_products(limit=12)
+    except Exception:
+        top = []
+    # Yangi tovarlar — so'nggi 30 kun ichida qo'shilganlar
+    try:
+        all_prods = await _db.get_all_products(active_only=True)
+        from database._helpers import _now
+        import time as _time
+        cutoff = _time.time() - 30 * 86400
+        new_prods = []
+        for p in all_prods:
+            try:
+                import datetime
+                dt = datetime.datetime.fromisoformat(p["created_at"].replace("Z",""))
+                if dt.timestamp() > cutoff and p.get("image_url"):
+                    new_prods.append(p)
+            except Exception:
+                pass
+        new_prods = new_prods[-12:]
+        new_prods.reverse()
+    except Exception:
+        new_prods = []
+    def _clip(lst):
+        return [_product_json(p, "client", "dona") for p in lst]
+    return web.json_response({"ok": True, "top": _clip(top), "new": _clip(new_prods)})
+
+
+@ROUTES.post("/api/client/consult")
+async def api_client_consult(request: web.Request):
+    """Klient AI sotuvchiga savol beradi."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    question = (body.get("question") or "").strip()
+    if not question:
+        return _err("Savol bo'sh")
+    try:
+        from bot.gemini_analyzer import expand_query_keywords, consult_client
+        keywords = await expand_query_keywords(question)
+        candidates = []
+        seen = set()
+        for kw in keywords[:6]:
+            rows = await _db.search_products(kw, limit=6)
+            for p in rows:
+                if p["id"] not in seen:
+                    seen.add(p["id"])
+                    candidates.append(p)
+        answer = await consult_client(question, candidates)
+        import re
+        ids = re.findall(r"#(\d{2,10})", answer or "")
+        mentioned = []
+        for sid in ids[:5]:
+            p = await _db.get_product(int(sid))
+            if p:
+                mentioned.append(_product_json(p, "client", "dona"))
+        return web.json_response({"ok": True, "answer": answer, "products": mentioned})
+    except Exception as e:
+        return _err(f"AI xato: {e}", 500)
+
+
 @ROUTES.get("/api/products")
 async def api_products(request: web.Request):
     from database.channel_db import db as _db
@@ -367,6 +575,9 @@ async def api_products(request: web.Request):
         # Mijozga faqat qoldig'i borlar; adminga hammasi
         if role == "client":
             prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
+
+    # Mahsulotlar SKU (id) raqami bo'yicha o'sish tartibida: 10000, 10001, ...
+    prods.sort(key=lambda p: (p.get("id") or 0))
 
     total = len(prods)
     start = page * page_size
@@ -484,6 +695,10 @@ async def api_product_save(request: web.Request):
             barcode=barcode, category_id=cat_id, supplier_id=sup_id,
         )
     p = await _db.get_product_any(new_id)
+
+    # Saqlashdan keyin kanalga yuborish (rasm bo'lsa)
+    asyncio.ensure_future(_post_product_to_channel(_db, p or {}, new_id))
+
     return web.json_response({"ok": True, "id": new_id,
                               "product": _product_json(p, "admin", "dona")})
 
@@ -585,37 +800,11 @@ async def api_product_image(request: web.Request):
     url = f"/api/img/{fname}"
     if pid:
         try:
-            await _db.update_product(pid, image_url=url)
+            await _db.update_product(pid, image_url=url, image_file_id="")
             logger.info(f"📸 Database'ga saqland'i: pid={pid}, url={url}")
         except Exception as e:
             logger.error(f"📸 Bazaga yozilmadi: {e}")
             return _err(f"Bazaga yozilmadi: {e}", 500)
-
-        # Kanalga yuborish
-        bot = getattr(_db, "_bot", None)
-        if bot and CHANNEL_ID and _db.is_channel_enabled():
-            try:
-                from aiogram.types import FSInputFile
-                from database._formatters import _fmt_product
-                p = await _db.get_product_any(pid)
-                cap = _fmt_product(p) if p else ""
-                markup = _db._buy_markup(pid)
-                msg = await bot.send_photo(
-                    CHANNEL_ID,
-                    FSInputFile(fpath),
-                    caption=cap,
-                    parse_mode="HTML",
-                    reply_markup=markup,
-                )
-                tg_file_id = msg.photo[-1].file_id
-                mid = msg.message_id
-                await _db.update_product(pid,
-                    image_file_id=tg_file_id,
-                    channel_msg_id=mid,
-                )
-                logger.info(f"📢 Kanalga yuborildi: mid={mid}, file_id={tg_file_id[:20]}...")
-            except Exception as e:
-                logger.warning(f"📢 Kanalga yuborishda xato (kritik emas): {e}")
     else:
         logger.warning("📸 pid=0, rasm saqland'i lekin database'ga yozilmadi")
     logger.info(f"📸 Yuklash muvaffaqiyatli: {url}")
@@ -683,6 +872,10 @@ async def api_stats(request: web.Request):
             "profit_sum": float(s.get("profit", 0) or 0),
             "profit_usd": float(s.get("profit_usd", 0) or 0),
             "cost_sum": float(s.get("cost", 0) or 0),
+            # «Chinor» ichki rasxod (tannarx bo'yicha, foydaga kirmaydi)
+            "expense_sum": float(s.get("expense", 0) or 0),
+            "expense_usd": float(s.get("expense_usd", 0) or 0),
+            "expense_count": s.get("expense_count", 0),
         }
 
     top_list = [{
@@ -891,6 +1084,40 @@ async def api_sale(request: web.Request):
     if not items_in:
         return _err("Savat bo'sh")
 
+    # Mijoz + savdo turi (qarzga / Chinor ichki rasxod)
+    try:
+        client_id = int(body.get("client_id") or 0)
+    except (TypeError, ValueError):
+        client_id = 0
+    is_nasiya = bool(body.get("is_nasiya"))
+    is_internal = bool(body.get("is_internal"))
+
+    client = None
+    if client_id:
+        client = await _db.get_client_by_id(client_id)
+        if not client:
+            return _err("Mijoz topilmadi", 404)
+    # Ichki rasxod (Chinor): mijoz ichki bo'lishi shart
+    if is_internal:
+        if not client or not client.get("is_internal"):
+            client = await _db.get_internal_client()
+            if not client:
+                return _err("«Chinor» ichki mijozi topilmadi", 400)
+            client_id = client["id"]
+        is_nasiya = False
+    elif client and client.get("is_internal"):
+        # «Chinor» tanlangan — har qanday holatda ichki rasxod
+        is_internal = True
+        is_nasiya = False
+    # Nasiya (qarzga): faqat ruxsat berilgan mijozga
+    if is_nasiya:
+        if not _db.is_nasiya_enabled():
+            return _err("Nasiya (qarzga) savdo o'chirilgan")
+        if not client:
+            return _err("Nasiya uchun mijoz tanlang")
+        if not client.get("allow_credit"):
+            return _err("Bu mijozga qarzga savdo ruxsat etilmagan")
+
     rate = _db.get_usd_rate()
     sale_items = []
     # Mahsulotlarni tekshirib, narxni SERVER hisoblaydi (mijoz narxiga ishonmaymiz)
@@ -928,16 +1155,26 @@ async def api_sale(request: web.Request):
 
     try:
         kw = {}
-        if payment == "cash":
-            kw = {"paid_cash": eff_sum}
+        if is_internal:
+            # «Chinor» ichki rasxod — to'lov/chegirma yo'q, narx tannarxda
+            kw = {"is_internal": True, "client_id": client_id}
+        elif is_nasiya:
+            # Qarzga — to'liq summa mijoz qarziga yoziladi
+            kw = {"is_nasiya": True, "client_id": client_id}
         else:
-            kw = {"paid_card": eff_sum}
+            if payment == "cash":
+                kw["paid_cash"] = eff_sum
+            else:
+                kw["paid_card"] = eff_sum
+            if client_id:
+                kw["client_id"] = client_id  # chek mijozga Telegram orqali ketadi
         sale = await _db.create_sale(
             auth["tg_id"],
             auth["user"].get("full_name") or "Mini App",
             sale_items,
             paid_currency="sum",
-            override_total_sum=override_sum,
+            override_total_sum=(0 if is_internal else override_sum),
+            source="miniapp",
             **kw,
         )
     except Exception as e:
@@ -949,7 +1186,312 @@ async def api_sale(request: web.Request):
         "total_sum": float(sale.get("total", 0) or 0),
         "items_count": len(sale_items),
         "change_sum": float(sale.get("change", 0) or 0),
+        "is_nasiya": bool(sale.get("is_nasiya")),
+        "is_internal": bool(sale.get("is_internal")),
     })
+
+
+# ─── Desktop kassa (offline) sinxronizatsiya ───────────────────────────────
+# Windows kassa ilovasi internetsiz ishlaydi, internet kelganda shu
+# endpoint'lar orqali sotuvlarni serverga yuboradi va katalogni yangilaydi.
+
+_DESKTOP_SESSION_TTL = 24 * 3600  # 24 soat — kassa kun bo'yi ochiq turadi
+
+
+@ROUTES.post("/api/desktop/login")
+async def api_desktop_login(request: web.Request):
+    """Kassa terminali uchun login (Telegram initData'siz).
+    Faqat admin + 'sale' ruxsatiga ega hisoblar kira oladi.
+    Uzoq muddatli (24 soat) session token qaytaradi."""
+    from database.channel_db import db as _db
+    from bot.permissions import has_permission
+
+    body = await _read_json(request)
+    login_in = (body.get("login") or "").strip()
+    password_in = (body.get("password") or "").strip()
+    if not login_in or not password_in:
+        return _err("Login yoki parol bo'sh")
+    if len(login_in) > 64 or len(password_in) > 128:
+        return _err("Maydon juda uzun")
+
+    result = await verify_login(_db, login_in, password_in)
+    if not result or result.get("role") != "admin":
+        return _err("Login yoki parol noto'g'ri (faqat kassir/admin kira oladi)", 401)
+
+    user = result["user"]
+    tg_id = int(user.get("telegram_id") or user.get("id") or 0)
+    if tg_id != GLAVNIY_ADMIN_ID and not await has_permission(_db, tg_id, "sale"):
+        return _err("Bu hisobda kassada sotuv ruxsati yo'q", 403)
+
+    auth_info = {
+        "role": "admin", "tg_id": tg_id, "user": user,
+        "is_glavniy": (tg_id == GLAVNIY_ADMIN_ID), "desktop": True,
+    }
+    token = _create_session(auth_info, ttl=_DESKTOP_SESSION_TTL)
+    return web.json_response({
+        "ok": True,
+        "session_token": token,
+        "cashier": {
+            "id": tg_id,
+            "name": user.get("full_name") or user.get("username") or login_in,
+        },
+        "usd_rate": _db.get_usd_rate(),
+    })
+
+
+@ROUTES.get("/api/sync/catalog")
+async def api_sync_catalog(request: web.Request):
+    """Offline kesh uchun barcha aktiv mahsulotlar + USD kurs."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    prods = await _db.get_all_products(active_only=True)
+    out = []
+    for p in prods:
+        out.append({
+            "id": p["id"],
+            "name": p.get("name", ""),
+            "barcode": str(p.get("barcode") or "").strip(),
+            "unit": p.get("unit", "dona"),
+            "qty": float(p.get("qty", 0) or 0),
+            "sell_price_sum": float(p.get("sell_price", 0) or 0),
+            "sell_price_usd": float(p.get("sell_price_usd", 0) or 0),
+            "wholesale_sum": float(p.get("wholesale_price", 0) or 0),
+            "wholesale_usd": float(p.get("wholesale_price_usd", 0) or 0),
+            "image_url": p.get("image_url", "") or "",
+        })
+    clients = []
+    try:
+        for c in await _db.get_all_clients():
+            clients.append({
+                "id": c["id"],
+                "name": c.get("shop_name") or c.get("username") or f"Mijoz #{c['id']}",
+                "type": (c.get("client_type") or "dona"),
+                "debt_sum": float(c.get("debt", 0) or 0),
+                "is_internal": 1 if c.get("is_internal") else 0,
+                "allow_credit": 1 if c.get("allow_credit") else 0,
+            })
+    except Exception as e:
+        logger.warning(f"[sync/catalog] klientlar xato: {e}")
+
+    return web.json_response({
+        "ok": True,
+        "usd_rate": _db.get_usd_rate(),
+        "products": out,
+        "count": len(out),
+        "clients": clients,
+    })
+
+
+@ROUTES.post("/api/sync/sales")
+async def api_sync_sales(request: web.Request):
+    """Offline kassada qilingan sotuvlar to'plamini bazaga yozadi.
+    Har bir sotuv: {local_id, items:[{product_id, qty, price_sum?}],
+                    payment, discount_sum, created_at}.
+    Qaytaradi: har bir local_id uchun {ok, server_id|error}.
+    Internet uzilib qaytsa, kassa faqat YUBORILMAGAN sotuvlarni qayta yuboradi,
+    shuning uchun bu yerda dublikat bo'lmasligi kassa tomonida ta'minlanadi."""
+    from database.channel_db import db as _db
+    from database._helpers import sum_to_usd
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    body = await _read_json(request)
+    sales_in = body.get("sales") or []
+    if not isinstance(sales_in, list):
+        return _err("sales massiv bo'lishi kerak")
+
+    rate = _db.get_usd_rate()
+    results = []
+    for s in sales_in:
+        local_id = s.get("local_id")
+        try:
+            items_in = s.get("items") or []
+            payment = (s.get("payment") or "cash").lower()
+            if payment not in ("cash", "card", "click", "other"):
+                payment = "cash"
+            try:
+                client_id = int(s.get("client_id") or 0)
+            except (TypeError, ValueError):
+                client_id = 0
+            is_nasiya = bool(s.get("is_nasiya"))
+            is_internal = bool(s.get("is_internal"))
+            is_return = bool(s.get("is_return"))
+            created_at = (s.get("created_at") or "").strip()
+            source = (s.get("source") or "").strip()[:80]
+            receipt_no = (s.get("receipt_no") or "").strip()[:32]
+            orig_receipt_no = (s.get("orig_receipt_no") or "").strip()[:32]
+            try:
+                total_in = float(s.get("total_sum") or 0)
+            except (TypeError, ValueError):
+                total_in = 0.0
+
+            sale_items = []
+            subtotal_sum = 0.0
+            for it in items_in:
+                pid = int(it.get("product_id"))
+                qty = float(it.get("qty") or 0)
+                if qty <= 0:
+                    continue
+                # Kassir narxni o'zgartirgan bo'lishi mumkin — avval kassadan
+                # kelgan haqiqiy narxni ishlatamiz; bo'lmasa katalog narxi.
+                price_sum_in = float(it.get("price_sum") or 0)
+                if price_sum_in > 0:
+                    price_usd = round(sum_to_usd(price_sum_in, rate), 4)
+                else:
+                    p = await _db.get_product_any(pid)
+                    price_usd = float(p.get("sell_price_usd", 0) or 0) if p else 0.0
+                    if price_usd <= 0:
+                        base_sum = float(p.get("sell_price", 0) or 0) if p else 0.0
+                        price_usd = round(sum_to_usd(base_sum, rate), 4)
+                sale_items.append({
+                    "product_id": pid, "qty": qty, "price": price_usd,
+                })
+                subtotal_sum += round(price_usd * rate, 2) * qty
+
+            if not sale_items:
+                results.append({"local_id": local_id, "ok": False,
+                                "error": "Savat bo'sh"})
+                continue
+
+            # Qaytarish (refund) — qoldiq tiklanadi, manfiy summali yozuv.
+            # return_method: cash|card|click|debt (debt = mijoz qarzidan ayirish)
+            if is_return:
+                ret_method = (s.get("return_method") or payment or "cash").lower()
+                if ret_method not in ("cash", "card", "click", "other", "debt"):
+                    ret_method = "cash"
+                ret = await _db.create_return(
+                    auth["tg_id"],
+                    auth["user"].get("full_name") or "Kassa (offline)",
+                    sale_items,
+                    method=ret_method,
+                    client_id=client_id,
+                    created_at=created_at,
+                    source=source,
+                    receipt_no=receipt_no,
+                    orig_receipt_no=orig_receipt_no,
+                )
+                results.append({"local_id": local_id, "ok": True,
+                                "server_id": ret["id"]})
+                continue
+
+            # Savdo turi: «Chinor» ichki rasxod / qarzga (nasiya) / oddiy
+            client = await _db.get_client_by_id(client_id) if client_id else None
+            if is_internal or (client and client.get("is_internal")):
+                is_internal = True
+                is_nasiya = False
+                if not client or not client.get("is_internal"):
+                    client = await _db.get_internal_client()
+                    if client:
+                        client_id = client["id"]
+            elif is_nasiya and not client_id:
+                # Nasiya uchun mijoz shart — bo'lmasa oddiy savdo sifatida yoziladi
+                is_nasiya = False
+
+            # Kassada yumaloqlangan/o'zgartirilgan yakuniy jami bo'lsa — o'sha,
+            # bo'lmasa item narxlaridan hisoblangan jami.
+            override_sum = total_in if total_in > 0 else subtotal_sum
+
+            kw = {}
+            if is_internal:
+                kw = {"is_internal": True}
+                override_sum = 0  # ichki rasxod — tannarx bo'yicha, chegirmasiz
+            elif is_nasiya:
+                kw = {"is_nasiya": True}
+            else:
+                eff_sum = override_sum
+                if payment == "cash":
+                    kw = {"paid_cash": eff_sum}
+                elif payment == "card":
+                    kw = {"paid_card": eff_sum}
+                else:  # click / payme / other
+                    kw = {"paid_other": eff_sum}
+
+            sale = await _db.create_sale(
+                auth["tg_id"],
+                auth["user"].get("full_name") or "Kassa (offline)",
+                sale_items,
+                paid_currency="sum",
+                override_total_sum=override_sum,
+                created_at=created_at,
+                client_id=client_id,
+                source=source,
+                receipt_no=receipt_no,
+                **kw,
+            )
+            results.append({"local_id": local_id, "ok": True,
+                            "server_id": sale["id"]})
+        except Exception as e:
+            logger.warning(f"[sync/sales] local_id={local_id} xato: {e}")
+            results.append({"local_id": local_id, "ok": False, "error": str(e)})
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    logger.info(f"[sync/sales] {ok_count}/{len(results)} sotuv qabul qilindi")
+    return web.json_response({"ok": True, "results": results})
+
+
+@ROUTES.get("/api/sync/recent-sales")
+async def api_recent_sales(request: web.Request):
+    """Hamma manbalardan (kassa, bot, mini app) so'nggi sotuvlar — kassa
+    ilovasidagi 'Cheklar' uchun. Har birida manba (qurilma), kassir, vaqt."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    since = (request.query.get("since") or "").strip()
+    # `since` berilsa inkremental sinxron — ko'proq yozuvga ruxsat
+    cap = 1000 if since else 200
+    try:
+        limit = min(cap, max(1, int(request.query.get("limit", "60"))))
+    except (TypeError, ValueError):
+        limit = cap if since else 60
+
+    sales = await _db.get_recent_sales(limit, since)
+    out = []
+    for s in sales:
+        if s.get("is_return"):
+            pay = "qaytarish"
+        elif s.get("is_internal"):
+            pay = "rasxod"
+        elif s.get("is_nasiya"):
+            pay = "qarz"
+        elif float(s.get("paid_card", 0) or 0) > 0:
+            pay = "card"
+        elif float(s.get("paid_other", 0) or 0) > 0:
+            pay = "click"
+        else:
+            pay = "cash"
+        items = [{
+            "name": it.get("name", ""),
+            "qty": it.get("qty", 0),
+            "price_sum": float(it.get("price", 0) or 0),
+            "product_id": it.get("product_id", 0),
+        } for it in (s.get("items") or [])]
+        # Qaytarish bo'lsa — asl chek raqamini source ichidan ajratamiz
+        src = s.get("source", "") or ""
+        orig_rno = src.split("qaytarish←")[1].split(" ")[0] if "qaytarish←" in src else ""
+        out.append({
+            "id": s.get("id"),
+            "receipt_no": s.get("receipt_no", "") or "",
+            "created_at": s.get("created_at", ""),
+            "cashier_name": s.get("cashier_name", "") or "",
+            "source": s.get("source", "") or "",
+            "total_sum": float(s.get("total", 0) or 0),
+            "subtotal_sum": float(s.get("subtotal", 0) or 0),
+            "discount_sum": float(s.get("discount", 0) or 0),
+            "payment": pay,
+            "client_name": s.get("client_name", "") or "",
+            "client_id": int(s.get("client_id", 0) or 0),
+            "is_internal": 1 if s.get("is_internal") else 0,
+            "is_nasiya": 1 if s.get("is_nasiya") else 0,
+            "is_return": 1 if s.get("is_return") else 0,
+            "orig_receipt_no": orig_rno,
+            "items": items,
+        })
+    return web.json_response({"ok": True, "sales": out})
 
 
 # ─── Foydalanuvchilar (admin) ──────────────────────────────────────────────
@@ -973,9 +1515,38 @@ async def api_clients(request: web.Request):
             "debt_usd": float(c.get("debt_usd", 0) or 0),
             "client_type": c.get("client_type", "dona"),
             "telegram_id": c.get("telegram_id", 0),
+            "is_internal": 1 if c.get("is_internal") else 0,
+            "allow_credit": 1 if c.get("allow_credit") else 0,
             "created_at": (c.get("created_at", "") or "")[:16],
         })
     return web.json_response({"ok": True, "items": items, "total": len(items)})
+
+
+@ROUTES.post("/api/client/credit")
+async def api_client_credit(request: web.Request):
+    """Mijozni qarzga (nasiya) savdoga belgilash / belgini olib tashlash.
+    Body: {client_id, allow: true|false}. Faqat admin."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat adminlar uchun", 403)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+    except (TypeError, ValueError):
+        cid = 0
+    if not cid:
+        return _err("client_id kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijoziga qarz qo'llanmaydi")
+    allow = bool(body.get("allow"))
+    await _db.set_client_allow_credit(cid, allow)
+    return web.json_response({"ok": True, "client_id": cid, "allow_credit": 1 if allow else 0})
 
 
 @ROUTES.get("/api/orders")
@@ -1098,6 +1669,26 @@ FRONTEND_DIR = os.path.join(
 )
 FRONTEND_DIR = os.path.realpath(FRONTEND_DIR)
 
+# Desktop kassa avtomatik yangilanish fayllari (latest.yml, .exe, .blockmap)
+UPDATES_DIR = os.path.realpath(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "updates"
+))
+os.makedirs(UPDATES_DIR, exist_ok=True)
+
+
+async def updates_static(request: web.Request):
+    """Desktop ilova electron-updater shu yerdan latest.yml va .exe oladi."""
+    name = request.match_info.get("name", "")
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise web.HTTPNotFound()
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in (".yml", ".exe", ".blockmap", ".zip"):
+        raise web.HTTPNotFound()
+    fpath = os.path.realpath(os.path.join(UPDATES_DIR, name))
+    if not fpath.startswith(UPDATES_DIR) or not os.path.isfile(fpath):
+        raise web.HTTPNotFound()
+    return web.FileResponse(fpath)
+
 
 async def frontend_index(request: web.Request):
     """Frontend index.html ni qaytaradi — Mini App shu yerda ishlaydi."""
@@ -1138,6 +1729,8 @@ def create_app() -> web.Application:
     )
     # API route'larini qo'shamiz
     app.add_routes(ROUTES)
+    # Desktop yangilanish fayllari
+    app.router.add_get("/updates/{name}", updates_static)
     # Frontend statik fayllar
     app.router.add_get("/", frontend_index)
     app.router.add_get("/{filename}", frontend_static)

@@ -4,23 +4,31 @@ from database._helpers import fmt_usd, fmt_sum
 
 
 
-def _fmt_product(p: dict) -> str:
-    """Kanalga yuboriladigan mahsulot postining kaptioni —
-    FAQAT dona narxi ko'rinadi. Optom narxi (agar bor bo'lsa) bot
-    orqali — faqat 'optom' turidagi mijozlarga ko'rsatiladi.
-    Narx — USD da, qavs ichida joriy kurs bo'yicha so'm ko'rsatiladi."""
-    desc = f"\n📝 {p['description']}" if p.get("description") else ""
+def _fmt_product(p: dict, ai_desc: str = "") -> str:
+    """Kanalga yuboriladigan mahsulot postining kaptioni.
+    Faqat so'm narxi ko'rsatiladi. AI tavsifi bo'lsa qo'shiladi.
+    Barcode 5 xonali bo'lsa ko'rsatiladi."""
     unit = p.get("unit", "dona")
     active = "" if p.get("is_active", 1) else "\n❌ <i>Nofaol</i>"
-    sell_usd = float(p.get("sell_price_usd", 0) or 0)
     sell_sum = float(p.get("sell_price", 0) or 0)
-    if sell_usd > 0:
-        price_line = f"💰 <b>{fmt_usd(sell_usd)}/{unit}</b>  (≈ {fmt_sum(sell_sum)})"
-    else:
-        price_line = f"💰 <b>{fmt_sum(sell_sum)}/{unit}</b>"
+    price_line = f"💰 <b>{fmt_sum(sell_sum)}/{unit}</b>"
+
+    # AI tavsifi (agar berilgan bo'lsa)
+    desc_line = f"\n\n💬 {ai_desc}" if ai_desc else (
+        f"\n📝 {p['description']}" if p.get("description") else ""
+    )
+
+    # Barcode (bor bo'lsa ko'rsatiladi)
+    barcode = str(p.get("barcode") or "").strip()
+    barcode_line = f"\n🔢 <code>{barcode}</code>" if barcode else ""
+
+    # Mahsulot ID (tartib raqami)
+    pid = p.get("id", "")
+    pid_line = f"\n🆔 #{pid}" if pid else ""
+
     return (
-        f"📦 <b>{p['name']}</b>{desc}\n"
-        f"{price_line}{active}"
+        f"📦 <b>{p['name']}</b>{desc_line}\n\n"
+        f"{price_line}{barcode_line}{pid_line}{active}"
     )
 
 
@@ -88,6 +96,44 @@ def _fmt_sale(s: dict) -> str:
         f"{lines}\n"
         f"💰 <b>Jami: {s['total']:,.0f} so'm</b>\n"
         f"{paid_txt}{change}"
+    )
+
+
+def _fmt_client_receipt(s: dict, c: dict) -> str:
+    """Mijozga Telegram orqali yuboriladigan elektron chek.
+    Sotuv mijoz nomiga bo'lsa avtonom yuboriladi (naqd/karta/nasiya — barchasi)."""
+    lines = "".join(
+        f"  • {i['name']} — {i['qty']:g} {i.get('unit','dona')} × "
+        f"{i['price']:,.0f} = {i['total']:,.0f}\n"
+        for i in s.get("items", [])
+    )
+    if s.get("is_nasiya"):
+        debt_now = float(c.get("debt", 0) or 0)
+        pay_line = "🤝 To'lov turi: <b>Nasiya (qarzga)</b>"
+        extra = f"\n💳 Joriy qarzingiz: <b>{fmt_sum(debt_now)}</b>"
+    else:
+        parts = []
+        if float(s.get("paid_cash", 0) or 0) > 0:
+            parts.append("Naqd")
+        if float(s.get("paid_card", 0) or 0) > 0:
+            parts.append("Karta")
+        if float(s.get("paid_other", 0) or 0) > 0:
+            parts.append("Boshqa")
+        pay_line = f"💰 To'lov turi: <b>{', '.join(parts) or 'Naqd'}</b>"
+        extra = ""
+    no = s.get("receipt_no") or s.get("id") or ""
+    change = ""
+    if float(s.get("change", 0) or 0) > 0:
+        change = f"\n💱 Qaytim: <b>{s.get('change', 0):,.0f} so'm</b>"
+    return (
+        f"🧾 <b>CHINOR — Elektron chek</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 {c.get('shop_name','')}\n"
+        f"№ {no}  ·  {str(s.get('created_at',''))[:16]}\n\n"
+        f"{lines}\n"
+        f"💵 <b>Jami: {s.get('total', 0):,.0f} so'm</b>\n"
+        f"{pay_line}{extra}{change}\n\n"
+        f"Xaridingiz uchun rahmat! 🙏"
     )
 
 

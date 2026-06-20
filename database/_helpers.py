@@ -122,7 +122,9 @@ CREATE TABLE IF NOT EXISTS clients (
     client_type     TEXT    DEFAULT 'dona',
     registered_by   INTEGER,
     created_at      TEXT    NOT NULL,
-    channel_msg_id  INTEGER DEFAULT 0
+    channel_msg_id  INTEGER DEFAULT 0,
+    is_internal     INTEGER DEFAULT 0,   -- 1 = «Chinor» (do'konning o'zi): sotuv = ichki rasxod
+    allow_credit    INTEGER DEFAULT 0    -- 1 = bu mijozga qarzga (nasiya) savdo qilsa bo'ladi
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -166,7 +168,11 @@ CREATE TABLE IF NOT EXISTS sales (
     client_id       INTEGER DEFAULT 0,
     client_name     TEXT    DEFAULT '',
     created_at      TEXT    NOT NULL,
-    channel_msg_id  INTEGER DEFAULT 0
+    channel_msg_id  INTEGER DEFAULT 0,
+    source          TEXT    DEFAULT '',
+    receipt_no      TEXT    DEFAULT '',
+    is_internal     INTEGER DEFAULT 0,   -- 1 = «Chinor» ichki rasxod (foyda/daromadga kirmaydi)
+    is_return       INTEGER DEFAULT 0    -- 1 = qaytarish (refund): summa/miqdor manfiy, qoldiq tiklanadi
 );
 
 CREATE TABLE IF NOT EXISTS payments (

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -7,11 +8,12 @@ from aiohttp import web as aioweb
 
 from bot.config import (
     BOT_TOKEN, GLAVNIY_ADMIN_ID, CHANNEL_ID,
-    API_ENABLED, API_HOST, API_PORT,
+    API_ENABLED, API_HOST, API_PORT, MINI_APP_URL,
 )
 from bot.notifier import make_low_stock_handler
 from bot.web_api import create_app as create_api_app
 from database.channel_db import db, DB_PATH
+from database._helpers import now_local
 from handlers import (
     glavniy, admin_products, admin_clients, admin_stats, sale, client, catalog,
     ai_analytics, auth_setup,
@@ -36,6 +38,21 @@ async def on_startup(bot: Bot):
         logger.error(f"bot.get_me() xato: {e}")
     db.set_bot(bot, username=username)
     db.set_low_stock_alert(make_low_stock_handler(bot))
+
+    # Mini App "menu tugmasi"ni MINI_APP_URL bilan sinxronlaymiz (yagona manba).
+    # Shunda tunnel/domen o'zgarsa, faqat .env'ni yangilab botni qayta ishga
+    # tushirish kifoya — Telegram'dagi menu tugmasi avtomatik to'g'rilanadi.
+    try:
+        if MINI_APP_URL.startswith("https://"):
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="chinor", web_app=WebAppInfo(url=MINI_APP_URL)
+                )
+            )
+            logger.info(f"Mini App menu tugmasi o'rnatildi: {MINI_APP_URL}")
+    except Exception as e:
+        logger.warning(f"Menu tugmasini o'rnatishda xato: {e}")
 
     # Bosh admin uchun admins jadvalida qator borligini ta'minlaymiz —
     # u login/parol yaratishi, rol/ruxsatlari to'g'ri ko'rinishi uchun zarur.
@@ -73,6 +90,29 @@ async def on_startup(bot: Bot):
         pass
 
     # Avtomatik backup o'chirilgan — qo'lda Eksport orqali yuklab olinadi.
+
+
+async def _retention_loop(days: int = 90, batch: int = 500):
+    """Cheklarni serverda `days` kun saqlaydi, keyin asta-sekin o'chiradi.
+    Har soatda eski yozuvlarni kichik bo'laklarda (batch) tozalaydi — katta
+    lock bo'lmaydi. Boshlanishida 30s kutadi (ishga tushish bilan to'qnashmasin)."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            cutoff = (now_local() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            total = 0
+            # to'liq tozalanguncha bo'laklab o'chiramiz (har bo'lak orasida nafas)
+            while True:
+                deleted = await db.purge_old_sales(cutoff, batch)
+                total += deleted
+                if deleted < batch:
+                    break
+                await asyncio.sleep(2)
+            if total:
+                logger.info(f"[retention] {total} ta eski chek o'chirildi (>{days} kun)")
+        except Exception as e:
+            logger.warning(f"[retention] xato: {e}")
+        await asyncio.sleep(3600)   # har soatda bir tekshiradi
 
 
 async def main():
@@ -117,6 +157,9 @@ async def main():
     else:
         logger.info("API server o'chirilgan (API_ENABLED=0)")
 
+    # ── Cheklar retention (3 oy) — fonda ishlaydi ───────────────────────
+    retention_task = asyncio.create_task(_retention_loop(days=90))
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -124,6 +167,7 @@ async def main():
             allowed_updates=["message", "callback_query"]
         )
     finally:
+        retention_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

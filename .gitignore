@@ -36,3 +36,12 @@ exports/
 # Backup fayllar
 *.bak
 *_backup.*
+
+# Electron desktop kassa (yig'ilgan fayllar)
+desktop/node_modules/
+desktop/dist/
+
+# Build artefaktlar (qayta yasaladi — git'da saqlanmaydi)
+*.tgz
+*.exe
+*.blockmap

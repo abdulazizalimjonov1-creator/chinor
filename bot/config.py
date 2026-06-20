@@ -54,6 +54,7 @@ CORS_ALLOW_ORIGIN = os.getenv(
 ).strip()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 # Gemini 1.5 oilasi 2025-yil oxiriga kelib eskirgan ("404 not found" xatosi
 # kelib chiqadi). Hozirgi tavsiya — 2.5 flash (tez, arzon). Avtomatik
 # yangilanishini xohlasangiz, 'gemini-flash-latest' ishlatishingiz mumkin.

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Server hostini hamma kerakli joyda almashtiradi (ngrok -> Cloudflare yoki boshqa).
+#
+# Ishlatish:
+#   ./set-server-host.sh <yangi-host> [eski-host]
+#   misol:  ./set-server-host.sh kassa.chinor.uz
+#
+# Eski host ko'rsatilmasa, ngrok hosti deb olinadi.
+# Faqat HOST almashadi — https:// va /updates/ kabi yo'llar saqlanadi.
+set -euo pipefail
+
+NEW="${1:?Yangi host kiriting, masalan: ./set-server-host.sh kassa.chinor.uz}"
+OLD="${2:-unnatural-vibes-praying.ngrok-free.dev}"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+echo "Almashtirish:  $OLD  ->  $NEW"
+echo
+
+changed=0
+for f in "$ROOT/.env" "$ROOT/desktop/package.json" "$ROOT/fronted/app.js"; do
+  if [ -f "$f" ] && grep -q "$OLD" "$f"; then
+    sed -i '' "s|$OLD|$NEW|g" "$f"
+    echo "  ✅ yangilandi:  ${f#$ROOT/}"
+    changed=$((changed+1))
+  else
+    echo "  ⏭️  topilmadi:    ${f#$ROOT/}"
+  fi
+done
+
+echo
+if [ "$changed" -eq 0 ]; then
+  echo "Hech nima o'zgarmadi. Eski host to'g'rimi? Tekshiring:"
+  echo "  grep -rn '$OLD' .env desktop/package.json fronted/app.js"
+  exit 1
+fi
+
+cat <<'NEXT'
+Keyingi qadamlar:
+  1) Bot'ni qayta ishga tushiring:
+       pkill -f 'python.*main.py'; python main.py
+  2) Frontend'ni Cloudflare Pages'ga qayta deploy qiling (fronted/).
+  3) Windows installer'ni qayta yig'ing va updates/ ga joylang:
+       cd desktop && npm run dist     # so'ng dist/*.exe + latest.yml -> updates/
+       (yoki desktop/release.sh)
+NEXT

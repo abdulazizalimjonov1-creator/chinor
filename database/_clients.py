@@ -231,6 +231,34 @@ class ClientsMixin:
         # Og'ir o'qish — ishchi oqimda
         return await self._in_thread(self._all_clients)
 
+    async def get_internal_client(self) -> Optional[dict]:
+        """«Chinor» — do'konning o'zi (ichki rasxod mijozi). Bo'lmasa None."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                r = conn.execute(
+                    "SELECT * FROM clients WHERE is_internal=1 ORDER BY id LIMIT 1"
+                ).fetchone()
+                return self._row_to_client(r) if r else None
+            finally:
+                conn.close()
+
+    async def set_client_allow_credit(self, cid: int, allow: bool) -> None:
+        """Mijozni qarzga (nasiya) savdoga belgilash / belgini olib tashlash."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                conn.execute(
+                    "UPDATE clients SET allow_credit=? WHERE id=?",
+                    (1 if allow else 0, int(cid))
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        c = await self.get_client_by_id(cid)
+        if c:
+            await self._refresh_client(c)
+
     async def delete_client(self, cid: int):
         mid = 0
         with self._lock:

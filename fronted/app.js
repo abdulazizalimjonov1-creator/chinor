@@ -16,12 +16,19 @@
 
         // ⚙️ Bot HTTPS API manzilini SHU YERGA YOZING (`https://...`).
         //    URL parametri orqali ham o'zgartirish mumkin:
-        //    https://your-app.netlify.app/?api=https://abc.ngrok.io
+        //    https://fronted-bgq.pages.dev/?api=https://abc.ngrok.io
         const _urlParams = new URLSearchParams(location.search);
-        const API_BASE_URL = (
+        const _STORAGE_API_KEY = 'chinor_api_url';
+        const _DEFAULT_API = 'https://unnatural-vibes-praying.ngrok-free.dev';
+        let API_BASE_URL = (
             _urlParams.get('api') ||
-            'https://unnatural-vibes-praying.ngrok-free.dev'
+            (() => { try { return localStorage.getItem(_STORAGE_API_KEY); } catch(_){} return null; })() ||
+            _DEFAULT_API
         ).replace(/\/+$/, '');
+        // URL parametr orqali kelgan bo'lsa — localStorage ga saqlab qo'yamiz
+        if (_urlParams.get('api')) {
+            try { localStorage.setItem(_STORAGE_API_KEY, _urlParams.get('api')); } catch(_) {}
+        }
         // URL parametr orqali o'zgartirilgan bo'lsa, eslab qolamiz
         try {
             const fromUrl = _urlParams.get('api');
@@ -269,8 +276,9 @@
                     loadDashboardStats();
                 } else {
                     clientAvatar.textContent = letter;
-                    clientName.textContent = `Xush kelibsiz, ${u.name}!`;
+                    clientName.textContent = u.name || 'Klient';
                     showScreen(screenClient);
+                    initClientScreen();
                 }
             } catch (err) {
                 loginBtn.classList.remove('loading');
@@ -617,6 +625,7 @@
                     }
                 }
                 $('pfStatus').textContent = '✅ Saqlandi!';
+                btn.disabled = false;
                 if (tg && tg.HapticFeedback) { try{tg.HapticFeedback.notificationOccurred('success');}catch(_){} }
                 setTimeout(() => {
                     _editingId = 0;
@@ -853,7 +862,8 @@
                     ${row('🧾 Sotuvlar', m.sale_count + ' ta')}
                     ${row('🚚 Buyurtmalar', m.order_count + ' ta')}
                     ${row('💰 Tushum', fmtSum(m.revenue_sum) + " so'm", 'val-green')}
-                    ${row('📦 Xarajat', fmtSum(m.cost_sum) + " so'm")}
+                    ${row('📦 Tannarx', fmtSum(m.cost_sum) + " so'm")}
+                    ${(m.expense_count>0) ? row('🔻 Chinor rasxodi', fmtSum(m.expense_sum) + " so'm", 'val-red') : ''}
                     ${row('✅ Sof foyda', fmtSum(m.profit_sum) + " so'm", 'val-green')}
                 </div>
                 <div class="stat-block">
@@ -865,6 +875,181 @@
         // ================================================================
         // MENING HISOBIM (mijoz)
         // ================================================================
+        // ══════════════════════════════════════════════════
+        //  CLIENT PANEL
+        // ══════════════════════════════════════════════════
+        let _clCatalogPage = 0;
+        let _clCatalogQuery = '';
+
+        function _fmt_sum_cl(v) {
+            return Number(v||0).toLocaleString('uz-UZ') + " so'm";
+        }
+
+        function _cl_img(p) {
+            const url = p.image_url ? API_BASE_URL + p.image_url : '';
+            return url
+                ? `<img class="cl-card-img" src="${url}" loading="lazy" onerror="this.style.display='none'">`
+                : `<div class="cl-card-img-ph">📦</div>`;
+        }
+        function _cl_img_row(p) {
+            const url = p.image_url ? API_BASE_URL + p.image_url : '';
+            return url
+                ? `<img class="cl-prod-thumb" src="${url}" loading="lazy" onerror="this.outerHTML='<div class=cl-prod-thumb-ph>📦</div>'">`
+                : `<div class="cl-prod-thumb-ph">📦</div>`;
+        }
+
+        window.clientTab = function(btn, tab) {
+            document.querySelectorAll('.cl-tab').forEach(t => t.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            ['home','catalog','ai','account'].forEach(t => {
+                const el = $('clTab' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (el) el.style.display = (t === tab) ? '' : 'none';
+            });
+            if (tab === 'catalog') loadClientCatalog();
+            if (tab === 'account') loadClientAccount();
+        };
+
+        window.openClientSearch = function() {
+            clientTab(document.querySelectorAll('.cl-tab')[1], 'catalog');
+            setTimeout(() => { const el = $('clCatalogSearch'); if(el) el.focus(); }, 100);
+        };
+
+        async function loadClientTop() {
+            const { ok, data } = await apiFetch('/api/client/top');
+            if (!ok) return;
+            const topEl = $('clTopList');
+            const newEl = $('clNewList');
+            if (topEl) topEl.innerHTML = (data.top||[]).length
+                ? (data.top||[]).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})">
+                    ${_cl_img(p)}
+                    <div class="cl-card-body">
+                        <div class="cl-card-name">${p.name}</div>
+                        <div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div>
+                    </div></div>`).join('')
+                : '<div class="cl-loading">Ma\'lumot yo\'q</div>';
+            if (newEl) newEl.innerHTML = (data.new||[]).length
+                ? (data.new||[]).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})">
+                    ${_cl_img(p)}
+                    <div class="cl-card-body">
+                        <div class="cl-card-name">${p.name}</div>
+                        <div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div>
+                    </div></div>`).join('')
+                : '<div class="cl-loading">Hali yo\'q</div>';
+        }
+
+        window.loadClientCatalog = function() {
+            _clCatalogPage = 0;
+            _clCatalogQuery = ($('clCatalogSearch')||{value:''}).value.trim();
+            const cl = $('clCatalogClear');
+            if (cl) cl.style.display = _clCatalogQuery ? '' : 'none';
+            _doLoadClientCatalog(true);
+        };
+        window.loadClientCatalogMore = function() { _doLoadClientCatalog(false); };
+
+        async function _doLoadClientCatalog(reset) {
+            if (reset) { _clCatalogPage = 0; $('clCatalogList').innerHTML = '<div class="cl-loading">Yuklanmoqda...</div>'; }
+            const { ok, data } = await apiFetch(`/api/products?page=${_clCatalogPage}&q=${encodeURIComponent(_clCatalogQuery)}`);
+            const el = $('clCatalogList');
+            const more = $('clCatalogMore');
+            if (!ok || !data.ok) { if(el) el.innerHTML = '<div class="cl-loading">Xato</div>'; return; }
+            const items = data.products || [];
+            const html = items.map(p => `<div class="cl-prod-row" onclick="clOpenProduct(${p.id})">
+                ${_cl_img_row(p)}
+                <div class="cl-prod-info">
+                    <div class="cl-prod-name">${p.name}</div>
+                    ${p.description ? `<div class="cl-prod-desc">${p.description}</div>` : ''}
+                    <div class="cl-prod-price">${_fmt_sum_cl(p.sell_price)}</div>
+                </div>
+            </div>`).join('');
+            if (reset) el.innerHTML = html || '<div class="cl-loading">Mahsulot topilmadi</div>';
+            else el.innerHTML += html;
+            _clCatalogPage++;
+            if (more) more.style.display = (data.has_more) ? '' : 'none';
+        }
+
+        window.clOpenProduct = async function(pid) {
+            const { ok, data } = await apiFetch(`/api/product/${pid}`);
+            if (!ok || !data.ok) return;
+            const p = data.product;
+            const url = p.image_url ? API_BASE_URL + p.image_url : '';
+            const overlay = document.createElement('div');
+            overlay.className = 'cl-modal-overlay';
+            overlay.innerHTML = `<div class="cl-modal" style="position:relative">
+                <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+                ${url ? `<img class="cl-modal-img" src="${url}">` : '<div style="height:60px"></div>'}
+                <div class="cl-modal-name">${p.name}</div>
+                <div class="cl-modal-price">${_fmt_sum_cl(p.sell_price)}</div>
+                ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
+                ${p.qty > 0 ? `<div style="color:var(--primary);font-size:13px;font-weight:600;margin-bottom:16px">✅ Mavjud: ${p.qty} ${p.unit||'dona'}</div>` : '<div style="color:#e57373;font-size:13px;margin-bottom:16px">❌ Sotib bo\'lindi</div>'}
+                <button style="width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:16px;font-size:15px;font-weight:700;cursor:pointer" onclick="this.closest('.cl-modal-overlay').remove()">Yopish</button>
+            </div>`;
+            overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
+            document.body.appendChild(overlay);
+        };
+
+        // AI Chat
+        window.clSendHint = function(btn) {
+            const inp = $('clChatInput');
+            if (inp) inp.value = btn.textContent;
+            clSendMsg();
+        };
+        window.clSendMsg = async function() {
+            const inp = $('clChatInput');
+            const q = (inp ? inp.value : '').trim();
+            if (!q) return;
+            if (inp) inp.value = '';
+            const box = $('clChatBox');
+            const intro = box ? box.querySelector('.cl-chat-intro') : null;
+            if (intro) intro.remove();
+            if (box) box.innerHTML += `<div class="cl-msg-user">${q}</div>`;
+            if (box) { box.innerHTML += `<div class="cl-typing" id="clTyping">⏳ AI o'ylayapti...</div>`; box.scrollTop = box.scrollHeight; }
+            const { ok, data } = await apiFetch('/api/client/consult', { method:'POST', body: JSON.stringify({question: q}) });
+            const typing = $('clTyping');
+            if (typing) typing.remove();
+            if (!ok || !data.ok) {
+                if (box) box.innerHTML += `<div class="cl-msg-ai">⚠️ Xato yuz berdi. Qayta urinib ko'ring.</div>`;
+                return;
+            }
+            if (box) {
+                box.innerHTML += `<div class="cl-msg-ai">${data.answer || '...'}</div>`;
+                if ((data.products||[]).length) {
+                    const cards = (data.products).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})" style="min-width:120px">
+                        ${_cl_img(p)}
+                        <div class="cl-card-body"><div class="cl-card-name">${p.name}</div><div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div></div>
+                    </div>`).join('');
+                    box.innerHTML += `<div class="cl-msg-ai-products">${cards}</div>`;
+                }
+                box.scrollTop = box.scrollHeight;
+            }
+        };
+
+        async function loadClientAccount() {
+            const el = $('clAccountBody');
+            if (!el) return;
+            const { ok, data } = await apiFetch('/api/my-account');
+            if (!ok || !data.ok) { el.innerHTML = '<div class="cl-loading">Yuklanmadi</div>'; return; }
+            const c = data.client || {};
+            const debt = Number(c.debt || 0);
+            el.innerHTML = `
+                <div class="stat-block" style="margin-bottom:12px">
+                    <div class="stat-row"><span class="lbl">👤 Ism</span><span class="val">${c.shop_name||'—'}</span></div>
+                    <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${c.phone||'—'}</span></div>
+                    <div class="stat-row"><span class="lbl">💳 Qarz</span><span class="val" style="color:${debt>0?'#e57373':'var(--primary)'}">${debt>0?_fmt_sum_cl(debt):'✅ Qarzsiz'}</span></div>
+                </div>
+                <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">
+                    📋 Buyurtma berish va to'lovlar uchun<br><b>Telegram botdan</b> foydalaning
+                </div>`;
+        }
+
+        // Client screen init
+        function initClientScreen() {
+            const h = new Date().getHours();
+            const gr = h < 12 ? 'Xayrli tong' : h < 17 ? 'Xayrli kun' : 'Xayrli kech';
+            const grEl = $('clientGreeting');
+            if (grEl) grEl.textContent = gr + '!';
+            loadClientTop();
+        }
+
         window.openAccount = async function () {
             showScreen('screenAccount');
             const body = $('accountBody');
@@ -909,6 +1094,8 @@
         // POS SOTUV (kassa) — savat in-memory
         // ================================================================
         let cart = {};            // { pid: {id,name,price_sum,qty,unit,max} }
+        let posClient = null;     // tanlangan mijoz {id,name,allow_credit,is_internal}
+        let _clientsCache = [];   // /api/clients keshi (mijoz tanlash modali uchun)
         let _posPage = 0, _posQuery = '', _posLoading = false, _posSearchTimer = null;
 
         const posList = $('posList'), posStatus = $('posStatus'), posMore = $('posMore');
@@ -916,6 +1103,7 @@
 
         window.openPOS = function () {
             _posQuery = ''; posSearch.value = ''; posSearchClear.style.display = 'none';
+            posClient = null; updateCartClientUI();
             showScreen('screenPOS');
             loadPOS(true);
             updateCartBar();
@@ -1007,6 +1195,7 @@
 
         window.openCart = function () {
             renderCart();
+            updateCartClientUI();
             showScreen('screenCart');
         };
 
@@ -1048,7 +1237,75 @@
             renderCart(); updateCartBar();
         };
         window.cartRemove = function (id) { delete cart[id]; renderCart(); updateCartBar(); };
-        window.clearCart = function () { cart = {}; renderCart(); updateCartBar(); showScreen('screenPOS'); };
+        window.clearCart = function () { cart = {}; posClient = null; updateCartClientUI(); renderCart(); updateCartBar(); showScreen('screenPOS'); };
+
+        // ── Mijoz tanlash (POS) ──────────────────────────────────────────────
+        function updateCartClientUI() {
+            const nameEl = $('cartClientName');
+            const cashBtn = $('payCashBtn'), cardBtn = $('payCardBtn');
+            const nasiyaBtn = $('payNasiyaBtn'), internalBtn = $('payInternalBtn');
+            const payRow = $('cartPayRow');
+            if (!nameEl) return;
+            if (posClient) {
+                nameEl.textContent = (posClient.is_internal ? '🏠 ' : '👤 ') + posClient.name + ' ✕';
+            } else {
+                nameEl.textContent = 'Tanlash ›';
+            }
+            const internal = posClient && posClient.is_internal;
+            const credit = posClient && posClient.allow_credit && !internal;
+            // «Chinor» — faqat rasxod tugmasi; aks holda naqd/karta
+            if (payRow) payRow.style.display = internal ? 'none' : 'flex';
+            if (internalBtn) internalBtn.style.display = internal ? 'block' : 'none';
+            if (nasiyaBtn) nasiyaBtn.style.display = credit ? 'block' : 'none';
+        }
+
+        window.openClientPick = async function () {
+            // Mijoz allaqachon tanlangan bo'lsa — tanlovni bekor qilamiz (✕)
+            if (posClient) { posClient = null; updateCartClientUI(); return; }
+            const modal = $('clientPickModal');
+            const listEl = $('clientPickList');
+            $('clientPickSearch').value = '';
+            listEl.innerHTML = '<div class="list-status">Yuklanmoqda...</div>';
+            modal.style.display = 'block';
+            const { ok, data } = await apiFetch('/api/clients');
+            _clientsCache = (ok && data.ok) ? (data.items || []) : [];
+            renderClientPick();
+        };
+        window.closeClientPick = function () { $('clientPickModal').style.display = 'none'; };
+
+        window.renderClientPick = function () {
+            const listEl = $('clientPickList');
+            const q = ($('clientPickSearch').value || '').toLowerCase().trim();
+            const items = _clientsCache.filter(c =>
+                !q || (c.shop_name || '').toLowerCase().includes(q) ||
+                (c.phone || '').includes(q));
+            // «Chinor» (ichki) doim tepada
+            items.sort((a, b) => (b.is_internal ? 1 : 0) - (a.is_internal ? 1 : 0));
+            let html = '';
+            items.forEach(c => {
+                const badge = c.is_internal ? '<span style="color:#7c3aed;font-weight:700;">🏠 rasxod</span>'
+                    : (c.allow_credit ? '<span style="color:#f59e0b;font-weight:700;">🤝 qarzga</span>'
+                    : (c.debt_sum > 0 ? `<span style="color:#dc2626;">Qarz: ${fmtSum(c.debt_sum)}</span>` : ''));
+                html += `<div onclick="pickPosClient(${c.id})" style="padding:11px 8px;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;">
+                    <span style="font-weight:600;">${escapeHtml(c.shop_name || ('Mijoz #' + c.id))}<br><span style="font-size:12px;color:#94a3b8;font-weight:400;">${escapeHtml(c.phone || '—')}</span></span>
+                    <span style="font-size:12px;text-align:right;">${badge}</span>
+                </div>`;
+            });
+            if (!items.length) html = '<div class="list-status">Mijoz topilmadi</div>';
+            listEl.innerHTML = html;
+        };
+
+        window.pickPosClient = function (id) {
+            const c = _clientsCache.find(x => x.id === id);
+            if (!c) return;
+            posClient = {
+                id: c.id, name: c.shop_name || ('Mijoz #' + c.id),
+                allow_credit: !!c.allow_credit, is_internal: !!c.is_internal,
+            };
+            updateCartClientUI();
+            closeClientPick();
+            toast((posClient.is_internal ? '🏠 ' : '👤 ') + posClient.name);
+        };
 
         function cartSubtotal() {
             return Object.keys(cart).reduce((s,k)=>s+cart[k].qty*cart[k].price_sum,0);
@@ -1063,34 +1320,55 @@
         };
 
         let _saleInProgress = false;
-        window.finishSale = async function (payment) {
+        function _setPayBtnsDisabled(v) {
+            ['payCashBtn','payCardBtn','payNasiyaBtn','payInternalBtn']
+                .forEach(id => { const b = $(id); if (b) b.disabled = v; });
+        }
+        // mode: 'cash' | 'card' | 'nasiya' | 'internal'
+        window.finishSale = async function (mode) {
             if (_saleInProgress) return;
             const ids = Object.keys(cart);
             if (!ids.length) { toast('Savat bo\'sh'); return; }
+            if (mode === 'nasiya' && !posClient) { toast('Avval mijoz tanlang'); return; }
             _saleInProgress = true;
-            $('payCashBtn').disabled = true; $('payCardBtn').disabled = true;
+            _setPayBtnsDisabled(true);
             $('cartStatus').textContent = '⏳ Sotuv saqlanmoqda...';
             const items = ids.map(k => ({ product_id: cart[k].id, qty: cart[k].qty }));
             let disc = parseFloat($('cartDiscount').value) || 0;
+            const body = {
+                initData: (tg && tg.initData) || '',
+                items, discount_sum: disc,
+            };
+            if (mode === 'internal') {
+                body.is_internal = true;
+                if (posClient) body.client_id = posClient.id;
+            } else if (mode === 'nasiya') {
+                body.is_nasiya = true;
+                body.client_id = posClient.id;
+            } else {
+                body.payment = mode;
+                if (posClient) body.client_id = posClient.id;
+            }
             try {
                 const { ok, status, data } = await apiFetch('/api/sale', {
                     method: 'POST',
-                    body: JSON.stringify({
-                        initData: (tg && tg.initData) || '',
-                        items, payment, discount_sum: disc
-                    })
+                    body: JSON.stringify(body)
                 });
                 if (!ok || !data.ok) {
                     $('cartStatus').textContent = '❌ ' + (data.error || ('Xato '+status));
                 } else {
                     cart = {};
                     $('cartDiscount').value = '';
+                    posClient = null; updateCartClientUI();
                     renderCart(); updateCartBar();
+                    const kind = data.is_internal ? 'Rasxod' : (data.is_nasiya ? 'Nasiya' : 'Sotuv');
                     $('cartStatus').textContent =
-                        `✅ Sotuv #${data.sale_id} yakunlandi! Jami: ${fmtSum(data.total_sum)} so'm`;
+                        `✅ ${kind} #${data.sale_id} yakunlandi! Jami: ${fmtSum(data.total_sum)} so'm`;
                     if (tg && tg.showPopup) {
-                        tg.showPopup({ title:'✅ Sotuv yakunlandi',
+                        tg.showPopup({ title:`✅ ${kind} yakunlandi`,
                             message:`Chek #${data.sale_id}\nJami: ${fmtSum(data.total_sum)} so'm` +
+                                    (data.is_nasiya?`\n🤝 Qarzga yozildi`:'') +
+                                    (data.is_internal?`\n🔻 Ichki rasxod (tannarxda)`:'') +
                                     (data.change_sum>0?`\nQaytim: ${fmtSum(data.change_sum)} so'm`:''),
                             buttons:[{type:'close'}] });
                     }
@@ -1099,7 +1377,7 @@
             } catch (err) {
                 $('cartStatus').textContent = 'Tarmoq xatosi: ' + (err.message||err);
             }
-            $('payCashBtn').disabled = false; $('payCardBtn').disabled = false;
+            _setPayBtnsDisabled(false);
             _saleInProgress = false;
         };
 
@@ -1468,15 +1746,39 @@
             (data.items || []).forEach(c => {
                 const debtCls = c.debt_sum > 0 ? 'val-red' : 'val-green';
                 const debtTxt = c.debt_sum > 0 ? fmtSum(c.debt_sum)+" so'm" : '✅ Qarzsiz';
-                const typeTxt = c.client_type === 'optom' ? '📦' : '🛍️';
+                const typeTxt = c.is_internal ? '🏠' : (c.client_type === 'optom' ? '📦' : '🛍️');
+                // «Chinor» ichki mijoziga qarz tugmasi qo'yilmaydi
+                let creditRow = '';
+                if (!c.is_internal) {
+                    const on = !!c.allow_credit;
+                    creditRow = `<div class="stat-row"><span class="lbl">🤝 Qarzga savdo</span>
+                        <button onclick="toggleClientCredit(${c.id}, ${on ? 0 : 1})"
+                          style="border:none;border-radius:8px;padding:5px 12px;cursor:pointer;font-weight:700;font-size:13px;color:#fff;background:${on ? '#16a34a' : '#94a3b8'};">
+                          ${on ? '✓ Ruxsat' : 'Yopiq'}</button></div>`;
+                }
+                const nameExtra = c.is_internal ? ' <span style="color:#7c3aed;font-size:12px;">(ichki rasxod)</span>' : '';
                 html += `<div class="stat-block">
-                    <div class="stat-row"><span class="lbl">${typeTxt} ${escapeHtml(c.shop_name)}</span><span class="val ${debtCls}">${debtTxt}</span></div>
+                    <div class="stat-row"><span class="lbl">${typeTxt} ${escapeHtml(c.shop_name)}${nameExtra}</span><span class="val ${debtCls}">${debtTxt}</span></div>
                     <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${escapeHtml(c.phone||'—')}</span></div>
+                    ${creditRow}
                     <div class="stat-row"><span class="lbl">📅 Qo'shilgan</span><span class="val">${c.created_at}</span></div>
                 </div>`;
             });
             if (!(data.items||[]).length) html += '<div class="list-status">Foydalanuvchilar yo\'q</div>';
             body.innerHTML = html;
+        };
+
+        window.toggleClientCredit = async function (id, allow) {
+            const { ok, data } = await apiFetch('/api/client/credit', {
+                method: 'POST',
+                body: JSON.stringify({ client_id: id, allow: !!allow }),
+            });
+            if (ok && data.ok) {
+                toast(allow ? '✓ Qarzga ruxsat berildi' : 'Qarz yopildi');
+                openClients();  // ro'yxatni yangilaymiz
+            } else {
+                toast('❌ ' + ((data && data.error) || 'Xato'));
+            }
         };
         window.openOrders = async function () {
             showScreen('screenStats');

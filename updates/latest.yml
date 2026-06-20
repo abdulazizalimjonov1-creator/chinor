@@ -1,0 +1,8 @@
+version: 1.2.3
+files:
+  - url: ChinorKassa-Setup-1.2.3.exe
+    sha512: 6QpRHEKk+qdIisAMxQIET2X5/4McvgRyLVKQla02BeInF+AVosEYz6oSokhMmKFH4/tW2BBV9S3cqKwqIyCZdw==
+    size: 80128735
+path: ChinorKassa-Setup-1.2.3.exe
+sha512: 6QpRHEKk+qdIisAMxQIET2X5/4McvgRyLVKQla02BeInF+AVosEYz6oSokhMmKFH4/tW2BBV9S3cqKwqIyCZdw==
+releaseDate: '2026-06-19T10:14:56.450Z'

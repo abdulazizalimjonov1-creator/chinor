@@ -364,17 +364,55 @@ NAMUNALAR:
 'kanstovar' → daftar, ruchka, qalam, fломaster, rezinka, papka, дневник"""
 
 
+def _parse_keywords(q: str, text: str) -> list:
+    kws = [k.strip() for k in text.replace(";", ",").replace("\n", ",").split(",")]
+    kws = [k for k in kws if 2 <= len(k) <= 40]
+    result = [q]
+    seen = {q.lower()}
+    for k in kws:
+        kl = k.lower()
+        if kl not in seen:
+            seen.add(kl)
+            result.append(k)
+    return result[:12]
+
+
 async def expand_query_keywords(query: str, timeout: float = 8.0) -> list:
     """Mijoz so'rovini kalit so'zlar ro'yxatiga kengaytiradi.
-    'kompyuter' → ['kompyuter', 'noutbuk', 'laptop', 'MacBook', ...].
-    Xato yoki SDK yo'q bo'lsa — bo'sh ro'yxat (chaqiruvchi DB ga o'tadi)."""
-    ok, _ = is_available()
-    if not ok:
-        return []
+    Avval Groq, keyin Gemini (zaxira)."""
     q = (query or "").strip()
     if not q or len(q) > 100:
-        return []
+        return [q] if q else []
+
+    # 1) Groq
     try:
+        from bot.config import GROQ_API_KEY
+        if GROQ_API_KEY:
+            from groq import AsyncGroq
+            client = AsyncGroq(api_key=GROQ_API_KEY)
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": _EXPAND_SYSTEM},
+                        {"role": "user", "content": q},
+                    ],
+                    max_tokens=80,
+                ),
+                timeout=timeout
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                return _parse_keywords(q, text)
+    except Exception as e:
+        print(f"[expand_query_keywords] Groq xato: {e}")
+
+    # 2) Gemini zaxira
+    ok, _ = is_available()
+    if not ok:
+        return [q]
+    try:
+        global _CONFIGURED
         model = _GENAI.GenerativeModel(
             model_name=GEMINI_MODEL,
             system_instruction=_EXPAND_SYSTEM,
@@ -384,22 +422,11 @@ async def expand_query_keywords(query: str, timeout: float = 8.0) -> list:
         coro = model.generate_content_async(q)
         resp = await asyncio.wait_for(coro, timeout=timeout)
         text = (getattr(resp, "text", "") or "").strip()
-        if not text:
-            return []
-        kws = [k.strip() for k in text.replace(";", ",").replace("\n", ",").split(",")]
-        kws = [k for k in kws if 2 <= len(k) <= 40]
-        # Asl so'rovni ham qo'shamiz (oldinda — agar to'g'ri yozilgan bo'lsa)
-        result = [q]
-        seen = {q.lower()}
-        for k in kws:
-            kl = k.lower()
-            if kl not in seen:
-                seen.add(kl)
-                result.append(k)
-        return result[:12]
+        if text:
+            return _parse_keywords(q, text)
     except Exception as e:
-        print(f"[expand_query_keywords] xato: {e}")
-        return []
+        print(f"[expand_query_keywords] Gemini xato: {e}")
+    return [q]
 
 
 # ─── Mahsulot uchun sotuvchi-konsultant tushuntirishi ────────────────────────
@@ -522,7 +549,7 @@ def _build_candidates_text(products: list, max_items: int = 40,
         desc = (p.get("description") or "").strip()
         line = f"#{p['id']} | {p['name']} | qoldi:{qty:g}{unit} | narx:{price_txt}"
         if desc:
-            line += f" | {desc[:50]}"
+            line += f" | {desc[:200]}"
         lines.append(line)
         n += len(line) + 1
         if n >= max_chars:
@@ -532,16 +559,8 @@ def _build_candidates_text(products: list, max_items: int = 40,
 
 async def consult_client(question: str, candidates: list,
                           timeout: float = 25.0) -> str:
-    """Mijoz savoliga to'liq konsultant javobini qaytaradi.
-
-    question   — mijoz yozgan savol (har qanday matn)
-    candidates — DB dan topilgan tegishli mahsulotlar ro'yxati (dict)
-
-    Qaytaradi: HTML matn (Telegram parse_mode='HTML'). Xato bo'lsa
-    foydalanuvchi-do'st xato matnini qaytaradi."""
-    ok, why = is_available()
-    if not ok:
-        return why
+    """Mijoz savoliga konsultant javobini qaytaradi.
+    Avval Groq (tez, bepul), keyin Gemini (zaxira)."""
     q = (question or "").strip()
     if not q:
         return "⚠️ Savol bo'sh."
@@ -553,9 +572,41 @@ async def consult_client(question: str, candidates: list,
         f"{catalog_text}\n\n"
         f"Mijozga konsultant sifatida javob ber. Agar miqdor hisobi kerak "
         f"bo'lsa — hisoblang. Tovar tavsiya qilsang — yuqoridagi ro'yxatdan "
-        f"tanlab, ID sini <code>#&lt;id&gt;</code> ko'rinishida ayt."
+        f"tanlab, ID sini #<id> ko'rinishida ayt."
     )
+
+    # 1) Groq — tez va bepul
     try:
+        from bot.config import GROQ_API_KEY
+        if GROQ_API_KEY:
+            from groq import AsyncGroq
+            client = AsyncGroq(api_key=GROQ_API_KEY)
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": _CONSULT_SYSTEM},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=800,
+                ),
+                timeout=timeout
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                return text
+    except asyncio.TimeoutError:
+        pass
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).warning(f"Groq consult xato: {e}")
+
+    # 2) Gemini — zaxira
+    ok, why = is_available()
+    if not ok:
+        return why
+    try:
+        global _CONFIGURED
         model = _GENAI.GenerativeModel(
             model_name=GEMINI_MODEL,
             system_instruction=_CONSULT_SYSTEM,

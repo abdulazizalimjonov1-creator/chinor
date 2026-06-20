@@ -166,6 +166,11 @@ class BaseDB:
         cli_cols2 = {r[1] for r in conn.execute("PRAGMA table_info(clients)").fetchall()}
         if "debt_usd" not in cli_cols2:
             conn.execute("ALTER TABLE clients ADD COLUMN debt_usd REAL DEFAULT 0")
+        # clients.is_internal («Chinor» — do'konning o'zi) / allow_credit (qarzga ruxsat)
+        if "is_internal" not in cli_cols2:
+            conn.execute("ALTER TABLE clients ADD COLUMN is_internal INTEGER DEFAULT 0")
+        if "allow_credit" not in cli_cols2:
+            conn.execute("ALTER TABLE clients ADD COLUMN allow_credit INTEGER DEFAULT 0")
         # sales — keng USD/chegirma ustunlari
         sale_cols = {r[1] for r in conn.execute("PRAGMA table_info(sales)").fetchall()}
         sale_new_cols = [
@@ -181,6 +186,10 @@ class BaseDB:
             ("paid_total_usd", "REAL DEFAULT 0"),
             ("paid_currency",  "TEXT DEFAULT 'sum'"),
             ("change_usd",     "REAL DEFAULT 0"),
+            ("source",         "TEXT DEFAULT ''"),
+            ("receipt_no",     "TEXT DEFAULT ''"),
+            ("is_internal",    "INTEGER DEFAULT 0"),
+            ("is_return",      "INTEGER DEFAULT 0"),
         ]
         for col, ddl in sale_new_cols:
             if col not in sale_cols:
@@ -216,6 +225,18 @@ class BaseDB:
             if col not in cli_cols3:
                 conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_clients_username ON clients(username)")
+        # «Chinor» — do'konning o'zi mijoz sifatida (bir martalik). Unga yozilgan
+        # tovarlar ichki rasxod (tannarxda) bo'lib hisoblanadi.
+        has_internal = conn.execute(
+            "SELECT 1 FROM clients WHERE is_internal=1 LIMIT 1"
+        ).fetchone()
+        if not has_internal:
+            conn.execute(
+                "INSERT INTO clients(telegram_id, shop_name, phone, debt, debt_usd, "
+                "client_type, registered_by, created_at, is_internal, allow_credit) "
+                "VALUES(NULL, ?, '', 0, 0, 'dona', 0, ?, 1, 0)",
+                ("Chinor (ichki)", _now())
+            )
         # Eski adminlarning roli bo'sh bo'lsa — 'full' qilamiz (hech narsa buzilmasin)
         conn.execute(
             "UPDATE admins SET role='full' WHERE role IS NULL OR role=''"

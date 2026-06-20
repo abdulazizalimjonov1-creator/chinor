@@ -1,5 +1,10 @@
 # Frontend ishga tushirish — NGROK va Static Server Setup
 
+> ⚠️ **ESKIRGAN:** ngrok pullik bo'lgani uchun endi **Cloudflare Tunnel**
+> ishlatiladi. To'liq qo'llanma: [CLOUDFLARE_TUNNEL.md](CLOUDFLARE_TUNNEL.md).
+> Quyidagi ngrok qadamlari faqat tarix uchun qoldirilgan — `ngrok http 8765`
+> o'rniga doimiy URL uchun named tunnel sozlang.
+
 Frontend (Mini App) ishga tushirish uchun **3 ta terminalda** 3 ta komanda jamiylisi kerak:
 
 ---
