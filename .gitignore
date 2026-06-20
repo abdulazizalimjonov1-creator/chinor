@@ -1,6 +1,11 @@
 # Maxfiy — hech qachon GitHubga chiqmasin
 .env
 *.env
+.env.*
+!.env.example
+
+# Claude Code lokal sozlamalari (sirlar bo'lishi mumkin)
+.claude/settings.local.json
 
 # Python
 __pycache__/

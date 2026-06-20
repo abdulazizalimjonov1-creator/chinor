@@ -337,7 +337,9 @@ function wireIpc() {
   });
 
   // Telegram bot orqali to'lov linkini olish (getUpdates polling) va SMS yuborish
-  const BOT_TOKEN = 'REDACTED';
+  // DIQQAT: token kodda saqlanmaydi. Ishga tushirishdan oldin muhit o'zgaruvchisini bering:
+  //   PAYMENT_BOT_TOKEN=xxxx:yyyy   (yoki .env / build sozlamalari orqali)
+  const BOT_TOKEN = process.env.PAYMENT_BOT_TOKEN || '';
   const MY_TELEGRAM_ID = 6787907623;
   let lastUpdateId = 0;
   let paymentSince = 0;   // faqat shu vaqtdan (Unix sek.) keyin kelgan xabarlar hisobga olinadi
