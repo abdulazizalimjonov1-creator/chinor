@@ -336,10 +336,17 @@ function wireIpc() {
     });
   });
 
-  // Telegram bot orqali to'lov linkini olish (getUpdates polling) va SMS yuborish
-  // DIQQAT: token kodda saqlanmaydi. Ishga tushirishdan oldin muhit o'zgaruvchisini bering:
-  //   PAYMENT_BOT_TOKEN=xxxx:yyyy   (yoki .env / build sozlamalari orqali)
-  const BOT_TOKEN = process.env.PAYMENT_BOT_TOKEN || '';
+  // Telegram bot orqali to'lov linkini olish (getUpdates polling) va SMS yuborish.
+  // Token KODDA saqlanmaydi: avval PAYMENT_BOT_TOKEN muhit o'zgaruvchisi, bo'lmasa
+  // loyiha ildizidagi gitignored .env faylidagi PAYMENT_BOT_TOKEN dan o'qiladi (lokal test).
+  let BOT_TOKEN = process.env.PAYMENT_BOT_TOKEN || '';
+  if (!BOT_TOKEN) {
+    try {
+      const _env = fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8');
+      const _m = _env.match(/^\s*PAYMENT_BOT_TOKEN\s*=\s*(.+?)\s*$/m);
+      if (_m) BOT_TOKEN = _m[1].replace(/^["']|["']$/g, '');
+    } catch (_) {}
+  }
   const MY_TELEGRAM_ID = 6787907623;
   let lastUpdateId = 0;
   let paymentSince = 0;   // faqat shu vaqtdan (Unix sek.) keyin kelgan xabarlar hisobga olinadi
