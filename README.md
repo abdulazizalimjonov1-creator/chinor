@@ -45,11 +45,14 @@ Loyiha ildizida 4 ta mustaqil bo'lim turadi — har birida o'z kodi:
 | `handlers/` | Telegram UI oqimlari: `sale.py`, `glavniy.py` (/start), `admin_products.py`, `admin_clients.py`, `admin_stats.py`, `catalog.py`, `client.py`, `auth_setup.py`, `ai_analytics.py` |
 | `database/` | Ma'lumotlar qatlami: `_base.py` + mavzu modullar (`_products`, `_sales`, `_clients`, `_orders`, `_catalog`, `_admins`, `_analytics`, `_stats`, `_formatters`, `_helpers`), `channel_db.py` |
 | `updates/` | Desktop avto-yangilanish feed (`latest.yml` + o'rnatuvchilar) |
-| `uploads/` | Mahsulot rasmlari (DB ularga ishora qiladi) |
-| `exports/` | Excel hisobotlar (avtomatik yaratiladi) |
 | `docs/` | Qo'shimcha hujjatlar (tunnel, eski qaydlar) |
-| `pos.db` | **Jonli SQLite baza — tegmang, zaxiralang** |
 | `.env` | Sirlar (token, port, URL) — git'ga chiqmaydi |
+
+> **Jonli ma'lumotlar kod ichida EMAS.** `pos.db`, `uploads/`, `exports/`,
+> `backups/` — repo ildizidagi **`data/`** papkasida (`.env` dagi `DATA_DIR`
+> orqali sozlanadi, default `data/`). Shunda manba kodini tozalash/qayta klon
+> qilish bazaga tegmaydi. Production'da `DATA_DIR` ni kod tashqarisiga
+> (masalan `/var/lib/chinor`) yo'naltiring.
 
 ---
 
@@ -62,8 +65,9 @@ cp .env.example .env                      # so'ng .env ni to'ldiring
 python main.py                            # bot + API (port 8765)
 ```
 
-> Eslatma: bot `chinor-bot/` ichidan ishga tushiriladi — `pos.db`, `uploads/`,
-> `.env` shu papkada bo'lishi kerak. Mini App'ni esa server `../app/` dan oladi.
+> Eslatma: bot `chinor-bot/` ichidan ishga tushiriladi — `.env` shu papkada.
+> Jonli ma'lumotlar (`pos.db`, `uploads/`...) `../data/` da (`DATA_DIR`). Mini
+> App'ni esa server `../app/` dan oladi.
 
 Kerakli `.env` qiymatlari: `BOT_TOKEN`, `GLAVNIY_ADMIN_ID`, `CHANNEL_ID`,
 `MINI_APP_URL`, `CORS_ALLOW_ORIGIN`, `API_PORT` (8765). To'liq ro'yxat —
@@ -121,8 +125,8 @@ desktop'ni qayta yig'ing.
 
 ## Zaxira (backup)
 
-`chinor-bot/pos.db` — yagona haqiqat manbai. Muntazam nusxa oling:
+`data/pos.db` (yoki `DATA_DIR/pos.db`) — yagona haqiqat manbai. Muntazam nusxa oling:
 
 ```bash
-cp chinor-bot/pos.db "backups/pos-$(date +%Y%m%d).db"
+cp data/pos.db "data/backups/pos-$(date +%Y%m%d).db"
 ```

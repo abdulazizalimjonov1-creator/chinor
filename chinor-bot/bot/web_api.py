@@ -117,8 +117,8 @@ async def _post_product_to_channel(db, p: dict, pid: int):
             return  # Rasm yo'q — kanalga yubormaymiz
 
         fpath = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            image_url.lstrip("/").replace("api/img/", "uploads/")
+            UPLOAD_DIR,
+            image_url.lstrip("/").replace("api/img/", "").lstrip("/")
         )
         if not os.path.exists(fpath):
             logger.warning(f"📢 Rasm fayli topilmadi: {fpath}")
@@ -227,10 +227,15 @@ def _check_session(token: str) -> dict | None:
     finally:
         conn.close()
 
-# Mini App orqali yuklangan mahsulot rasmlari shu papkada saqlanadi
-UPLOAD_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"
-)
+# Yuklangan mahsulot rasmlari — ma'lumotlar papkasida (DATA_DIR), kod
+# daraxtida EMAS. `.env` dagi DATA_DIR / UPLOAD_DIR orqali sozlanadi; aks holda
+# repo ildizidagi `data/uploads`. (database._helpers ni import qilmaymiz — u
+# jonli pos.db ni ochadi; shuning uchun DATA_DIR shu yerda mustaqil hisoblanadi.)
+_DATA_DIR = os.path.abspath(os.environ.get("DATA_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data",
+))
+UPLOAD_DIR = os.path.abspath(os.environ.get("UPLOAD_DIR") or os.path.join(_DATA_DIR, "uploads"))
 UPLOAD_DIR = os.path.realpath(UPLOAD_DIR)  # Absolute path for security
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 

@@ -16,6 +16,10 @@ venv/
 env/
 .venv/
 
+# Runtime ma'lumotlar — kod daraxtidan tashqarida (DATA_DIR, default: data/)
+# pos.db, uploads/, exports/, backups/ shu yerda; git'ga CHIQMAYDI
+data/
+
 # SQLite baza (mahalliy ma'lumotlar)
 *.db
 *.db-shm

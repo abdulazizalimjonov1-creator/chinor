@@ -9,11 +9,24 @@ from datetime import datetime, timedelta, timezone
 
 from bot.config import TZ_OFFSET_HOURS
 
-# ─── DB joylashuvi ───────────────────────────────────────────────────────────
-DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "pos.db"
+# ─── DB / ma'lumotlar joylashuvi ─────────────────────────────────────────────
+# Ma'lumotlar (pos.db, uploads, exports, backups) KOD DARAXTIDAN TASHQARIDA
+# turishi kerak — `.env` dagi DATA_DIR orqali sozlanadi. Belgilanmasa, repo
+# ildizidagi `data/` ishlatiladi (chinor-bot manba papkasi EMAS — shunda
+# `git clean` kodni tozalasa ham baza yo'qolmaydi). Production'da DATA_DIR ni
+# kod tashqarisiga yo'naltiring (masalan /var/lib/chinor).
+# Env shu nuqtaga qadar yuklangan: yuqoridagi `from bot.config ...` import
+# `load_dotenv()` ni ishga tushiradi.
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
+DATA_DIR = os.path.abspath(
+    os.environ.get("DATA_DIR") or os.path.join(_REPO_ROOT, "data")
+)
+DB_PATH = os.path.abspath(
+    os.environ.get("DB_PATH") or os.path.join(DATA_DIR, "pos.db")
+)
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Toshkent vaqt mintaqasi
 TASHKENT_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
