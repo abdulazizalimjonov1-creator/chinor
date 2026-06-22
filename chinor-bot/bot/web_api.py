@@ -2138,8 +2138,11 @@ async def api_settings_save(request: web.Request):
 
 # ─── Static frontend serving ──────────────────────────────────────────────
 
+# Mini App (frontend) endi alohida `app/` papkasida — repo ildizida, chinor-bot
+# yonida. Shu sababli bu yerda 3 daraja yuqoriga chiqamiz (web_api.py →
+# chinor-bot/bot → chinor-bot → repo_root) va `app` ga ulanamiz.
 FRONTEND_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fronted"
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "app"
 )
 FRONTEND_DIR = os.path.realpath(FRONTEND_DIR)
 

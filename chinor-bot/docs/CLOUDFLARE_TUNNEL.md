@@ -57,7 +57,7 @@ ingress:
   - service: http_status:404
 ```
 
-Sinab ko'rish (oldindan `python main.py` ishlab turishi kerak):
+Sinab ko'rish (oldindan `cd chinor-bot && python main.py` ishlab turishi kerak):
 
 ```bash
 cloudflared tunnel run chinor-pos
@@ -85,7 +85,7 @@ sudo launchctl start com.cloudflare.cloudflared    # yoki Mac'ni qayta yoqing
 |---|---|
 | `.env` | `MINI_APP_URL` ichidagi `?api=…` va `CORS_ALLOW_ORIGIN` |
 | `desktop/package.json` | `build.publish[0].url` (Windows update feed — **build'ga muhrlanadi**) |
-| `fronted/app.js` | `_DEFAULT_API` (zaxira qiymat) |
+| `app/app.js` | `_DEFAULT_API` (zaxira qiymat) |
 
 Buni qo'lda emas, skript bilan qiling (loyiha ildizida):
 
@@ -94,9 +94,9 @@ Buni qo'lda emas, skript bilan qiling (loyiha ildizida):
 ```
 
 So'ng:
-1. **Bot'ni qayta ishga tushiring:** `pkill -f 'python.*main.py'; python main.py`
-2. **Frontend'ni Pages'ga qayta deploy qiling** (`fronted/` → `fronted-bgq.pages.dev`).
-3. **Windows installer'ni qayta yig'ing:** `cd desktop && npm run dist`,
+1. **Bot'ni qayta ishga tushiring:** `pkill -f 'python.*main.py'; cd chinor-bot && python main.py`
+2. **Frontend'ni Pages'ga qayta deploy qiling** (`app/` → `fronted-bgq.pages.dev`).
+3. **Windows installer'ni qayta yig'ing:** `cd chinor-kassa && npm run dist`,
    so'ng yangi `.exe` + `latest.yml` ni `updates/` papkaga qo'ying (`release.sh`).
 
 ---

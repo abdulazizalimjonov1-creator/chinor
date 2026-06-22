@@ -7,7 +7,7 @@
 #   2) ./release.sh
 #
 # Skript Windows installer'i va macOS .zip ni yig'adi, yangilanish
-# fayllarini ../updates/ ga ko'chiradi. Bot serveri shu papkani ngrok
+# fayllarini ../chinor-bot/updates/ ga ko'chiradi. Bot serveri shu papkani ngrok
 # orqali tarqatadi:
 #   • Windows ilovalar (electron-updater) latest.yml ni tekshiradi
 #   • macOS ilova (o'zimizning updater) latest-mac.yml ni tekshiradi
@@ -24,9 +24,9 @@ npx electron-builder --mac --publish never
 echo "▶ Versiya: $VER — Windows installer yig'ilmoqda..."
 npx electron-builder --win --x64 --publish never
 
-UP="../updates"
+UP="../chinor-bot/updates"
 mkdir -p "$UP"
-echo "▶ Yangilanish fayllari ../updates/ ga ko'chirilmoqda..."
+echo "▶ Yangilanish fayllari ../chinor-bot/updates/ ga ko'chirilmoqda..."
 # Windows
 cp -f dist/latest.yml "$UP"/
 cp -f dist/ChinorKassa-Setup-"$VER".exe "$UP"/

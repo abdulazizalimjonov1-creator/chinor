@@ -15,7 +15,7 @@ Bot allaqachon ishga tushgan bo'lsa, bu tayyor:
 ```bash
 # Agar ishga tushirmagan bo'lsangiz:
 cd /Users/prom1/Documents/pos_v2_fixed_new
-python main.py
+cd chinor-bot && python main.py
 ```
 
 **Ko'rish kerak**:
@@ -95,7 +95,7 @@ ngrok http 8765
 ### 4️⃣ .env'ni Yangilash
 ```bash
 # Terminal 4'da yoki text editor'da .env faylini tahrirlash:
-MINI_APP_URL=https://1234-5678-abcd.ngrok.io/fronted/index.html
+MINI_APP_URL=https://1234-5678-abcd.ngrok.io/index.html
 ```
 
 ---
@@ -107,7 +107,7 @@ Agar siz hammasi boshlangandan:
 ### **Terminal 1** — Bot API:
 ```bash
 cd /Users/prom1/Documents/pos_v2_fixed_new
-python main.py
+cd chinor-bot && python main.py
 ```
 
 ### **Terminal 2** — Frontend:
@@ -129,7 +129,7 @@ cd /Users/prom1/Documents/pos_v2_fixed_new
 # 2. CORS_ALLOW_ORIGIN'ni ham qo'shish:
 
 # Misol .env:
-MINI_APP_URL=https://1234-5678-abcd.ngrok.io/fronted/index.html
+MINI_APP_URL=https://1234-5678-abcd.ngrok.io/index.html
 CORS_ALLOW_ORIGIN=https://1234-5678-abcd.ngrok.io
 ```
 
@@ -184,7 +184,7 @@ ngrok http 8765 --domain=your-stable-domain.ngrok-free.app
 
 ```bash
 # Terminal 1: Bot
-python main.py
+cd chinor-bot && python main.py
 
 # Terminal 2: Frontend
 cd fronted && python3 -m http.server 3000
@@ -194,7 +194,7 @@ ngrok http 8765
 
 # Terminal 4: .env'ni yangilash (URL'ni qo'shish)
 nano .env
-# MINI_APP_URL=https://YOUR_NGROK_URL/fronted/index.html
+# MINI_APP_URL=https://YOUR_NGROK_URL/index.html
 # CORS_ALLOW_ORIGIN=https://YOUR_NGROK_URL
 ```
 
