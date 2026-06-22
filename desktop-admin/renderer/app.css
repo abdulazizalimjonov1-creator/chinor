@@ -1,0 +1,323 @@
+:root {
+  --brand:        #2d9142;
+  --brand-d:      #1f6b30;
+  --brand-l:      #4caf50;
+  --side-bg:      #2d9142;
+  --side-bg2:     #1f6b30;
+  --side-active:  #ffffff;
+  --side-active-t:#1f6b30;
+  --side-text:    #e7f3ea;
+  --side-muted:   #bcdcc4;
+  --bg:           #eef2ec;
+  --panel:        #ffffff;
+  --line:         #e2e8df;
+  --text:         #1b2a20;
+  --muted:        #6c7d70;
+  --ink:          #1f6b30;
+  --green:        #1faa53;
+  --red:          #e0483b;
+  --gold:         #c2870e;
+  --radius:       14px;
+  --shadow:       0 1px 3px rgba(20,40,25,.06), 0 6px 24px rgba(20,40,25,.05);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.hidden { display: none !important; }
+.ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── LOGIN ───────────────────────────────────────────────── */
+.login-screen {
+  height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #2d9142, #1f6b30);
+}
+.login-card {
+  width: 380px; background: #fff; border-radius: 20px; padding: 34px 30px;
+  box-shadow: 0 20px 60px rgba(20,30,80,.3); text-align: center;
+}
+.login-logo { width: 66px; height: 66px; object-fit: contain; border-radius: 16px; }
+.login-card h1 { font-size: 26px; margin-top: 10px; color: var(--text); letter-spacing: .5px; }
+.login-sub { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+.field { text-align: left; margin-bottom: 14px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+.field input, .server-box input {
+  width: 100%; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 11px;
+  font-size: 15px; outline: none; transition: border-color .15s; background: #f7faf6;
+}
+.field input:focus, .server-box input:focus { border-color: var(--brand); background: #fff; }
+.server-box { text-align: left; margin-bottom: 14px; }
+.server-box summary { cursor: pointer; font-size: 13px; color: var(--brand); padding: 4px 0; user-select: none; }
+.server-box input { margin-top: 8px; }
+.server-hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+.btn-primary {
+  width: 100%; padding: 13px; border: none; border-radius: 11px; cursor: pointer;
+  background: var(--brand); color: #fff; font-size: 16px; font-weight: 600; transition: background .15s;
+}
+.btn-primary:hover { background: var(--brand-d); }
+.btn-primary:disabled { opacity: .6; cursor: default; }
+.login-err { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+/* ── ILOVA QOBIG'I ───────────────────────────────────────── */
+.app { display: grid; grid-template-columns: 250px 1fr; height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  background: linear-gradient(180deg, var(--side-bg), var(--side-bg2));
+  color: var(--side-text); display: flex; flex-direction: column; padding: 18px 14px;
+}
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
+.brand-logo { width: 34px; height: 34px; object-fit: contain; border-radius: 9px; background: #fff; padding: 3px; }
+.brand span { font-size: 22px; font-weight: 800; letter-spacing: .5px; color: #fff; }
+.shop-card {
+  display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.14);
+  border-radius: 12px; padding: 13px 14px; margin-bottom: 16px; font-weight: 700; color: #fff;
+}
+.shop-ico { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
+.nav { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; }
+.nav-item {
+  display: flex; align-items: center; gap: 13px; padding: 12px 14px; border-radius: 11px;
+  cursor: pointer; color: var(--side-text); font-size: 15px; font-weight: 600;
+  border: none; background: none; text-align: left; transition: background .12s;
+}
+.nav-item:hover { background: rgba(255,255,255,.1); }
+.nav-item.active { background: var(--side-active); color: var(--side-active-t); }
+.nav-item .ico { stroke: currentColor; }
+.side-foot { margin-top: 12px; }
+.ver { font-size: 12px; color: var(--side-muted); text-align: center; padding: 6px 0 10px; }
+.admin-row { display: flex; align-items: center; gap: 11px; background: rgba(255,255,255,.12); border-radius: 12px; padding: 10px 12px; }
+.admin-ava { width: 38px; height: 38px; border-radius: 50%; background: #fff; color: var(--brand-d); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; }
+.admin-meta { flex: 1; min-width: 0; }
+.admin-name { font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-logout { background: none; border: none; color: var(--side-muted); font-size: 12.5px; cursor: pointer; padding: 0; }
+.admin-logout:hover { color: #fff; text-decoration: underline; }
+
+/* Main */
+.main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
+.tab-strip { display: flex; gap: 2px; padding: 10px 16px 0; background: var(--bg); flex-wrap: wrap; }
+.tab {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 11px 11px 0 0;
+  background: #e3ebe2; color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; border: none;
+}
+.tab.active { background: var(--panel); color: var(--text); box-shadow: 0 -2px 8px rgba(20,30,80,.04); }
+.tab .tab-x { font-size: 15px; color: var(--muted); border-radius: 5px; padding: 0 3px; }
+.tab .tab-x:hover { background: rgba(0,0,0,.08); color: var(--red); }
+.content { flex: 1; overflow-y: auto; padding: 18px 22px 40px; }
+
+/* ── Tiles (menyu kartalari) ─────────────────────────────── */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.tile {
+  background: var(--brand); color: #fff; border-radius: var(--radius); padding: 26px 18px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px; cursor: pointer;
+  border: none; transition: transform .1s, box-shadow .12s; box-shadow: var(--shadow);
+}
+.tile:hover { transform: translateY(-2px); box-shadow: 0 8px 26px rgba(45,145,66,.32); }
+.tile .ico { width: 34px; height: 34px; stroke: #fff; }
+.tile span { font-size: 15px; font-weight: 600; text-align: center; }
+.tile.soon { background: #a7bfac; cursor: default; }
+.tile.soon:hover { transform: none; box-shadow: var(--shadow); }
+
+/* ── Hisobot filtr paneli ────────────────────────────────── */
+.filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 16px; }
+.filter { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; }
+.filter label { display: block; font-size: 11px; color: var(--muted); font-weight: 600; }
+.filter input, .filter select { border: none; outline: none; font-size: 15px; background: none; color: var(--text); padding: 2px 0; }
+.btn-soft { background: var(--brand); color: #fff; border: none; border-radius: 11px; padding: 11px 20px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-soft:hover { background: var(--brand-d); }
+.btn-soft.ghost { background: #e3ebe2; color: var(--ink); }
+
+/* ── KPI kartalar ────────────────────────────────────────── */
+.kpi-wrap { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; margin-bottom: 18px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.kpi { padding: 18px 22px; border-right: 1px solid var(--line); }
+.kpi:last-child { border-right: none; }
+.kpi .kpi-val { font-size: 23px; font-weight: 800; color: var(--text); letter-spacing: -.3px; }
+.kpi .kpi-val.green { color: var(--green); }
+.kpi .kpi-lbl { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.kpi.lead .kpi-head { font-size: 15px; font-weight: 800; color: var(--brand); }
+.kpi.lead .kpi-sub { font-size: 12px; color: var(--muted); }
+
+/* ── Card / grafik ───────────────────────────────────────── */
+.card { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; margin-bottom: 18px; }
+.card-title { font-size: 17px; font-weight: 700; margin-bottom: 16px; }
+.card-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 1180px) { .card-row { grid-template-columns: 1fr; } }
+.chart-svg { width: 100%; display: block; }
+.chart-empty { color: var(--muted); text-align: center; padding: 40px 0; font-size: 14px; }
+
+/* To'lov turlari (gorizontal bar) */
+.paybars { display: flex; flex-direction: column; gap: 12px; }
+.paybar-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; align-items: center; }
+.paybar-name { font-size: 14px; color: var(--text); }
+.paybar-track { background: #e9f0ea; border-radius: 7px; height: 22px; overflow: hidden; }
+.paybar-fill { height: 100%; background: var(--brand); border-radius: 7px; min-width: 2px; transition: width .4s; }
+.paybar-val { font-size: 14px; font-weight: 600; color: var(--text); text-align: right; min-width: 90px; }
+.paybar-total { text-align: right; font-weight: 700; margin-top: 14px; color: var(--text); }
+
+/* ── Jadval ──────────────────────────────────────────────── */
+.tbl-wrap { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.tbl th { text-align: left; padding: 13px 16px; background: #f1f5ef; color: var(--muted); font-weight: 600; font-size: 12.5px; border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+table.tbl td { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+table.tbl tr:last-child td { border-bottom: none; }
+table.tbl tr:hover td { background: #f7faf6; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.pill.green { background: #e3f6ea; color: var(--green); }
+.pill.gold { background: #fbf0d8; color: var(--gold); }
+.pill.gray { background: #eef0f6; color: var(--muted); }
+.pill.blue { background: #e0f0e6; color: var(--brand-d); }
+.pill.red { background: #fde7e4; color: var(--red); }
+
+/* Online savdo sarhisob chiplari */
+.sum-chips { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.sum-chip { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 20px; min-width: 150px; }
+.sum-chip .v { font-size: 22px; font-weight: 800; }
+.sum-chip .l { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+.loading { text-align: center; color: var(--muted); padding: 60px 0; font-size: 15px; }
+.err-box { background: #fde7e4; color: var(--red); padding: 14px 18px; border-radius: 12px; font-size: 14px; margin-bottom: 16px; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  background: #1b2440; color: #fff; padding: 12px 22px; border-radius: 11px; font-size: 14px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.3); z-index: 999; max-width: 80%;
+}
+
+/* ── Chip filtrlar (Cheklar) ─────────────────────────────── */
+.rc-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.rc-chip { background: #e3ebe2; color: var(--ink); border: none; border-radius: 20px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.rc-chip.active { background: var(--brand); color: #fff; }
+
+/* ── Master-detail (ro'yxat + detal) ─────────────────────── */
+.master-detail { display: grid; grid-template-columns: 370px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 1060px) { .master-detail { grid-template-columns: 1fr; } }
+.md-list { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px; max-height: calc(100vh - 240px); overflow-y: auto; }
+.md-row { padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+.md-row:hover { background: #f2f7f0; }
+.md-row.active { background: #e7f3e9; border-color: var(--brand-l); }
+.md-row-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.md-row-sub { display: flex; justify-content: space-between; margin-top: 3px; font-size: 13px; color: var(--muted); }
+.md-row-cli { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.md-detail { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; min-height: 220px; }
+
+/* ── Chek detali ─────────────────────────────────────────── */
+.rc-d-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.rc-d-no { font-size: 18px; font-weight: 800; }
+.rc-d-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.rc-d-cli { margin-top: 8px; font-size: 14px; }
+.rc-d-tot { margin-top: 14px; border-top: 2px solid var(--line); padding-top: 12px; }
+.rc-d-tot > div { display: flex; justify-content: space-between; padding: 3px 0; color: var(--muted); }
+.rc-d-grand { font-size: 18px; color: var(--text) !important; font-weight: 800; }
+
+/* ── Jadvaldagi raqam inputi + checkbox (Sennik) ─────────── */
+.qty-inp { width: 90px; padding: 6px 8px; border: 1.5px solid var(--line); border-radius: 8px; font-size: 14px; text-align: right; outline: none; }
+.qty-inp:focus { border-color: var(--brand); }
+.pt-chk { width: 18px; height: 18px; accent-color: var(--brand); cursor: pointer; }
+
+/* ── Prixod kartasi ──────────────────────────────────────── */
+.px-card { max-width: 430px; }
+.px-name { font-size: 19px; font-weight: 800; }
+.px-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.px-cur { margin: 14px 0; font-size: 15px; }
+.px-cur b { font-size: 22px; color: var(--brand-d); }
+.px-field { margin-top: 6px; }
+.px-field input { width: 100%; font-size: 18px; }
+.px-msg { margin-top: 10px; font-size: 14px; min-height: 18px; }
+.px-msg.ok { color: var(--green); }
+.px-msg.err { color: var(--red); }
+
+/* ── Qabul qilish (prixod): qidiruv natijalari + jadval ───── */
+.px-results { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); margin-top: 4px; z-index: 30; max-height: 330px; overflow-y: auto; }
+.px-res { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 14px; }
+.px-res:last-child { border-bottom: none; }
+.px-res:hover { background: #f2f7f0; }
+.px-res small { color: var(--muted); }
+.px-res-empty { padding: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+.px-tbl input.qty-inp { width: 104px; }
+.px-foot td { background: #f1f5ef; font-size: 15px; }
+.px-del { background: none; border: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 4px 9px; border-radius: 6px; }
+.px-del:hover { background: #fde7e4; color: var(--red); }
+
+/* ── Yangi tovar modal ───────────────────────────────────── */
+.np-overlay { position: fixed; inset: 0; background: rgba(18,28,18,.46); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.np-modal { width: 560px; max-width: 92vw; max-height: 90vh; overflow-y: auto; background: #fff; border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.35); }
+.np-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); font-size: 17px; font-weight: 700; }
+.np-x { background: none; border: none; font-size: 18px; color: var(--muted); cursor: pointer; }
+.np-body { padding: 18px 20px; }
+.np-sku { background: #eef6ef; color: var(--brand-d); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 14px; }
+.np-sku small { color: var(--muted); font-weight: 400; }
+.np-l { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin: 10px 0 5px; }
+.np-inp { width: 100%; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 10px; font-size: 15px; outline: none; background: #fafdf9; }
+.np-inp:focus { border-color: var(--brand); background: #fff; }
+.np-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.np-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.np-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); }
+
+/* ── AI Prixod — rasmdan to'ldirish ───────────────────────────────────────── */
+.btn-soft.px-ai { background: var(--gold); }
+.btn-soft.px-ai:hover { background: #a9760a; }
+
+/* Yuklash overlayi (AI o'qiyapti) */
+.px-scan-ov { position: fixed; inset: 0; background: rgba(20,40,25,.45); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.px-scan-box { background: #fff; border-radius: 16px; padding: 28px 34px; box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; font-size: 15px; color: var(--text); }
+.px-scan-box small { color: var(--muted); }
+.px-spin { width: 38px; height: 38px; border: 4px solid #e2ece4; border-top-color: var(--brand); border-radius: 50%; animation: pxspin .8s linear infinite; }
+@keyframes pxspin { to { transform: rotate(360deg); } }
+
+/* Yig'indi satri */
+.px-scan-sum { background: #eef6ef; border: 1px solid var(--line); border-radius: 11px; padding: 9px 14px; margin: 10px 0 4px; font-size: 14px; color: var(--text); }
+.px-scan-sum .ok { color: var(--green); }
+.px-scan-sum .mid { color: var(--gold); }
+
+/* Skanlangan qator + ishonch + nakladnoy nomi + narx farqi */
+.px-tbl tr.px-scanned td { background: #fbfdf8; }
+.px-conf { display: inline-block; min-width: 34px; text-align: center; font-size: 11px; font-weight: 700; padding: 1px 5px; border-radius: 7px; vertical-align: middle; }
+.px-conf.ok { background: #e3f4e8; color: var(--green); }
+.px-conf.mid { background: #fbf0d8; color: var(--gold); }
+.px-raw { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.px-diff { font-size: 11px; margin-top: 3px; font-weight: 600; white-space: nowrap; }
+.px-diff.up { color: var(--red); }
+.px-diff.down { color: var(--green); }
+.px-diff.same { color: var(--muted); }
+.px-diff.new { color: var(--gold); }
+
+/* Prixodni saqlash — tasdiqlash modali */
+.pc-sum { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.pc-sum > div { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg, #f3f4f8); border-radius: 8px; }
+.pc-sum span { color: var(--muted); font-size: 13px; }
+.pc-sum b { font-size: 15px; }
+.pc-warn { margin-top: 12px; font-size: 12px; color: var(--gold); }
+
+/* Valyuta (so'm/dollar) kiritish */
+.px-cur { font-weight: 700; }
+.px-cur.usd { background: var(--green); color: #fff; border-color: var(--green); }
+.px-cur-hint { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
+.px-eski { color: var(--muted); }
+
+/* Tekshirish (review) bo'limi */
+.px-review { border: 1.5px solid #f0dca6; background: #fffaf0; border-radius: 12px; padding: 12px 14px; margin: 8px 0 14px; }
+.px-review-h { font-size: 13px; color: #8a6400; font-weight: 600; margin-bottom: 10px; }
+.px-rv-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid #f0e2c0; flex-wrap: wrap; }
+.px-rv-row:first-of-type { border-top: none; }
+.px-rv-name { flex: 1; min-width: 220px; font-size: 14px; }
+.px-rv-name small { color: var(--muted); margin-left: 6px; }
+.px-rv-sel { padding: 7px 10px; border: 1.5px solid var(--line); border-radius: 9px; background: #fff; font-size: 13px; min-width: 200px; }
+.btn-soft.px-rv-ok { padding: 7px 14px; font-size: 13px; }
+.px-rv-skip { font-size: 15px; }
+
+/* ── Prixod tarixi (oldingi qabullar) ─────────────────────────────────────── */
+.ph-sum { background: #eef6ef; border: 1px solid var(--line); border-radius: 11px; padding: 10px 14px; margin: 10px 0; font-size: 14px; color: var(--text); }
+.ph-sum b { color: var(--brand-d); }
+.ph-row { cursor: pointer; }
+.ph-row:hover td { background: #f2f7f0; }
+.ph-row.open td { background: #eaf3ec; font-weight: 600; }
+.ph-det td { background: #fbfdf8; font-size: 13px; color: var(--muted); border-top: none; }
+.ph-det-name { color: var(--text); }

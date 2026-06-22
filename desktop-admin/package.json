@@ -1,0 +1,53 @@
+{
+  "name": "chinor-admin",
+  "version": "1.0.0",
+  "description": "Chinor — boshqaruv paneli (hisobotlar, online savdo, tovarlar). Electron desktop.",
+  "main": "main.js",
+  "author": "Chinor",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --dir",
+    "dist:win": "electron-builder --win --x64",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "uz.chinor.admin",
+    "productName": "Chinor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "artifactName": "Chinor-mac-${version}.${ext}",
+      "icon": "renderer/icon_mac.png",
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "renderer/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Chinor"
+    }
+  }
+}

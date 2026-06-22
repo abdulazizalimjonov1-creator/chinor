@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chinor</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <!-- ── LOGIN ────────────────────────────────────────────────── -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <img src="logo.png" alt="Chinor" class="login-logo">
+      <h1>Chinor</h1>
+      <p class="login-sub">Boshqaruv paneli</p>
+      <div class="field">
+        <label>Login</label>
+        <input id="loginInput" type="text" placeholder="Login" autocomplete="username" autofocus>
+      </div>
+      <div class="field">
+        <label>Parol</label>
+        <input id="passInput" type="password" placeholder="Parol" autocomplete="current-password">
+      </div>
+      <details class="server-box">
+        <summary>Server manzili</summary>
+        <input id="serverInput" type="text" placeholder="http://127.0.0.1:8765">
+        <div class="server-hint">Server shu kompyuterda ishlasa <b>http://127.0.0.1:8765</b>. Boshqa joyda bo'lsa — tunnel manzilini yozing.</div>
+      </details>
+      <button id="loginBtn" class="btn-primary">Kirish</button>
+      <div id="loginErr" class="login-err"></div>
+    </div>
+  </div>
+
+  <!-- ── ILOVA ────────────────────────────────────────────────── -->
+  <div id="app" class="app hidden">
+    <!-- Chap menyu -->
+    <aside class="sidebar">
+      <div class="brand"><img src="logo.png" alt="" class="brand-logo"><span>Chinor</span></div>
+
+      <div class="shop-card">
+        <svg class="shop-ico" viewBox="0 0 24 24"><path d="M3 9l1-5h16l1 5M4 9v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9M9 21v-6h6v6"/></svg>
+        <span id="shopName">CHINOR</span>
+      </div>
+
+      <nav id="nav" class="nav"></nav>
+
+      <div class="side-foot">
+        <div class="ver">v 1.0.0</div>
+        <div class="admin-row">
+          <div class="admin-ava" id="adminAva">A</div>
+          <div class="admin-meta">
+            <div id="adminName" class="admin-name">Admin</div>
+            <button id="logoutBtn" class="admin-logout">Chiqish</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- O'ng tomon: tab'lar + kontent -->
+    <main class="main">
+      <div id="tabStrip" class="tab-strip"></div>
+      <div id="content" class="content"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="barcode.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
