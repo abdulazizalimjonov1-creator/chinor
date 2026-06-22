@@ -108,6 +108,11 @@ ipcMain.handle('data:prixodSave', withAuth((base, token, arg) => api.prixodSave(
 ipcMain.handle('data:clients', withAuth((base, token) => api.clients(base, token)));
 ipcMain.handle('data:admins', withAuth((base, token) => api.admins(base, token)));
 ipcMain.handle('data:settings', withAuth((base, token) => api.settings(base, token)));
+// Yetkazib beruvchilar (suppliers)
+ipcMain.handle('data:suppliers', withAuth((base, token) => api.suppliers(base, token)));
+ipcMain.handle('data:supplierSave', withAuth((base, token, arg) => api.supplierSave(base, token, arg)));
+ipcMain.handle('data:supplierDelete', withAuth((base, token, arg) => api.supplierDelete(base, token, arg.id)));
+ipcMain.handle('data:productSetSupplier', withAuth((base, token, arg) => api.productSetSupplier(base, token, arg.product_id, arg.supplier_id)));
 
 ipcMain.handle('net:health', async () => {
   const r = await api.health(store.get('serverUrl'));

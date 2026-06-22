@@ -280,10 +280,14 @@ function renderModuleMenu(mod) {
   } else if (mod === 'ombor') {
     c.innerHTML = tilesHtml([
       { key: 'prixod', label: 'Tovar prixod (kirim)', icon: 'M21 8 12 3 3 8v13h18zM3 8l9 5 9-5M12 22v-9M12 13l-3-2M12 13l3-2' },
+      { key: 'suppliers', label: 'Yetkazib beruvchilar', icon: 'M1 3h15v13H1zM16 8h4l3 3v5h-7zM5.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z' },
       { key: 'invent', label: 'Inventarizatsiya', icon: 'M9 11l3 3 8-8M3 6h12M3 12h6M3 18h6', soon: true },
       { key: 'writeoff', label: 'Hisobdan chiqarish', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', soon: true },
     ]);
-    bindTiles(c, { prixod: () => openTab('omb:prixod', 'Tovar prixod', renderPrixod) });
+    bindTiles(c, {
+      prixod: () => openTab('omb:prixod', 'Tovar prixod', renderPrixod),
+      suppliers: () => openTab('omb:suppliers', 'Yetkazib beruvchilar', renderSuppliers),
+    });
   } else if (mod === 'mijozlar') {
     renderClients(c);
   } else if (mod === 'xodimlar') {
@@ -300,6 +304,120 @@ function bindTiles(c, map) {
   c.querySelectorAll('.tile').forEach((b) => {
     const fn = map[b.dataset.tile];
     if (fn && !b.classList.contains('soon')) b.addEventListener('click', fn);
+  });
+}
+
+// ── Yetkazib beruvchilar (suppliers) ─────────────────────────────────────────
+// Kesh — mahsulot ro'yxati va yangi-tovar formasi ham ishlatadi (qayta
+// yuklamaslik uchun). Yetkazib beruvchi qo'shil/o'zgarsa null qilinadi.
+let _supCache = null;
+async function loadSuppliers(force) {
+  if (_supCache && !force) return _supCache;
+  const r = await api.getSuppliers();
+  if (!r.ok) { if (r.authRequired) doLogout(); return _supCache || []; }
+  _supCache = r.suppliers || [];
+  return _supCache;
+}
+function supName(id) {
+  const s = (_supCache || []).find((x) => x.id === Number(id));
+  return s ? s.name : '';
+}
+function supOptions(selId) {
+  return (_supCache || [])
+    .map((s) => `<option value="${s.id}"${Number(selId) === s.id ? ' selected' : ''}>${esc(s.name)}</option>`)
+    .join('');
+}
+
+async function renderSuppliers(c) {
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const items = await loadSuppliers(true);
+  const rows = items.map((s) => `
+    <tr>
+      <td>${esc(s.name)}</td>
+      <td>${s.phone ? esc(s.phone) : '<span class="muted">—</span>'}</td>
+      <td>${s.note ? esc(s.note) : '<span class="muted">—</span>'}</td>
+      <td class="num">${int(s.product_count)}</td>
+      <td class="num">${s.low_count ? `<span class="badge-low">${int(s.low_count)}</span>` : '0'}</td>
+      <td class="num">
+        <button class="btn-mini" data-edit="${s.id}" title="Tahrirlash">✏️</button>
+        <button class="btn-mini danger" data-del="${s.id}" title="O'chirish">🗑</button>
+      </td>
+    </tr>`).join('');
+  c.innerHTML = `
+    <div class="bar-row">
+      <div class="sum-chips">
+        <div class="sum-chip"><div class="v">${int(items.length)}</div><div class="l">Yetkazib beruvchilar</div></div>
+      </div>
+      <button class="btn-soft" id="supNew">➕ Yangi yetkazib beruvchi</button>
+    </div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Nomi</th><th>Telefon</th><th>Izoh</th><th class="num">Tovarlar</th><th class="num">Kam qolgan</th><th class="num">Amal</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6"><div class="chart-empty">Yetkazib beruvchilar yo'q. «➕ Yangi» bilan qo'shing.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+  $('supNew').addEventListener('click', () => openSupplierModal(null, () => renderSuppliers(c)));
+  c.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+    openSupplierModal(items.find((x) => x.id === Number(b.dataset.edit)), () => renderSuppliers(c));
+  }));
+  c.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
+    confirmDeleteSupplier(items.find((x) => x.id === Number(b.dataset.del)), c);
+  }));
+}
+
+function openSupplierModal(sup, onSaved) {
+  const edit = !!sup;
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal">
+      <div class="np-head"><span>${edit ? '✏️ Yetkazib beruvchini tahrirlash' : '➕ Yangi yetkazib beruvchi'}</span><button class="np-x" id="supX">✕</button></div>
+      <div class="np-body">
+        <label class="np-l">Nomi *</label>
+        <input id="supName" class="np-inp" type="text" placeholder="Masalan: Olmos Savdo MChJ" value="${edit ? esc(sup.name) : ''}">
+        <label class="np-l">Telefon</label>
+        <input id="supPhone" class="np-inp" type="text" placeholder="ixtiyoriy" value="${edit ? esc(sup.phone) : ''}">
+        <label class="np-l">Izoh</label>
+        <input id="supNote" class="np-inp" type="text" placeholder="ixtiyoriy" value="${edit ? esc(sup.note) : ''}">
+        <div id="supMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="supCancel">Bekor</button>
+        <button class="btn-soft" id="supSave">Saqlash</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('supX').addEventListener('click', close);
+  re('supCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('supName').focus();
+  re('supSave').addEventListener('click', async () => {
+    const name = re('supName').value.trim();
+    const msg = re('supMsg');
+    if (!name) { msg.className = 'px-msg err'; msg.textContent = 'Nomini kiriting'; return; }
+    const btn = re('supSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const r = await api.supplierSave({ id: edit ? sup.id : 0, name, phone: re('supPhone').value.trim(), note: re('supNote').value.trim() });
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
+    _supCache = null;
+    close();
+    toast(edit ? '✓ Saqlandi' : `✓ «${name}» qo'shildi`);
+    if (onSaved) onSaved();
+  });
+}
+
+function confirmDeleteSupplier(sup, c) {
+  if (!sup) return;
+  const ok = window.confirm(`«${sup.name}» o'chirilsinmi?\n\nBiriktirilgan ${sup.product_count} ta tovar saqlanadi (yetkazib beruvchisiz qoladi).`);
+  if (!ok) return;
+  api.supplierDelete(sup.id).then((r) => {
+    if (!r.ok) { if (r.authRequired) return doLogout(); toast(r.error || 'Xatolik'); return; }
+    _supCache = null;
+    toast('✓ Oʻchirildi');
+    renderSuppliers(c);
   });
 }
 
@@ -483,6 +601,7 @@ async function renderProducts(c) {
     if (!r.has_more) break;
     page++;
   }
+  await loadSuppliers();   // yetkazib beruvchilar — ustun va biriktirish uchun
   c.innerHTML = `
     <div class="sum-chips">
       <div class="sum-chip"><div class="v">${int(all.length)}</div><div class="l">Tovarlar (aktiv)</div></div>
@@ -490,7 +609,7 @@ async function renderProducts(c) {
     </div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th><th>Yetkazib beruvchi</th></tr></thead>
         <tbody>
           ${all.map((p) => `
             <tr>
@@ -501,10 +620,21 @@ async function renderProducts(c) {
               <td class="num">${money(p.cost_price_sum || 0)}</td>
               <td class="num">${money(p.sell_price_sum || p.price_sum || 0)}</td>
               <td class="num">${money(p.wholesale_sum || 0)}</td>
+              <td><select class="sup-sel" data-pid="${p.id}"><option value="0">—</option>${supOptions(p.supplier_id)}</select></td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
+  // Inline: yetkazib beruvchini biriktirish/yechish (faqat bog'lanish → /api/product/supplier)
+  c.querySelectorAll('.sup-sel').forEach((sel) => sel.addEventListener('change', async () => {
+    const pid = Number(sel.dataset.pid);
+    const sid = Number(sel.value);
+    sel.disabled = true;
+    const r = await api.productSetSupplier(pid, sid);
+    sel.disabled = false;
+    if (!r.ok) { if (r.authRequired) return doLogout(); toast(r.error || 'Xatolik'); return; }
+    toast(sid ? `✓ «${supName(sid)}» biriktirildi` : '✓ Yetkazib beruvchi yechildi');
+  }));
 }
 
 // ── Mijozlar ───────────────────────────────────────────────────────────────
@@ -1455,6 +1585,8 @@ function openNewProductModal(c, prefill) {
           <div><label class="np-l">Sotuv narxi (so'm)</label><input id="npSell" class="np-inp" type="number" min="0" step="any" placeholder="0"></div>
           <div><label class="np-l">Ulgurji (so'm)</label><input id="npWhs" class="np-inp" type="number" min="0" step="any" placeholder="0"></div>
         </div>
+        <label class="np-l">Yetkazib beruvchi</label>
+        <select id="npSupplier" class="np-inp"><option value="0">— biriktirilmagan —</option></select>
         <div id="npMsg" class="px-msg"></div>
       </div>
       <div class="np-foot">
@@ -1475,6 +1607,11 @@ function openNewProductModal(c, prefill) {
   if (prefill.cost) re('npCost').value = prefill.cost;
   if (prefill.sell) re('npSell').value = prefill.sell;
   re('npName').focus();
+  // Yetkazib beruvchilar ro'yxatini dropdownga yuklaymiz (async)
+  loadSuppliers().then(() => {
+    const sel = re('npSupplier');
+    if (sel) sel.innerHTML = '<option value="0">— biriktirilmagan —</option>' + supOptions(prefill.supplier_id || 0);
+  });
 
   re('npSave').addEventListener('click', async () => {
     const name = re('npName').value.trim();
@@ -1486,6 +1623,7 @@ function openNewProductModal(c, prefill) {
       cost_price_sum: parseFloat(re('npCost').value) || 0,
       sell_price_sum: parseFloat(re('npSell').value) || 0,
       wholesale_sum: parseFloat(re('npWhs').value) || 0,
+      supplier_id: parseInt(re('npSupplier').value, 10) || 0,
       qty: 0,
     };
     const r = await api.productSave(prod);

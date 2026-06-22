@@ -94,6 +94,29 @@ async def api_supplier_delete(request: web.Request):
     return web.json_response({"ok": True})
 
 
+@SUPPLIER_ROUTES.post("/api/product/supplier")
+async def api_product_set_supplier(request: web.Request):
+    """Mahsulotga yetkazib beruvchi biriktiradi yoki yechadi (supplier_id=0 →
+    yechish). FAQAT shu bog'lanishni o'zgartiradi — nom/narx/qoldiqqa tegmaydi
+    (shuning uchun /api/product/save EMAS). Ruxsat: 'products_edit'."""
+    from database.channel_db import db as _db
+    from bot.web_api import _admin_guard, _err, _read_json
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    pid = int(body.get("product_id") or 0)
+    sid = int(body.get("supplier_id") or 0)
+    if not pid:
+        return _err("Mahsulot ID noto'g'ri")
+    if not await _db.get_product_any(pid):
+        return _err("Mahsulot topilmadi", 404)
+    if sid and not await _db.get_supplier(sid):
+        return _err("Yetkazib beruvchi topilmadi", 404)
+    await _db.set_product_supplier(pid, sid)
+    return web.json_response({"ok": True, "product_id": pid, "supplier_id": sid})
+
+
 def setup(app: web.Application):
     """web_api.create_app() shu funksiyani chaqirib route'larni ulaydi."""
     app.add_routes(SUPPLIER_ROUTES)

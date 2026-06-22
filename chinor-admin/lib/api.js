@@ -95,4 +95,15 @@ module.exports = {
   // Prixod hujjatini saqlash (qoldiq+narx yangilanadi va jurnalga yoziladi).
   prixodSave: (base, token, payload) =>
     req(base, '/api/prixod/save', { method: 'POST', token, body: payload, timeout: 30000 }),
+  // ── Yetkazib beruvchilar (suppliers) ───────────────────────────────────────
+  suppliers: (base, token) =>
+    req(base, '/api/suppliers', { token, timeout: 20000 }),
+  // Yangi yetkazib beruvchi (id=0) yoki mavjudini tahrirlash.
+  supplierSave: (base, token, payload) =>
+    req(base, '/api/supplier/save', { method: 'POST', token, body: payload, timeout: 15000 }),
+  supplierDelete: (base, token, id) =>
+    req(base, '/api/supplier/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
+  // Mahsulotga yetkazib beruvchi biriktirish/yechish (faqat bog'lanish).
+  productSetSupplier: (base, token, product_id, supplier_id) =>
+    req(base, '/api/product/supplier', { method: 'POST', token, body: { product_id, supplier_id }, timeout: 15000 }),
 };

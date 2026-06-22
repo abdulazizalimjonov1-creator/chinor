@@ -321,3 +321,15 @@ table.tbl tr:hover td { background: #f7faf6; }
 .ph-row.open td { background: #eaf3ec; font-weight: 600; }
 .ph-det td { background: #fbfdf8; font-size: 13px; color: var(--muted); border-top: none; }
 .ph-det-name { color: var(--text); }
+
+/* ── Yetkazib beruvchilar (suppliers) ─────────────────────────────────────── */
+.bar-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.bar-row .sum-chips { margin-bottom: 0; }
+.muted { color: var(--muted); }
+.btn-mini { background: #eef2ee; border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; font-size: 14px; cursor: pointer; line-height: 1; }
+.btn-mini:hover { background: #e1e9e0; }
+.btn-mini.danger:hover { background: #fde2e2; border-color: #f3b4b4; }
+.badge-low { display: inline-block; min-width: 22px; padding: 1px 7px; border-radius: 999px; background: #fde2e2; color: #c0392b; font-weight: 700; font-size: 12px; }
+.sup-sel { max-width: 210px; padding: 5px 8px; border: 1.5px solid var(--line); border-radius: 8px; background: #fafdf9; font-size: 13px; outline: none; cursor: pointer; }
+.sup-sel:focus { border-color: var(--brand); background: #fff; }
+.sup-sel:disabled { opacity: .55; cursor: default; }

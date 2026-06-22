@@ -28,5 +28,10 @@ contextBridge.exposeInMainWorld('chinor', {
   getClients: () => ipcRenderer.invoke('data:clients'),
   getAdmins: () => ipcRenderer.invoke('data:admins'),
   getSettings: () => ipcRenderer.invoke('data:settings'),
+  // Yetkazib beruvchilar (suppliers)
+  getSuppliers: () => ipcRenderer.invoke('data:suppliers'),
+  supplierSave: (payload) => ipcRenderer.invoke('data:supplierSave', payload),
+  supplierDelete: (id) => ipcRenderer.invoke('data:supplierDelete', { id }),
+  productSetSupplier: (product_id, supplier_id) => ipcRenderer.invoke('data:productSetSupplier', { product_id, supplier_id }),
   getLogo: () => ipcRenderer.invoke('assets:logo'),
 });
