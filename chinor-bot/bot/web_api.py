@@ -438,6 +438,9 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         out["wholesale_usd"] = float(p.get("wholesale_price_usd", 0) or 0)
         out["sell_price_sum"] = float(p.get("sell_price", 0) or 0)
         out["sell_price_usd"] = float(p.get("sell_price_usd", 0) or 0)
+        # Biriktirilgan yetkazib beruvchi (0 = biriktirilmagan). Nomini admin UI
+        # suppliers ro'yxatidan id bo'yicha topadi.
+        out["supplier_id"] = int(p.get("supplier_id", 0) or 0)
     return out
 
 
@@ -2211,6 +2214,10 @@ def create_app() -> web.Application:
     )
     # API route'larini qo'shamiz
     app.add_routes(ROUTES)
+    # Yetkazib beruvchilar (suppliers) — alohida modulda (web_api.py ni
+    # kattalashtirmaslik uchun). Lazy import — circular importdan qochish.
+    from bot import api_suppliers
+    api_suppliers.setup(app)
     # Desktop yangilanish fayllari
     app.router.add_get("/updates/{name}", updates_static)
     # Frontend statik fayllar
