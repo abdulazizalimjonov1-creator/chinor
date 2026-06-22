@@ -93,7 +93,23 @@ class Store {
 
   // ── Katalog ────────────────────────────────────────────────────────
   setCatalog(products, usdRate, clients) {
-    if (Array.isArray(products)) this.data.catalog = products;
+    if (Array.isArray(products)) {
+      // Tannarx (cost) "yopishqoq": agar yangi katalogda cost bo'lmasa
+      // (masalan eski server hali cost_sum yubormasa), eski keshdagi tannarxni
+      // saqlab qolamiz — shunda bir marta tushgan tannarx offline yo'qolmaydi.
+      const costById = {};
+      for (const o of (this.data.catalog || [])) {
+        const cs = Number(o.cost_sum) || 0, cu = Number(o.cost_usd) || 0;
+        if (cs > 0 || cu > 0) costById[o.id] = { cost_sum: cs, cost_usd: cu };
+      }
+      for (const p of products) {
+        if (!(Number(p.cost_sum) > 0) && costById[p.id]) {
+          p.cost_sum = costById[p.id].cost_sum;
+          if (!(Number(p.cost_usd) > 0)) p.cost_usd = costById[p.id].cost_usd;
+        }
+      }
+      this.data.catalog = products;
+    }
     if (Array.isArray(clients)) this.data.clients = clients;
     if (usdRate) this.data.usdRate = usdRate;
     this._applyBarcodeOverrides();   // serverdan kelgan katalogga lokal shtrixlarni qayta qo'llaymiz

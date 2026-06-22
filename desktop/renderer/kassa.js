@@ -39,6 +39,14 @@ function wholesaleSum(p) {
   if (s <= 0 && p.wholesale_usd) s = Math.round(Number(p.wholesale_usd) * USD_RATE);
   return s;
 }
+// Tannarx (cost_price) — serverdan cost_sum/cost_usd bo'lib keladi.
+// Tannarx bo'lmasa, oxirgi chora sifatida ulgurji narxga tushadi.
+function costSum(p) {
+  let s = Number(p.cost_sum) || 0;
+  if (s <= 0 && p.cost_usd) s = Math.round(Number(p.cost_usd) * USD_RATE);
+  if (s <= 0) s = wholesaleSum(p);
+  return s;
+}
 function matchProducts(q) {
   q = (q || '').trim().toLowerCase();
   if (!q) return CATALOG;
@@ -1042,7 +1050,7 @@ function addToCart(pid) {
   else {
     CART.unshift({
       product_id: pid, name: p.name, sku: p.id, barcode: String(p.barcode || ''),
-      qty: 1, price_sum: priceSum(p), orig: priceSum(p),
+      qty: 1, price_sum: priceSum(p), orig: priceSum(p), cost: costSum(p),
       unit: p.unit || 'dona', qoldiq: Number(p.qty) || 0,
     });
     selIndex = 0;
@@ -1056,6 +1064,21 @@ function addToCart(pid) {
 }
 function lineSum(c) { return Math.max(0, c.price_sum * c.qty); }
 function cartTotal() { return CART.reduce((a, c) => a + lineSum(c), 0); }
+// Savatdagi tovarlarning tannarx (cost_price) yig'indisi
+function cartCost() {
+  return CART.reduce((a, c) => {
+    let w = Number(c.cost) || 0;
+    if (w <= 0) { const p = CATALOG.find((x) => x.id === c.product_id); w = p ? costSum(p) : 0; }
+    return a + w * (Number(c.qty) || 0);
+  }, 0);
+}
+// «Internet trafigi» ko'rinishidagi indikator: har 3 raqamdan keyin vergul + " mb"
+function netLabel(n) { return '↓ ' + Math.round(Number(n) || 0).toLocaleString('en-US') + ' mb'; }
+function updateNetLine() {
+  const el = $('stNet');
+  if (!el) return;
+  el.textContent = CART.length ? netLabel(cartCost()) : '';
+}
 function effectiveTotal() { return overrideTotal != null ? overrideTotal : cartTotal(); }
 function clearOverride() { overrideTotal = null; }
 // Umumiy chegirmani har bir qatorga proporsional yoyadi (yig'indi aniq jamiga teng)
@@ -1189,6 +1212,7 @@ function renderCart() {
   }
   $('grandTotal').textContent = nf(effectiveTotal());
   updateDiscLine();
+  updateNetLine();
   $('simpleBtn').disabled = !CART.length;
   $('payQrBtn').disabled = !CART.length;
 }

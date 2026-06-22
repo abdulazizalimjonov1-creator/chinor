@@ -20,6 +20,7 @@ env/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak*
 
 # Yuklangan rasmlar
 uploads/
@@ -42,9 +43,15 @@ exports/
 *.bak
 *_backup.*
 
-# Electron desktop kassa (yig'ilgan fayllar)
+# Electron desktop ilovalari (yig'ilgan fayllar — qayta yasaladi)
 desktop/node_modules/
 desktop/dist/
+desktop-admin/node_modules/
+desktop-admin/dist/
+chinor-kassa/node_modules/
+chinor-kassa/dist/
+chinor-admin/node_modules/
+chinor-admin/dist/
 
 # Build artefaktlar (qayta yasaladi — git'da saqlanmaydi)
 *.tgz

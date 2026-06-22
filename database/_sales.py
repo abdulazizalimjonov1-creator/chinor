@@ -11,7 +11,7 @@ from database._helpers import (
 )
 from database._formatters import (
     _fmt_product, _fmt_client, _fmt_order, _fmt_sale, _fmt_payment, _fmt_admin,
-    _fmt_client_receipt,
+    _fmt_client_receipt, _fmt_cash_movement,
 )
 
 
@@ -213,6 +213,51 @@ class SalesMixin:
                 await self._send_client_receipt(client_id, data)
             except Exception:
                 pass
+        return data
+
+    async def add_cash_movement(self, direction: str, amount: float, *,
+                                category: str = "", note: str = "",
+                                recipient: str = "", cashier_id: int = 0,
+                                cashier_name: str = "", source: str = "",
+                                created_at: str = "") -> dict:
+        """Naqd kassa harakati (sotuvga bog'liq emas).
+        direction='in' — kassaga pul qo'shildi; 'out' — kassadan pul olindi.
+        Telegram kanaliga ham log yuboradi."""
+        direction = "out" if str(direction).lower() == "out" else "in"
+        amount = abs(float(amount or 0))
+        created = (created_at or "").strip() or _now()
+        with self._lock:
+            conn = self._conn()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO cash_movements(direction, amount, category, note, "
+                    "recipient, cashier_id, cashier_name, source, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (direction, amount, category, note, recipient,
+                     cashier_id, cashier_name, source, created)
+                )
+                mid_id = cur.lastrowid
+                conn.commit()
+            finally:
+                conn.close()
+        data = {
+            "id": mid_id, "direction": direction, "amount": amount,
+            "category": category, "note": note, "recipient": recipient,
+            "cashier_id": cashier_id, "cashier_name": cashier_name,
+            "source": source, "created_at": created,
+        }
+        mid = await self._send(_fmt_cash_movement(data))
+        if mid:
+            with self._lock:
+                conn = self._conn()
+                try:
+                    conn.execute(
+                        "UPDATE cash_movements SET channel_msg_id=? WHERE id=?",
+                        (mid, mid_id)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
         return data
 
     async def create_return(self, cashier_id: int, cashier_name: str,

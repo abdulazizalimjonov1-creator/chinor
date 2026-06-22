@@ -189,6 +189,20 @@ CREATE TABLE IF NOT EXISTS payments (
     channel_msg_id  INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS cash_movements (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction       TEXT    NOT NULL,   -- 'in' = naqd kirim, 'out' = naqd chiqim
+    amount          REAL    NOT NULL,   -- so'm
+    category        TEXT    DEFAULT '',
+    note            TEXT    DEFAULT '',
+    recipient       TEXT    DEFAULT '',  -- chiqimda: kim oldi
+    cashier_id      INTEGER DEFAULT 0,
+    cashier_name    TEXT    DEFAULT '',  -- tasdiqlagan kassir
+    source          TEXT    DEFAULT '',  -- qaysi kassa qurilmasi
+    created_at      TEXT    NOT NULL,
+    channel_msg_id  INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS admins (
     telegram_id     INTEGER PRIMARY KEY,
     full_name       TEXT,

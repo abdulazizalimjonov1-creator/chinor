@@ -648,7 +648,7 @@ async def api_product_save(request: web.Request):
     pid = int(body.get("id") or 0)
     perm = "products_edit" if pid else "products_add"
     auth, err = await _admin_guard(request, _db, perm)
-    if err:
+    if err is not None:
         return err
 
     name = (body.get("name") or "").strip()
@@ -708,7 +708,7 @@ async def api_product_qty(request: web.Request):
     """Prixod — mavjud qoldiqqa qo'shadi (yoki ayiradi)."""
     from database.channel_db import db as _db
     auth, err = await _admin_guard(request, _db, "products_qty")
-    if err:
+    if err is not None:
         return err
     body = await _read_json(request)
     pid = int(body.get("id") or 0)
@@ -723,11 +723,398 @@ async def api_product_qty(request: web.Request):
     return web.json_response({"ok": True, "qty": float(p.get("qty", 0) or 0)})
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  AI PRIXOD — nakladnoy (faktura) rasmidan tovarlarni o'qib, katalogga moslash
+#  Hech narsa YOZMAYDI — faqat o'qib taklif qiladi (odam tekshirib saqlaydi).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_INVOICE_PROMPT = (
+    "Bu — do'kon uchun yetkazib beruvchidan kelgan NAKLADNOY (faktura/invoice) rasmi. "
+    "Undagi har bir tovar qatorini diqqat bilan o'qi. "
+    "FAQAT JSON massiv qaytar, boshqa hech narsa yozma. Har element shu ko'rinishda bo'lsin:\n"
+    '{"name": "tovar nomi", "qty": miqdori_son, "unit": "dona", "price": dona_narxi_son}\n'
+    "Qoidalar: narx va miqdor — faqat SON (vergul, probel, valyuta belgisini olib tashla). "
+    "Agar qatorda faqat umumiy summa bo'lsa va dona narx ko'rinmasa, price = umumiy_summa / qty. "
+    "Miqdor yoki narx ko'rinmasa 0 qo'y. unit ko'rinmasa 'dona' qo'y. "
+    "Sarlavha, 'Jami'/'Itogo', izoh va imzо qatorlarini QO'SHMA — faqat haqiqiy tovarlar."
+)
+
+
+def _parse_json_array(text: str) -> list:
+    """AI matnidan birinchi JSON massivni toza ajratib oladi (```...``` va
+    qo'shimcha matnga chidamli)."""
+    import json
+    import re
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text).rsplit("```", 1)[0].strip()
+    try:
+        v = json.loads(text)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            for k in ("items", "data", "rows", "products", "tovarlar"):
+                if isinstance(v.get(k), list):
+                    return v[k]
+    except Exception:
+        pass
+    i, j = text.find("["), text.rfind("]")
+    if i != -1 and j != -1 and j > i:
+        try:
+            v = json.loads(text[i:j + 1])
+            if isinstance(v, list):
+                return v
+        except Exception:
+            pass
+    return []
+
+
+async def _ai_extract_invoice(img_bytes: bytes) -> list:
+    """Nakladnoy rasmidan [{name, qty, unit, price}] chiqaradi.
+    Avval Gemini (strukturali JSON), keyin Groq vision (zaxira)."""
+    import base64
+
+    # 1) Gemini — response_mime_type=json bilan eng ishonchli
+    try:
+        from bot.config import GEMINI_API_KEY, GEMINI_MODEL
+        if GEMINI_API_KEY:
+            import importlib
+            genai = importlib.import_module("google.genai")
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            Part = genai.types.Part
+            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
+                client.models.generate_content(
+                    model=GEMINI_MODEL or "gemini-2.0-flash",
+                    contents=[
+                        Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+                        _INVOICE_PROMPT,
+                    ],
+                    config={"response_mime_type": "application/json", "temperature": 0},
+                )
+            )
+            items = _parse_json_array(resp.text or "")
+            if items:
+                logger.info(f"🧾 Gemini nakladnoy: {len(items)} qator o'qildi")
+                return items
+    except Exception as e:
+        logger.warning(f"🧾 Gemini extraction xato: {e}")
+
+    # 2) Groq vision (zaxira)
+    try:
+        from bot.config import GROQ_API_KEY
+        if GROQ_API_KEY:
+            from groq import Groq
+            img_b64 = base64.b64encode(img_bytes).decode()
+            client = Groq(api_key=GROQ_API_KEY)
+            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
+                client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=[{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                        {"type": "text", "text": _INVOICE_PROMPT},
+                    ]}],
+                    max_tokens=2000,
+                    temperature=0,
+                )
+            )
+            items = _parse_json_array(resp.choices[0].message.content or "")
+            if items:
+                logger.info(f"🧾 Groq nakladnoy: {len(items)} qator o'qildi")
+                return items
+    except Exception as e:
+        logger.warning(f"🧾 Groq extraction xato: {e}")
+
+    return []
+
+
+# Kirill → lotin (katalog ham lotin, ham kirill bo'lishi mumkin — kross-skript moslik)
+_CYR2LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "ғ": "g", "д": "d", "е": "e", "ё": "yo",
+    "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "қ": "q", "л": "l", "м": "m",
+    "н": "n", "о": "o", "ў": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "x", "ҳ": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sh",
+    "ъ": "", "ы": "i", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _translit(s: str) -> str:
+    return "".join(_CYR2LAT.get(ch, ch) for ch in s)
+
+
+def _norm_name(s: str) -> str:
+    """Nomni moslashtirish uchun normallashtiradi: registr, kirill→lotin, tinish, probel."""
+    import re
+    s = (s or "").lower().strip()
+    s = s.replace("ʼ", "'").replace("`", "'").replace("'", "'").replace("ʻ", "'")
+    s = _translit(s)
+    s = re.sub(r"[^0-9a-z\s']", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _match_score(a: str, b: str) -> float:
+    """0..1 oralig'ida ikki normallashgan nom o'xshashligi."""
+    import difflib
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    ratio = difflib.SequenceMatcher(None, a, b).ratio()
+    ta, tb = set(a.split()), set(b.split())
+    jac = (len(ta & tb) / len(ta | tb)) if (ta | tb) else 0.0
+    contains = 0.88 if (len(a) >= 3 and len(b) >= 3 and (a in b or b in a)) else 0.0
+    return max(ratio, jac, contains)
+
+
+@ROUTES.post("/api/prixod/scan")
+async def api_prixod_scan(request: web.Request):
+    """Nakladnoy rasmini AI bilan o'qib, har tovarni katalogga moslab qaytaradi.
+    Yozuv qilmaydi — desktop-admin natijani ko'rsatadi, odam tekshirib saqlaydi."""
+    from database.channel_db import db as _db
+    auth, err = await _admin_guard(request, _db, "products_qty")
+    if err is not None:
+        return err
+
+    # Rasmni multipartdan o'qiymiz (product/image bilan bir xil naqsh)
+    file_bytes = None
+    try:
+        post = await request.post()
+        field = post.get("photo")
+        if field is not None:
+            if hasattr(field, "file"):
+                file_bytes = field.file.read()
+            elif isinstance(field, (bytes, bytearray)):
+                file_bytes = bytes(field)
+    except Exception as e:
+        logger.error(f"🧾 Faylni o'qib bo'lmadi: {e}")
+        return _err(f"Faylni o'qib bo'lmadi: {e}", 400)
+    if not file_bytes:
+        return _err("Rasm topilmadi (photo maydoni bo'sh)")
+    if len(file_bytes) > 25 * 1024 * 1024:
+        return _err("Rasm 25MB dan katta")
+
+    extracted = await _ai_extract_invoice(file_bytes)
+    if not extracted:
+        return _err("AI nakladnoyni o'qiy olmadi — rasm tiniqroq bo'lsin", 422)
+
+    # Katalog indeksi (norm nom + barcode + eski narxlar)
+    prods = await _db.get_all_products(active_only=True)
+    idx, bybc = [], {}
+    for p in prods:
+        bc = str(p.get("barcode") or "").strip()
+        rec = {
+            "id": p["id"], "name": p.get("name", ""), "norm": _norm_name(p.get("name", "")),
+            "unit": p.get("unit", "dona"), "qty": float(p.get("qty", 0) or 0), "barcode": bc,
+            "cost_price_sum": float(p.get("cost_price", 0) or 0),
+            "sell_price_sum": float(p.get("sell_price", 0) or 0),
+            "wholesale_sum": float(p.get("wholesale_price", 0) or 0),
+        }
+        idx.append(rec)
+        if bc:
+            bybc[bc] = rec
+
+    def _cand(rec, conf):
+        return {
+            "id": rec["id"], "name": rec["name"], "unit": rec["unit"], "qty": rec["qty"],
+            "barcode": rec["barcode"], "cost_price_sum": rec["cost_price_sum"],
+            "sell_price_sum": rec["sell_price_sum"], "wholesale_sum": rec["wholesale_sum"],
+            "confidence": round(conf, 3),
+        }
+
+    out_items = []
+    for it in extracted:
+        raw_name = str(it.get("name") or "").strip()
+        if not raw_name:
+            continue
+        qty = _to_float(it.get("qty"))
+        unit = str(it.get("unit") or "").strip() or "dona"
+        new_price = _to_float(it.get("price"))
+        bc = str(it.get("barcode") or "").strip()
+
+        # Barcode aniq mos kelsa — to'g'ridan-to'g'ri (ishonch 1.0)
+        if bc and bc in bybc:
+            cands = [_cand(bybc[bc], 1.0)]
+        else:
+            nrm = _norm_name(raw_name)
+            scored = [(_match_score(nrm, rec["norm"]), rec) for rec in idx]
+            scored = [x for x in scored if x[0] > 0.30]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            cands = [_cand(rec, sc) for sc, rec in scored[:5]]
+
+        best = cands[0] if (cands and cands[0]["confidence"] >= 0.55) else None
+        out_items.append({
+            "raw_name": raw_name, "qty": qty, "unit": unit,
+            "new_price": new_price, "match": best, "candidates": cands,
+        })
+
+    matched = sum(1 for x in out_items if x["match"])
+    logger.info(f"🧾 Prixod-scan: {len(out_items)} qator, {matched} mos keldi")
+    return web.json_response({
+        "ok": True, "count": len(out_items), "matched": matched,
+        "unmatched": len(out_items) - matched, "items": out_items,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PRIXOD TARIXI — qabul qilingan hujjatlar jurnali (purchases)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _purch_db() -> sqlite3.Connection:
+    """purchases jadvaliga ulanish (pos.db). web_sessions bilan bir xil naqsh."""
+    from database._helpers import DB_PATH
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE IF NOT EXISTS purchases (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at    TEXT    NOT NULL,
+        employee_name TEXT    DEFAULT '',
+        note          TEXT    DEFAULT '',
+        item_count    INTEGER DEFAULT 0,
+        total_qty     REAL    DEFAULT 0,
+        total_cost    REAL    DEFAULT 0,
+        total_sell    REAL    DEFAULT 0,
+        items_json    TEXT    DEFAULT '[]',
+        source        TEXT    DEFAULT ''
+    )""")
+    conn.commit()
+    return conn
+
+
+@ROUTES.post("/api/prixod/save")
+async def api_prixod_save(request: web.Request):
+    """Prixod hujjatini saqlaydi: har tovar qoldig'iga qo'shadi + narxlarni
+    yangilaydi, so'ng hujjatni `purchases` jurnaliga yozadi (tarix uchun)."""
+    from database.channel_db import db as _db
+    from database._helpers import sum_to_usd, now_local
+    auth, err = await _admin_guard(request, _db, "products_qty")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    lines = body.get("lines") or []
+    if not isinstance(lines, list) or not lines:
+        return _err("Bo'sh hujjat — kamida bitta tovar kerak")
+    note = (body.get("note") or "").strip()
+    source = (body.get("source") or "").strip()
+    rate = _db.get_usd_rate()
+
+    saved, errs = [], []
+    for ln in lines:
+        try:
+            pid = int(ln.get("id") or 0)
+            qty = _to_float(ln.get("qty"))
+            if not pid or qty <= 0:
+                continue
+            p = await _db.get_product_any(pid)
+            if not p:
+                errs.append(f"#{pid} topilmadi")
+                continue
+            await _db.change_qty(pid, qty)
+            cost = _to_float(ln.get("cost"))
+            sell = _to_float(ln.get("sell"))
+            whs = _to_float(ln.get("wholesale"))
+            upd = {}
+            if cost > 0:
+                upd["cost_price_usd"] = round(sum_to_usd(cost, rate), 4)
+            if sell > 0:
+                upd["sell_price_usd"] = round(sum_to_usd(sell, rate), 4)
+            if whs > 0:
+                upd["wholesale_price_usd"] = round(sum_to_usd(whs, rate), 4)
+            if upd:
+                await _db.update_product(pid, **upd)
+            saved.append({
+                "id": pid, "name": ln.get("name") or p.get("name", ""),
+                "unit": ln.get("unit") or p.get("unit", "dona"),
+                "qty": qty, "cost": cost, "sell": sell,
+            })
+        except Exception as e:
+            errs.append(str(e))
+
+    if not saved:
+        return _err("Hech bir tovar saqlanmadi" + (f": {errs[0]}" if errs else ""))
+
+    total_qty = sum(s["qty"] for s in saved)
+    total_cost = sum(s["qty"] * s["cost"] for s in saved)
+    total_sell = sum(s["qty"] * s["sell"] for s in saved)
+    emp = (auth.get("user") or {}).get("full_name") or "Admin"
+    created_at = now_local().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = _purch_db()
+    try:
+        cur = conn.execute(
+            "INSERT INTO purchases(created_at, employee_name, note, item_count, "
+            "total_qty, total_cost, total_sell, items_json, source) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (created_at, emp, note, len(saved), total_qty, total_cost, total_sell,
+             _json.dumps(saved, ensure_ascii=False), source)
+        )
+        conn.commit()
+        new_id = cur.lastrowid
+    finally:
+        conn.close()
+
+    logger.info(f"📦 Prixod #{new_id} saqlandi: {len(saved)} tovar, tannarx {total_cost}")
+    return web.json_response({
+        "ok": True, "id": new_id, "saved": len(saved), "errors": errs,
+        "total_cost": total_cost, "total_sell": total_sell,
+    })
+
+
+@ROUTES.get("/api/prixod/list")
+async def api_prixod_list(request: web.Request):
+    """Oldingi prixod hujjatlari + yig'indi. Filtr: from/to (YYYY-MM-DD), limit."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    dfrom = (request.query.get("from") or "").strip()
+    dto = (request.query.get("to") or "").strip()
+    try:
+        limit = max(1, min(500, int(request.query.get("limit") or 200)))
+    except ValueError:
+        limit = 200
+    where, params = [], []
+    if dfrom:
+        where.append("created_at >= ?"); params.append(dfrom + " 00:00:00")
+    if dto:
+        where.append("created_at <= ?"); params.append(dto + " 23:59:59")
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    conn = _purch_db()
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM purchases{wsql} ORDER BY id DESC LIMIT ?",
+            params + [limit]
+        ).fetchall()
+    finally:
+        conn.close()
+
+    items, sum_cost, sum_sell = [], 0.0, 0.0
+    for r in rows:
+        try:
+            its = _json.loads(r["items_json"] or "[]")
+        except Exception:
+            its = []
+        items.append({
+            "id": r["id"], "created_at": r["created_at"],
+            "employee_name": r["employee_name"], "note": r["note"],
+            "item_count": r["item_count"], "total_qty": r["total_qty"],
+            "total_cost": r["total_cost"], "total_sell": r["total_sell"], "items": its,
+        })
+        sum_cost += r["total_cost"] or 0
+        sum_sell += r["total_sell"] or 0
+    markup = round((sum_sell - sum_cost) / sum_cost * 100, 1) if sum_cost else 0
+    return web.json_response({
+        "ok": True, "count": len(items),
+        "summary": {"count": len(items), "total_cost": sum_cost,
+                    "total_sell": sum_sell, "markup": markup},
+        "items": items,
+    })
+
+
 @ROUTES.post("/api/product/delete")
 async def api_product_delete(request: web.Request):
     from database.channel_db import db as _db
     auth, err = await _admin_guard(request, _db, "products_del")
-    if err:
+    if err is not None:
         return err
     body = await _read_json(request)
     pid = int(body.get("id") or 0)
@@ -743,11 +1130,11 @@ async def api_product_image(request: web.Request):
     from database.channel_db import db as _db
     # Multipart bo'lgani uchun initData header orqali keladi
     auth, err = await _admin_guard(request, _db, "products_edit")
-    if err:
+    if err is not None:
         logger.warning(f"📸 products_edit ruxsati yo'q: {err}")
         # Yangi mahsulotga rasm qo'yishda products_add ham bo'lishi mumkin
         auth2, err2 = await _admin_guard(request, _db, "products_add")
-        if err2:
+        if err2 is not None:
             logger.warning(f"📸 products_add ruxsati yo'q: {err2}")
             return err2
         auth = auth2
@@ -1260,6 +1647,8 @@ async def api_sync_catalog(request: web.Request):
             "sell_price_usd": float(p.get("sell_price_usd", 0) or 0),
             "wholesale_sum": float(p.get("wholesale_price", 0) or 0),
             "wholesale_usd": float(p.get("wholesale_price_usd", 0) or 0),
+            "cost_sum": float(p.get("cost_price", 0) or 0),
+            "cost_usd": float(p.get("cost_price_usd", 0) or 0),
             "image_url": p.get("image_url", "") or "",
         })
     clients = []
@@ -1430,6 +1819,91 @@ async def api_sync_sales(request: web.Request):
 
     ok_count = sum(1 for r in results if r.get("ok"))
     logger.info(f"[sync/sales] {ok_count}/{len(results)} sotuv qabul qilindi")
+    return web.json_response({"ok": True, "results": results})
+
+
+@ROUTES.post("/api/sync/cash-txns")
+async def api_sync_cash_txns(request: web.Request):
+    """Offline kassa tranzaksiyalari to'plamini bazaga yozadi:
+      • debt_payment — mijoz qarz to'lovi (qarzni kamaytiradi + Telegram chek)
+      • cash_in / cash_out — naqd kirim/chiqim (cash_movements jadvali + Telegram log)
+    Har biri: {local_id, type, method, amount, client_id?, note, category?,
+               recipient?, by?, created_at}.
+    Qaytaradi: har bir local_id uchun {ok, server_id|error}. Dublikatsizlik
+    kassa tomonida ta'minlanadi (faqat YUBORILMAGANLARI qayta yuboriladi)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    body = await _read_json(request)
+    txns_in = body.get("txns") or []
+    if not isinstance(txns_in, list):
+        return _err("txns massiv bo'lishi kerak")
+
+    cashier_name = auth["user"].get("full_name") or "Kassa (offline)"
+    results = []
+    for t in txns_in:
+        local_id = t.get("local_id")
+        try:
+            ttype = (t.get("type") or "").strip()
+            amount = abs(float(t.get("amount") or 0))
+            if amount <= 0:
+                results.append({"local_id": local_id, "ok": False,
+                                "error": "Summa noto'g'ri"})
+                continue
+            note = (t.get("note") or "").strip()
+            created_at = (t.get("created_at") or "").strip()
+            source = (t.get("source") or "").strip()[:80]
+            by = (t.get("by") or "").strip()[:80] or cashier_name
+
+            if ttype == "debt_payment":
+                try:
+                    client_id = int(t.get("client_id") or 0)
+                except (TypeError, ValueError):
+                    client_id = 0
+                if not client_id:
+                    results.append({"local_id": local_id, "ok": False,
+                                    "error": "Mijoz tanlanmagan"})
+                    continue
+                method = (t.get("method") or "cash").lower()
+                if method not in ("cash", "card", "click"):
+                    method = "cash"
+                # To'lov usulini izohga yozamiz (payments jadvalida usul ustuni yo'q)
+                full_note = f"Kassa to'lovi ({method})"
+                if note:
+                    full_note += f" — {note}"
+                pay = await _db.add_payment(client_id, amount, "sum", full_note)
+                if not pay:
+                    results.append({"local_id": local_id, "ok": False,
+                                    "error": "Mijoz topilmadi"})
+                    continue
+                results.append({"local_id": local_id, "ok": True,
+                                "server_id": pay.get("id")})
+
+            elif ttype in ("cash_in", "cash_out"):
+                direction = "out" if ttype == "cash_out" else "in"
+                mv = await _db.add_cash_movement(
+                    direction, amount,
+                    category=(t.get("category") or "").strip()[:60],
+                    note=note,
+                    recipient=(t.get("recipient") or "").strip()[:80],
+                    cashier_id=auth["tg_id"],
+                    cashier_name=by,
+                    source=source,
+                    created_at=created_at,
+                )
+                results.append({"local_id": local_id, "ok": True,
+                                "server_id": mv.get("id")})
+            else:
+                results.append({"local_id": local_id, "ok": False,
+                                "error": f"Noma'lum tur: {ttype}"})
+        except Exception as e:
+            logger.warning(f"[sync/cash-txns] local_id={local_id} xato: {e}")
+            results.append({"local_id": local_id, "ok": False, "error": str(e)})
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    logger.info(f"[sync/cash-txns] {ok_count}/{len(results)} tranzaksiya qabul qilindi")
     return web.json_response({"ok": True, "results": results})
 
 

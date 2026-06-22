@@ -158,6 +158,30 @@ def _fmt_payment(p: dict) -> str:
     )
 
 
+def _fmt_cash_movement(m: dict) -> str:
+    is_in = (m.get("direction") or "in") == "in"
+    icon = "➕" if is_in else "➖"
+    title = "Naqd kirim" if is_in else "Naqd chiqim"
+    amount = float(m.get("amount", 0) or 0)
+    lines = [
+        f"#kassa 🆔{m['id']}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"{icon} <b>{title} #{m['id']}</b>",
+        f"💰 <b>{fmt_sum(amount)}</b>",
+    ]
+    if m.get("category"):
+        lines.append(f"🏷 {m['category']}")
+    if not is_in and m.get("recipient"):
+        lines.append(f"👤 Kim oldi: {m['recipient']}")
+    lines.append(f"📝 {m.get('note') or '—'}")
+    if m.get("cashier_name"):
+        lines.append(f"🧑‍💼 Kassir: {m['cashier_name']}")
+    if m.get("source"):
+        lines.append(f"🖥 {m['source']}")
+    lines.append(f"📅 {(m.get('created_at') or '')[:16]}")
+    return "\n".join(lines)
+
+
 def _fmt_admin(a: dict) -> str:
     return (
         f"#admin 🆔{a['telegram_id']}\n"

@@ -306,6 +306,7 @@ input { font-family: inherit; }
   font-size: 12px; color: var(--text);
 }
 .statusbar .muted { color: var(--muted); margin-left: auto; }
+.statusbar .st-net { margin-left: 16px; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: .2px; }
 
 /* ── CHEKLAR (butun oynali) ────────────────────────────── */
 .receipts-screen {
