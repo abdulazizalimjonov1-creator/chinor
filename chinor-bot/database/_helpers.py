@@ -227,6 +227,18 @@ CREATE TABLE IF NOT EXISTS admins (
     currency_mode   TEXT    DEFAULT ''
 );
 
+-- Kutilayotgan hodimlar: bosh admin telefon raqami orqali qo'shadi, hodim
+-- esa keyin botga kirib o'z kontaktini yuborganda — shu telefon bo'yicha
+-- topilib, admins jadvaliga (real telegram_id bilan) ko'chiriladi.
+CREATE TABLE IF NOT EXISTS pending_staff (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT    NOT NULL,
+    full_name   TEXT    DEFAULT '',
+    role        TEXT    DEFAULT 'full',
+    added_by    INTEGER,
+    created_at  TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_prod_active   ON products(is_active);
 CREATE INDEX IF NOT EXISTS idx_prod_name     ON products(name);
 CREATE INDEX IF NOT EXISTS idx_clients_tg    ON clients(telegram_id);

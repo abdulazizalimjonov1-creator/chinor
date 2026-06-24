@@ -116,7 +116,11 @@ class PaymentStates(StatesGroup):
 
 
 class AddAdminStates(StatesGroup):
-    tg_id = State()
+    # Hodim endi TELEFON raqami orqali qo'shiladi. Hodim keyin botga kirib
+    # o'z kontaktini yuborganda — shu telefon bo'yicha avtomatik admin bo'ladi.
+    full_name = State()
+    phone     = State()
+    tg_id     = State()   # eski oqim (ishlatilmaydi, moslik uchun qoldirilgan)
 
 
 class OrderStates(StatesGroup):

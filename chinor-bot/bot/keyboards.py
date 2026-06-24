@@ -735,9 +735,11 @@ def sale_confirm_kb(sid: int):
 
 # ── Admin boshqaruv ───────────────────────────────────────────────────────────
 
-def admins_list_kb(admins, glavniy_id: int):
+def admins_list_kb(admins, glavniy_id: int, pending=None):
     """Adminlar ro'yxati. Har bir admin ustiga bosib tahrirlash sahifasi ochiladi.
-    Bosh admin ham ro'yxatda, lekin uni o'chirish/rol o'zgartirib bo'lmaydi."""
+    Bosh admin ham ro'yxatda, lekin uni o'chirish/rol o'zgartirib bo'lmaydi.
+    `pending` — telefon orqali qo'shilgan, lekin hali botga kirmagan hodimlar;
+    ular ⏳ bilan ko'rsatiladi, bosilsa — bekor qilish (o'chirish)."""
     from bot.permissions import ROLE_LABELS
     kb = InlineKeyboardBuilder()
     for a in admins:
@@ -750,7 +752,13 @@ def admins_list_kb(admins, glavniy_id: int):
             text=f"{mark}{name} — {role_label}",
             callback_data=f"adm_open_{tg}"
         )
-    kb.button(text="➕ Admin qo'shish", callback_data="add_admin")
+    for p in (pending or []):
+        name = p.get("full_name") or p.get("phone") or "?"
+        kb.button(
+            text=f"⏳ {name} — kutilmoqda",
+            callback_data=f"pend_open_{p['id']}"
+        )
+    kb.button(text="➕ Hodim qo'shish", callback_data="add_admin")
     kb.adjust(1)
     return kb.as_markup()
 

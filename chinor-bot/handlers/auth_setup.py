@@ -84,8 +84,12 @@ async def setup_credentials_start(message: Message, state: FSMContext):
         client = await db.get_client_by_tg(uid)
         if not client:
             await message.answer(
-                "⚠️ Avval /start orqali ro'yxatdan o'ting.",
-                reply_markup=await get_user_menu(db, uid)
+                "⚠️ <b>Avval o'zingizni tasdiqlang.</b>\n\n"
+                "Botga <b>/start</b> bosing va «📱 Raqamni yuborish» tugmasi "
+                "orqali telefon raqamingizni yuboring. Admin sizni shu raqam "
+                "bilan qo'shgan bo'lsa — avtomatik kirasiz, shundan keyin "
+                "login/parol yaratishingiz mumkin.",
+                reply_markup=await get_user_menu(db, uid), parse_mode="HTML"
             )
             return
 

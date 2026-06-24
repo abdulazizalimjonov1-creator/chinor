@@ -39,6 +39,32 @@ async def _menu_for(uid: int):
     return await get_user_menu(db, uid)
 
 
+async def _sync_menu_button(bot: Bot, chat_id: int):
+    """Foydalanuvchining doimiy «menu tugmasi»ni joriy MINI_APP_URL bilan
+    yangilaydi. MUAMMO: tunnel (cloudflare/ngrok) URL'i o'zgarsa, Telegram'da
+    saqlanib qolgan eski menu tugmasi eski (offline) manzilga ishorat qiladi —
+    foydalanuvchi «mini app» ni bossa eski URL ochiladi. /start har bosilganda
+    shu tugmani joriy URL bilan qayta o'rnatamiz (o'z-o'zini tuzatadi)."""
+    try:
+        from aiogram.types import (
+            MenuButtonWebApp, MenuButtonDefault, WebAppInfo,
+        )
+        if MINI_APP_URL.startswith("https://") and db.is_mini_app_enabled():
+            await bot.set_chat_menu_button(
+                chat_id=chat_id,
+                menu_button=MenuButtonWebApp(
+                    text="chinor", web_app=WebAppInfo(url=MINI_APP_URL)
+                ),
+            )
+        else:
+            # Mini App o'chirilgan yoki URL yo'q — eski tugmani olib tashlaymiz
+            await bot.set_chat_menu_button(
+                chat_id=chat_id, menu_button=MenuButtonDefault()
+            )
+    except Exception as e:
+        logger.warning(f"menu tugmasini yangilashda xato (chat={chat_id}): {e}")
+
+
 async def _client_buy_flow(message: Message, state: FSMContext, pid: int):
     """Kanaldan kelgan mijozni mahsulot uchun zakaz oqimiga ulash."""
     c = await db.get_client_by_tg(message.from_user.id)
@@ -98,6 +124,10 @@ async def _client_buy_flow(message: Message, state: FSMContext, pid: int):
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     uid = message.from_user.id
     payload = (command.args or "").strip()
+
+    # Doimiy «menu tugmasi»ni joriy Mini App URL bilan sinxronlaymiz — tunnel
+    # (cloudflare/ngrok) manzili o'zgarib eski URL saqlanib qolganini tuzatadi.
+    await _sync_menu_button(message.bot, uid)
 
     # Kanaldan 'Sotib olish' tugmasi orqali kelgan bo'lsa
     # ('Mijoz buyurtmalari' funksiyasi o'chirilgan bo'lsa — e'tiborsiz qoldiramiz)
@@ -217,6 +247,33 @@ async def auth_by_contact(message: Message, state: FSMContext):
         )
         return
 
+    # 1.5) Avval KUTILAYOTGAN HODIM ro'yxatini tekshiramiz — bosh admin shu
+    # raqamni hodim sifatida qo'shgan bo'lsa, real telegram_id bilan admins
+    # jadvaliga ko'chiramiz (hodim sifatida kirish).
+    pending = await db.get_pending_staff_by_phone(phone)
+    if pending:
+        promoted = await db.promote_pending_staff(
+            phone, sender_id,
+            fallback_name=(message.from_user.full_name or "")
+        )
+        if promoted:
+            await state.clear()
+            # Doimiy menu tugmasini ham shu hodim uchun yangilab qo'yamiz
+            await _sync_menu_button(message.bot, sender_id)
+            menu = await get_user_menu(db, sender_id)
+            role_label = ROLE_LABELS.get(
+                (promoted.get("role") or "full"), "👑 To'liq admin"
+            )
+            await message.answer(
+                f"✅ <b>Tizimga kirdingiz!</b> (hodim sifatida)\n\n"
+                f"👨‍💼 <b>{promoted.get('full_name','')}</b>\n"
+                f"🎭 Rol: <b>{role_label}</b>\n\n"
+                f"Bot menyusidan to'liq ishlashingiz mumkin. Mini App uchun "
+                f"«🔑 Login/parol» tugmasidan login yarating.",
+                reply_markup=menu, parse_mode="HTML"
+            )
+            return
+
     # 2) Telefon bo'yicha mijozni qidirish (DB normalizatsiya bilan)
     client = await db.get_client_by_phone(phone)
     if not client:
@@ -284,24 +341,29 @@ async def auth_reject_typed(message: Message):
 
 # ── Adminlar ─────────────────────────────────────────────────────────────────
 
-async def _admins_list_text() -> str:
+async def _admins_list_view():
+    """Adminlar ro'yxati sahifasini (matn + klaviatura) tayyorlaydi.
+    Telefon orqali qo'shilgan, hali botga kirmagan hodimlar ham ko'rsatiladi."""
     admins = await db.get_all_admins()
-    return (
-        f"👥 <b>Adminlar ({len(admins)} ta):</b>\n\n"
-        f"Har bir adminga rol/ruxsat/valyuta sozlash uchun ustiga bosing."
+    pending = await db.get_all_pending_staff()
+    text = (
+        f"👥 <b>Hodimlar ({len(admins)} ta"
+        + (f", ⏳ {len(pending)} kutilmoqda" if pending else "")
+        + "):</b>\n\n"
+        "Har bir hodimga rol/ruxsat/valyuta sozlash uchun ustiga bosing."
     )
+    if pending:
+        text += "\n\n⏳ <i>«kutilmoqda» — hodim hali botga kirib raqamini " \
+                "tasdiqlamagan.</i>"
+    return text, admins_list_kb(admins, GLAVNIY_ADMIN_ID, pending)
 
 
 @router.message(F.text == "👥 Adminlar")
 async def show_admins(message: Message):
     if not _is_glavniy(message.from_user.id):
         return
-    admins = await db.get_all_admins()
-    await message.answer(
-        await _admins_list_text(),
-        reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID),
-        parse_mode="HTML"
-    )
+    text, markup = await _admins_list_view()
+    await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 def _admin_card_text(admin: dict) -> str:
@@ -357,20 +419,70 @@ async def back_to_admins_list(cb: CallbackQuery):
     if not _is_glavniy(cb.from_user.id):
         await cb.answer()
         return
-    admins = await db.get_all_admins()
+    text, markup = await _admins_list_view()
     try:
-        await cb.message.edit_text(
-            await _admins_list_text(),
-            reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID),
-            parse_mode="HTML"
-        )
+        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
     except Exception:
-        await cb.message.answer(
-            await _admins_list_text(),
-            reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID),
-            parse_mode="HTML"
-        )
+        await cb.message.answer(text, reply_markup=markup, parse_mode="HTML")
     await cb.answer()
+
+
+# ── Kutilayotgan hodim (telefon orqali qo'shilgan, hali kirmagan) ─────────────
+
+@router.callback_query(F.data.startswith("pend_open_"))
+async def open_pending_card(cb: CallbackQuery):
+    if not _is_glavniy(cb.from_user.id):
+        await cb.answer("Faqat bosh admin uchun.", show_alert=True)
+        return
+    try:
+        pid = int(cb.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await cb.answer()
+        return
+    pending = await db.get_all_pending_staff()
+    p = next((x for x in pending if x["id"] == pid), None)
+    if not p:
+        await cb.answer("Topilmadi (allaqachon kirgan bo'lishi mumkin).",
+                        show_alert=True)
+        text, markup = await _admins_list_view()
+        try:
+            await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            pass
+        return
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 Bekor qilish (o'chirish)", callback_data=f"pend_del_{pid}")
+    kb.button(text="◀️ Orqaga", callback_data="adm_back")
+    kb.adjust(1)
+    await cb.message.edit_text(
+        f"⏳ <b>Kutilayotgan hodim</b>\n\n"
+        f"👨‍💼 <b>{p.get('full_name') or '—'}</b>\n"
+        f"📱 <code>{p.get('phone','')}</code>\n\n"
+        f"📲 <i>Hodim botga /start bosib «📱 Raqamni yuborish» orqali shu "
+        f"raqamni yuborsa — avtomatik hodim bo'lib kiradi.</i>",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("pend_del_"))
+async def del_pending(cb: CallbackQuery):
+    if not _is_glavniy(cb.from_user.id):
+        await cb.answer()
+        return
+    try:
+        pid = int(cb.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await cb.answer()
+        return
+    await db.remove_pending_staff(pid)
+    await cb.answer("✅ Bekor qilindi")
+    text, markup = await _admins_list_view()
+    try:
+        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    except Exception:
+        await cb.message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 # ── Rol tanlash ──────────────────────────────────────────────────────────────
@@ -609,13 +721,9 @@ async def curset_back(cb: CallbackQuery):
     if not _is_glavniy(cb.from_user.id):
         await cb.answer()
         return
-    admins = await db.get_all_admins()
+    text, markup = await _admins_list_view()
     try:
-        await cb.message.edit_text(
-            await _admins_list_text(),
-            reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID),
-            parse_mode="HTML"
-        )
+        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
     except Exception:
         pass
     await cb.answer()
@@ -626,38 +734,86 @@ async def add_admin_start(cb: CallbackQuery, state: FSMContext):
     if not _is_glavniy(cb.from_user.id):
         return
     await cb.message.answer(
-        "Yangi admin Telegram ID sini kiriting:\n💡 @userinfobot dan olsa bo'ladi",
-        reply_markup=cancel_kb()
+        "👨‍💼 <b>Yangi hodim</b>\n\n"
+        "Hodimning ism-familiyasini kiriting:",
+        reply_markup=cancel_kb(), parse_mode="HTML"
     )
-    await state.set_state(AddAdminStates.tg_id)
+    await state.set_state(AddAdminStates.full_name)
     await cb.answer()
 
 
-@router.message(AddAdminStates.tg_id)
-async def add_admin_id(message: Message, state: FSMContext, bot: Bot):
+@router.message(AddAdminStates.full_name)
+async def add_admin_name(message: Message, state: FSMContext):
     if message.text == "❌ Bekor qilish":
         await state.clear()
         await message.answer("Bekor.", reply_markup=glavniy_menu())
         return
-    try:
-        new_id = int(message.text.strip())
-    except ValueError:
-        await message.answer("⚠️ Faqat raqam kiriting:")
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("⚠️ Bo'sh bo'lmasin. Ismni kiriting:")
         return
-    try:
-        chat = await bot.get_chat(new_id)
-        full_name = chat.full_name or str(new_id)
-    except Exception:
-        full_name = str(new_id)
-    ok = await db.add_admin(new_id, full_name, message.from_user.id)
+    await state.update_data(new_admin_name=name)
+    await message.answer(
+        "📱 <b>Hodimning telefon raqamini kiriting</b> (mamlakat kodi bilan):\n"
+        "Masalan: <code>+998901234567</code>  yoki  <code>998901234567</code>\n\n"
+        "<i>Hodim keyin botga <b>/start</b> bosib «📱 Raqamni yuborish» tugmasi "
+        "orqali shu raqamni tasdiqlaganda — avtomatik hodim sifatida kiradi.</i>",
+        reply_markup=cancel_kb(), parse_mode="HTML"
+    )
+    await state.set_state(AddAdminStates.phone)
+
+
+def _valid_phone(txt: str) -> bool:
+    digits = "".join(c for c in (txt or "") if c.isdigit())
+    return 9 <= len(digits) <= 15
+
+
+@router.message(AddAdminStates.phone)
+async def add_admin_phone(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("Bekor.", reply_markup=glavniy_menu())
+        return
+    phone_txt = (message.text or "").strip()
+    if not _valid_phone(phone_txt):
+        await message.answer(
+            "⚠️ Telefon raqami noto'g'ri. Kamida 9 ta raqam bo'lishi kerak.\n"
+            "Masalan: <code>+998901234567</code>",
+            parse_mode="HTML"
+        )
+        return
+    data = await state.get_data()
+    full_name = data.get("new_admin_name", "")
+    ok, reason = await db.add_pending_staff(
+        phone=phone_txt, full_name=full_name,
+        role="full", added_by=message.from_user.id
+    )
     await state.clear()
     if ok:
         await message.answer(
-            f"✅ <b>{full_name}</b> admin qo'shildi!\n<code>{new_id}</code>",
+            f"✅ <b>Hodim qo'shildi (kutilmoqda)</b>\n\n"
+            f"👨‍💼 <b>{full_name}</b>\n"
+            f"📱 {phone_txt}\n"
+            f"🎭 Rol: <b>👑 To'liq admin</b> (keyin o'zgartirsa bo'ladi)\n\n"
+            f"📲 <i>Endi hodim botga <b>/start</b> bosib, «📱 Raqamni yuborish» "
+            f"tugmasi orqali shu raqamni yuborsin — avtomatik hodim bo'lib kiradi.</i>",
             reply_markup=glavniy_menu(), parse_mode="HTML"
         )
+    elif reason == "exists_admin":
+        await message.answer(
+            "⚠️ Bu telefon raqami allaqachon hodim sifatida ro'yxatda.",
+            reply_markup=glavniy_menu()
+        )
+    elif reason == "exists_pending":
+        await message.answer(
+            "⚠️ Bu telefon raqami allaqachon kutilayotgan hodimlar ro'yxatida.",
+            reply_markup=glavniy_menu()
+        )
     else:
-        await message.answer("⚠️ Allaqachon mavjud.", reply_markup=glavniy_menu())
+        await message.answer(
+            "⚠️ Saqlanmadi — raqamni tekshirib qaytadan urinib ko'ring.",
+            reply_markup=glavniy_menu()
+        )
 
 
 @router.callback_query(F.data.startswith("del_admin_"))
@@ -674,17 +830,11 @@ async def del_admin(cb: CallbackQuery):
         return
     await db.remove_admin(tg_id)
     await cb.answer("✅ O'chirildi!")
-    admins = await db.get_all_admins()
+    text, markup = await _admins_list_view()
     try:
-        await cb.message.edit_text(
-            await _admins_list_text(),
-            reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID),
-            parse_mode="HTML"
-        )
+        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
     except Exception:
-        await cb.message.edit_reply_markup(
-            reply_markup=admins_list_kb(admins, GLAVNIY_ADMIN_ID)
-        )
+        await cb.message.edit_reply_markup(reply_markup=markup)
 
 
 # ── Statistika ────────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ from database._helpers import (
 from database._formatters import (
     _fmt_product, _fmt_client, _fmt_order, _fmt_sale, _fmt_payment, _fmt_admin,
 )
+from database._clients import normalize_phone, phones_match
 
 
 class AdminsMixin:
@@ -239,6 +240,145 @@ class AdminsMixin:
                 return bool(r["username"]) and bool(r["password_hash"])
             finally:
                 conn.close()
+
+    # ── Kutilayotgan hodimlar (telefon orqali qo'shish) ──────────────────────
+    async def add_pending_staff(self, phone: str, full_name: str,
+                                 role: str, added_by: int) -> Tuple[bool, str]:
+        """Bosh admin yangi hodimni TELEFON raqami orqali qo'shadi.
+        Hodim keyin botga kirib o'z kontaktini yuborganda — shu telefon
+        bo'yicha topilib, real telegram_id bilan admins jadvaliga ko'chiriladi.
+        Qaytaradi: (ok, sabab). ok=False bo'lsa sabab: 'exists_admin' yoki
+        'exists_pending'."""
+        phone_norm = normalize_phone(phone)
+        if not phone_norm:
+            return False, "bad_phone"
+        role = (role or "full").strip().lower()
+        with self._lock:
+            conn = self._conn()
+            try:
+                # Allaqachon admin bo'lgan raqammi?
+                for r in conn.execute(
+                    "SELECT phone FROM admins WHERE phone IS NOT NULL AND phone != ''"
+                ).fetchall():
+                    if phones_match(r["phone"], phone_norm):
+                        return False, "exists_admin"
+                # Allaqachon kutilayotgan ro'yxatdami?
+                for r in conn.execute(
+                    "SELECT phone FROM pending_staff"
+                ).fetchall():
+                    if phones_match(r["phone"], phone_norm):
+                        return False, "exists_pending"
+                conn.execute(
+                    "INSERT INTO pending_staff(phone, full_name, role, added_by, "
+                    "created_at) VALUES(?,?,?,?,?)",
+                    (phone_norm, full_name or "", role, int(added_by), _now())
+                )
+                conn.commit()
+                return True, "ok"
+            finally:
+                conn.close()
+
+    async def get_pending_staff_by_phone(self, phone: str) -> Optional[dict]:
+        norm = normalize_phone(phone)
+        if not norm:
+            return None
+        with self._lock:
+            conn = self._conn()
+            try:
+                for r in conn.execute("SELECT * FROM pending_staff").fetchall():
+                    if phones_match(r["phone"], norm):
+                        return dict(r)
+                return None
+            finally:
+                conn.close()
+
+    async def get_all_pending_staff(self) -> List[dict]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM pending_staff ORDER BY created_at"
+                ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def remove_pending_staff(self, pending_id: int) -> None:
+        with self._lock:
+            conn = self._conn()
+            try:
+                conn.execute("DELETE FROM pending_staff WHERE id=?",
+                             (int(pending_id),))
+                conn.commit()
+            finally:
+                conn.close()
+
+    async def promote_pending_staff(self, phone: str, tg_id: int,
+                                     fallback_name: str = "") -> Optional[dict]:
+        """Hodim kontaktini yuborganda chaqiriladi. Telefon bo'yicha
+        kutilayotgan hodimni topib, admins jadvaliga (real tg_id bilan)
+        ko'chiradi va pending_staff dan o'chiradi. Topilmasa None.
+        Qaytaradi: yaratilgan/yangilangan admin dict (full_name, role)."""
+        norm = normalize_phone(phone)
+        if not norm or not tg_id:
+            return None
+        with self._lock:
+            conn = self._conn()
+            try:
+                pend = None
+                for r in conn.execute("SELECT * FROM pending_staff").fetchall():
+                    if phones_match(r["phone"], norm):
+                        pend = dict(r)
+                        break
+                if not pend:
+                    return None
+                full_name = pend.get("full_name") or fallback_name or str(tg_id)
+                role = (pend.get("role") or "full").strip().lower()
+                phone_store = pend.get("phone") or norm
+                added_by = pend.get("added_by") or 0
+                exists = conn.execute(
+                    "SELECT 1 FROM admins WHERE telegram_id=?", (int(tg_id),)
+                ).fetchone()
+                if exists:
+                    # Allaqachon admin — rol/telefon/ismni yangilab qo'yamiz
+                    conn.execute(
+                        "UPDATE admins SET role=?, phone=?, full_name=? "
+                        "WHERE telegram_id=?",
+                        (role, phone_store, full_name, int(tg_id))
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO admins(telegram_id, full_name, added_by, "
+                        "created_at, role, phone) VALUES(?,?,?,?,?,?)",
+                        (int(tg_id), full_name, int(added_by), _now(), role,
+                         phone_store)
+                    )
+                conn.execute("DELETE FROM pending_staff WHERE id=?",
+                             (pend["id"],))
+                conn.commit()
+            finally:
+                conn.close()
+        result = {"telegram_id": int(tg_id), "full_name": full_name,
+                  "role": role, "phone": phone_store}
+        # Kanalga post (add_admin bilan bir xil ko'rinish)
+        try:
+            data = {"telegram_id": int(tg_id), "full_name": full_name,
+                    "added_by": added_by, "created_at": _now()}
+            mid = await self._send(_fmt_admin(data))
+            if mid:
+                with self._lock:
+                    conn = self._conn()
+                    try:
+                        conn.execute(
+                            "UPDATE admins SET channel_msg_id=? WHERE telegram_id=?",
+                            (mid, int(tg_id))
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+        except Exception:
+            pass
+        return result
 
     # ── Global valyuta rejimi (settings) ─────────────────────────────────────
     def get_currency_mode_global(self) -> str:
