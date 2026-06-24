@@ -39,6 +39,13 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 # Bo'sh qoldirsangiz — Mini App tugmasi ko'rinmaydi.
 MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
 
+# ── Kanal posti — aloqa va marketing (sozlanadigan) ───────────────────────
+# Har bir mahsulot kanalga tashlanganda post tagiga qo'shiladigan ma'lumot.
+# .env orqali o'zgartirish mumkin (bot qayta ishga tushirilsa yetadi).
+CONTACT_PHONE_1 = os.getenv("CONTACT_PHONE_1", "+998 77 877 55 33").strip()
+CONTACT_PHONE_2 = os.getenv("CONTACT_PHONE_2", "+998 77 877 55 99").strip()
+SHOP_LOCATION   = os.getenv("SHOP_LOCATION", "Sergeli, Chinor bekati yoni").strip()
+
 # ── HTTPS API (Mini App uchun login endpoint) ────────────────────────────
 # Bot bilan birga aiohttp serveri ishga tushadi. Frontend (Netlify) shu
 # manzilga POST /api/login yuborib, javobiga qarab admin yoki klient

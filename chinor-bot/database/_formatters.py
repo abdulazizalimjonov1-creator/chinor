@@ -4,17 +4,46 @@ from database._helpers import fmt_usd, fmt_sum
 
 
 
+def _channel_footer() -> str:
+    """Kanal postining tagiga qo'shiladigan o'zgarmas marketing/aloqa bloki.
+    Ikki tilda (o'zbek · rus), aloqa raqamlari, yetkazib berish, manzil va
+    hashtag — odamni jalb qilish uchun. Raqam/manzil .env'dan sozlanadi."""
+    try:
+        from bot.config import CONTACT_PHONE_1, CONTACT_PHONE_2, SHOP_LOCATION
+    except Exception:
+        CONTACT_PHONE_1, CONTACT_PHONE_2, SHOP_LOCATION = "", "", ""
+    lines = [
+        "\n━━━━━━━━━━━━━━━",
+        "🚚 <b>Yetkazib berish bor</b> · Доставка есть",
+        "✅ Chinor — <b>arzon va sifatli</b> · дёшево и качественно",
+        "🛒 Buyurtma / Заказ:",
+    ]
+    if CONTACT_PHONE_1:
+        lines.append(f"📞 {CONTACT_PHONE_1}")
+    if CONTACT_PHONE_2:
+        lines.append(f"📞 {CONTACT_PHONE_2}")
+    if SHOP_LOCATION:
+        lines.append(f"📍 {SHOP_LOCATION}")
+    lines.append("#chinor #chinormarket")
+    return "\n".join(lines)
+
+
 def _fmt_product(p: dict, ai_desc: str = "") -> str:
     """Kanalga yuboriladigan mahsulot postining kaptioni.
-    Faqat so'm narxi ko'rsatiladi. AI tavsifi bo'lsa qo'shiladi.
-    Barcode 5 xonali bo'lsa ko'rsatiladi."""
+    Faqat so'm narxi ko'rsatiladi. AI tavsifi (o'zbek + rus) bo'lsa qo'shiladi.
+    Pastiga doimo aloqa/marketing bloki (_channel_footer) qo'shiladi.
+    Barcode bor bo'lsa ko'rsatiladi. Telegram kaption chegarasi 1024 belgi —
+    AI tavsifi juda uzun bo'lsa qisqartiriladi."""
     unit = p.get("unit", "dona")
     active = "" if p.get("is_active", 1) else "\n❌ <i>Nofaol</i>"
     sell_sum = float(p.get("sell_price", 0) or 0)
     price_line = f"💰 <b>{fmt_sum(sell_sum)}/{unit}</b>"
 
-    # AI tavsifi (agar berilgan bo'lsa)
-    desc_line = f"\n\n💬 {ai_desc}" if ai_desc else (
+    # AI tavsifi (o'zbek + rus, emoji bilan) — yoki oddiy tavsif.
+    desc = (ai_desc or "").strip()
+    if len(desc) > 450:
+        desc = desc[:450].rstrip() + "…"
+    desc_line = f"\n\n{desc}" if desc else (
         f"\n📝 {p['description']}" if p.get("description") else ""
     )
 
@@ -27,8 +56,9 @@ def _fmt_product(p: dict, ai_desc: str = "") -> str:
     pid_line = f"\n🆔 #{pid}" if pid else ""
 
     return (
-        f"📦 <b>{p['name']}</b>{desc_line}\n\n"
+        f"🛍 <b>{p['name']}</b>{desc_line}\n\n"
         f"{price_line}{barcode_line}{pid_line}{active}"
+        f"{_channel_footer()}"
     )
 
 

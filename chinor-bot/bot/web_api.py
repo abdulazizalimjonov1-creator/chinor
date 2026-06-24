@@ -41,42 +41,99 @@ logger = logging.getLogger(__name__)
 ROUTES = web.RouteTableDef()
 
 
+# Mahsulot rasmiga AI yozadigan IKKI TILLI (o'zbek + rus) jozibali tavsif.
+# Faqat tovar haqida — narx/do'kon/raqam yozmaydi (ular footerda fiksir).
+_IMG_PROMPT = (
+    "Bu — sotuvga qo'yilgan tovar rasmi. Aniq ikki qator qaytar (boshqa hech narsa):\n"
+    "1-qator: 🇺🇿 bilan boshla — o'zbekcha 1 ta qisqa, jozibali, sotuvchi uslubidagi "
+    "tavsif (1-2 mos emoji bilan).\n"
+    "2-qator: 🇷🇺 bilan boshla — xuddi shu tavsifning ruschasi (emoji bilan).\n"
+    "Faqat tovarning o'zi haqida yoz. Narx, do'kon nomi, telefon raqam YOZMA. "
+    "Har bir qator 1 jumladan oshmasin, sarlavha yoki izoh qo'shma."
+)
+
+
 async def _gemini_describe_image(fpath: str) -> str:
-    """Rasmni AI orqali tahlil qilib o'zbek tilida tavsif qaytaradi.
-    Avval Groq (tez, bepul), keyin Gemini (zaxira)."""
-    prompt = ("Bu tovar rasmi. O'zbek tilida 1-2 jumlada qisqa va jozibali tavsif yoz. "
-              "Faqat tovar haqida yoz, narx yoki do'kon haqida yozma.")
-    with open(fpath, "rb") as f:
-        img_bytes = f.read()
+    """Rasmni AI orqali tahlil qilib IKKI TILLI (o'zbek + rus) jozibali tavsif
+    qaytaradi. Tartib: Groq (tez) → Gemini eski SDK (VPS'da o'rnatilgan) →
+    Gemini yangi SDK. Birortasi ishlamasa '' qaytaradi (post baribir ketadi)."""
+    prompt = _IMG_PROMPT
+    try:
+        with open(fpath, "rb") as f:
+            img_bytes = f.read()
+    except Exception as e:
+        logger.warning(f"🤖 Rasm o'qilmadi: {e}")
+        return ""
     import base64
     img_b64 = base64.b64encode(img_bytes).decode()
 
-    # 1) Groq vision (meta-llama/llama-4-scout)
+    # 1) Groq vision (llama-4-scout) — to'g'ridan-to'g'ri REST chaqiruv.
+    # SDK SHART EMAS (o'rnatilmagan bo'lishi mumkin). Ba'zi serverlarda
+    # Cloudflare oddiy user-agent'ni bloklaydi (xato 1010) — shuning uchun
+    # brauzer User-Agent qo'yamiz (VPS'dan ishlashi tekshirilgan).
     try:
         from bot.config import GROQ_API_KEY
         if GROQ_API_KEY:
-            from groq import Groq
-            client = Groq(api_key=GROQ_API_KEY)
-            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
-                client.chat.completions.create(
-                    model="meta-llama/llama-4-scout-17b-16e-instruct",
-                    messages=[{"role": "user", "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
-                        {"type": "text", "text": prompt}
-                    ]}],
-                    max_tokens=200,
-                )
+            import json as _json2, urllib.request
+            body = _json2.dumps({
+                "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/chat/completions",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                   "Chrome/120 Safari/537.36"),
+                },
             )
-            desc = (resp.choices[0].message.content or "").strip()
+
+            def _groq_call():
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return _json2.load(r)
+
+            d = await asyncio.get_event_loop().run_in_executor(None, _groq_call)
+            desc = (d["choices"][0]["message"]["content"] or "").strip()
             if desc:
                 logger.info(f"🤖 Groq tavsif: {desc[:80]}...")
                 return desc
     except Exception as e:
         logger.warning(f"🤖 Groq xato: {e}")
 
-    # 2) Gemini (zaxira)
+    from bot.config import GEMINI_API_KEY, GEMINI_MODEL
+    _model = GEMINI_MODEL or "gemini-2.0-flash"
+
+    # 2) Gemini — ESKI SDK (google.generativeai) — VPS'da o'rnatilgan, ishonchli
     try:
-        from bot.config import GEMINI_API_KEY, GEMINI_MODEL
+        if GEMINI_API_KEY:
+            import google.generativeai as _genai_old
+            _genai_old.configure(api_key=GEMINI_API_KEY)
+            model = _genai_old.GenerativeModel(_model)
+            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
+                model.generate_content([
+                    prompt,
+                    {"mime_type": "image/jpeg", "data": img_bytes},
+                ])
+            )
+            desc = (getattr(resp, "text", "") or "").strip()
+            if desc:
+                logger.info(f"🤖 Gemini tavsif: {desc[:80]}...")
+                return desc
+    except ModuleNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"🤖 Gemini (eski SDK) xato: {e}")
+
+    # 3) Gemini — YANGI SDK (google.genai) — o'rnatilgan bo'lsa
+    try:
         if GEMINI_API_KEY:
             import importlib
             genai = importlib.import_module("google.genai")
@@ -84,7 +141,7 @@ async def _gemini_describe_image(fpath: str) -> str:
             Part = genai.types.Part
             response = await asyncio.get_event_loop().run_in_executor(None, lambda:
                 client.models.generate_content(
-                    model=GEMINI_MODEL or "gemini-2.0-flash",
+                    model=_model,
                     contents=[
                         Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
                         prompt
@@ -93,10 +150,12 @@ async def _gemini_describe_image(fpath: str) -> str:
             )
             desc = (response.text or "").strip()
             if desc:
-                logger.info(f"🤖 Gemini tavsif: {desc[:80]}...")
+                logger.info(f"🤖 Gemini (yangi SDK) tavsif: {desc[:80]}...")
                 return desc
+    except ModuleNotFoundError:
+        pass
     except Exception as e:
-        logger.warning(f"🤖 Gemini xato: {e}")
+        logger.warning(f"🤖 Gemini (yangi SDK) xato: {e}")
 
     return ""
 
@@ -1132,6 +1191,30 @@ async def api_product_delete(request: web.Request):
     return web.json_response({"ok": True})
 
 
+def _compress_image(raw: bytes, max_side: int = 1280, quality: int = 82):
+    """Rasmni kichraytirib JPEG'ga siqadi — server diski to'lib ketmasligi uchun
+    (telefon rasmlari 3-5 MB bo'lishi mumkin → ~100-200 KB ga tushadi).
+    Qaytaradi: (bytes, ok). Pillow yo'q / HEIC plagini yo'q / xato bo'lsa —
+    (asl_baytlar, False) qaytaradi (hech narsa buzilmaydi)."""
+    try:
+        import io
+        from PIL import Image, ImageOps
+        im = Image.open(io.BytesIO(raw))
+        im = ImageOps.exif_transpose(im)          # telefon rasmi aylanib qolmasin
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        if max(im.size) > max_side:
+            im.thumbnail((max_side, max_side), Image.LANCZOS)
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=quality, optimize=True)
+        data = out.getvalue()
+        if data:
+            return data, True
+    except Exception as e:
+        logger.warning(f"📸 Siqib bo'lmadi (asl rasm qoldi): {e}")
+    return raw, False
+
+
 @ROUTES.post("/api/product/image")
 async def api_product_image(request: web.Request):
     """Mahsulot rasmini yuklaydi (multipart). image_url ni saqlaydi."""
@@ -1173,13 +1256,22 @@ async def api_product_image(request: web.Request):
         logger.warning(f"📸 Rasm juda katta: {len(file_bytes)} bytes")
         return _err("Rasm 25MB dan katta")
 
-    # Kengaytmani aniqlaymiz (iPhone HEIC ham bo'lishi mumkin)
-    fn = (fname_in or "photo.jpg").lower()
-    file_ext = ".jpg"
-    for e in (".png", ".jpeg", ".jpg", ".webp", ".gif", ".heic", ".heif"):
-        if fn.endswith(e):
-            file_ext = ".jpg" if e == ".jpeg" else e
-            break
+    # Diskni tejash uchun siqamiz (8000+ tovar bemalol sig'sin). Siqilsa — .jpg.
+    orig_len = len(file_bytes)
+    file_bytes, _compressed = _compress_image(file_bytes)
+    if _compressed:
+        logger.info(f"📸 Siqildi: {orig_len} → {len(file_bytes)} bytes")
+
+    # Kengaytmani aniqlaymiz (siqilgan bo'lsa — .jpg; aks holda asl turi)
+    if _compressed:
+        file_ext = ".jpg"
+    else:
+        fn = (fname_in or "photo.jpg").lower()
+        file_ext = ".jpg"
+        for e in (".png", ".jpeg", ".jpg", ".webp", ".gif", ".heic", ".heif"):
+            if fn.endswith(e):
+                file_ext = ".jpg" if e == ".jpeg" else e
+                break
 
     fname = f"prod_{pid or 'new'}_{int(time.time())}{file_ext}"
     fpath = os.path.join(UPLOAD_DIR, fname)
