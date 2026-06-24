@@ -640,37 +640,47 @@
 
         // ====== Rasm yuklash ======
         let _pendingImageFile = null;
-        const prodImgInput = $('prodImgInput');
+        const prodImgInput = $('prodImgInput');   // galereya/fayl
+        const prodImgCam   = $('prodImgCam');     // kamera (capture=environment)
 
-        window.pickProductImage = function () {
-            if (prodImgInput) prodImgInput.click();
+        // mode: 'camera' → kamerani ochadi, aks holda galereya/fayl.
+        // Android'da bitta input ba'zan to'g'ridan galereyani ochadi — shuning
+        // uchun kamera uchun alohida input ('capture') ishlatamiz.
+        window.pickProductImage = function (mode) {
+            const el = (mode === 'camera') ? prodImgCam : prodImgInput;
+            if (el) el.click();
         };
-        if (prodImgInput) {
-            prodImgInput.addEventListener('change', async function () {
-                const file = this.files && this.files[0];
-                if (!file) return;
-                // Darrov preview
-                const reader = new FileReader();
-                reader.onload = e => {
-                    $('prodImgPreview').src = e.target.result;
-                    $('prodImgPreview').style.display = 'block';
-                    $('prodImgPlaceholder').style.display = 'none';
-                };
-                reader.readAsDataURL(file);
-                if (_editingId) {
-                    // Mavjud mahsulot — darrov serverga yuklaymiz
-                    $('pfStatus').textContent = '⏳ Rasm yuklanmoqda...';
-                    const r = await _uploadProductImage(_editingId, file);
-                    $('pfStatus').textContent = r.ok
-                        ? '✅ Rasm yuklandi'
-                        : ('❌ Rasm yuklanmadi: ' + r.error);
-                } else {
-                    // Yangi mahsulot — saqlashdan keyin yuklash uchun saqlab qo'yamiz
-                    _pendingImageFile = file;
-                    $('pfStatus').textContent = '🖼 Rasm tanlandi (saqlashda yuklanadi)';
-                }
-            });
+
+        async function _onProductImageChosen() {
+            const input = this;
+            const file = input.files && input.files[0];
+            if (!file) return;
+            // Darrov preview
+            const reader = new FileReader();
+            reader.onload = e => {
+                $('prodImgPreview').src = e.target.result;
+                $('prodImgPreview').style.display = 'block';
+                $('prodImgPlaceholder').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+            if (_editingId) {
+                // Mavjud mahsulot — darrov serverga yuklaymiz
+                $('pfStatus').textContent = '⏳ Rasm yuklanmoqda...';
+                const r = await _uploadProductImage(_editingId, file);
+                $('pfStatus').textContent = r.ok
+                    ? '✅ Rasm yuklandi'
+                    : ('❌ Rasm yuklanmadi: ' + r.error);
+            } else {
+                // Yangi mahsulot — saqlashdan keyin yuklash uchun saqlab qo'yamiz
+                _pendingImageFile = file;
+                $('pfStatus').textContent = '🖼 Rasm tanlandi (saqlashda yuklanadi)';
+            }
+            // Bir xil faylni qayta tanlash mumkin bo'lsin (change qayta ishlasin)
+            input.value = '';
         }
+
+        if (prodImgInput) prodImgInput.addEventListener('change', _onProductImageChosen);
+        if (prodImgCam)   prodImgCam.addEventListener('change', _onProductImageChosen);
 
         // Rasmni kichraytiradi: max 1024px, JPEG 0.78 sifat => ~150-300KB
         function _compressImage(file) {

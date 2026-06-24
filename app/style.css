@@ -598,6 +598,15 @@
         }
         .img-upload img { width:100%; height:100%; object-fit:cover; }
 
+        .img-pick-row { display:flex; gap:10px; margin:10px 0 4px; }
+        .img-pick-btn {
+            flex:1; padding:12px; border:1.5px solid var(--primary-mid);
+            border-radius:var(--radius-btn); background:var(--card-bg);
+            color:var(--primary-dark); font-weight:700; font-size:15px;
+            cursor:pointer; transition:var(--transition);
+        }
+        .img-pick-btn:active { background:var(--primary-light); }
+
         .save-btn {
             width:100%; margin-top:18px; padding:15px; border:none; border-radius:14px;
             background: linear-gradient(135deg, var(--primary-mid), var(--primary-dark));

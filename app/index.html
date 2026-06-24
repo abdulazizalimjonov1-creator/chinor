@@ -216,11 +216,16 @@
                 <h2 id="prodFormTitle">✏️ Tahrirlash</h2>
             </div>
             <div class="form-card">
-                <div class="img-upload" id="prodImgWrap" onclick="pickProductImage()">
+                <div class="img-upload" id="prodImgWrap" onclick="pickProductImage('gallery')">
                     <img id="prodImgPreview" alt="" style="display:none">
                     <div id="prodImgPlaceholder">📷<br><span>Rasm yuklash</span></div>
                 </div>
+                <div class="img-pick-row">
+                    <button type="button" class="img-pick-btn" onclick="pickProductImage('camera')">📷 Kamera</button>
+                    <button type="button" class="img-pick-btn" onclick="pickProductImage('gallery')">🖼 Galereya</button>
+                </div>
                 <input type="file" id="prodImgInput" accept="image/*" style="display:none">
+                <input type="file" id="prodImgCam" accept="image/*" capture="environment" style="display:none">
                 <label>Nomi *</label><input type="text" id="pfName" placeholder="Mahsulot nomi">
                 <label>Sotish narxi (so'm) *</label><input type="number" id="pfSell" inputmode="decimal" placeholder="0">
                 <label>Tannarxi (so'm)</label><input type="number" id="pfCost" inputmode="decimal" placeholder="0">
