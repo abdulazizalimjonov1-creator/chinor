@@ -19,14 +19,20 @@
         //    https://fronted-bgq.pages.dev/?api=https://abc.ngrok.io
         const _urlParams = new URLSearchParams(location.search);
         const _STORAGE_API_KEY = 'chinor_api_url';
-        const _DEFAULT_API = 'https://unnatural-vibes-praying.ngrok-free.dev';
+        const _DEFAULT_API = 'https://kassa.chinorpos.com';
         let API_BASE_URL = (
             _urlParams.get('api') ||
             (() => { try { return localStorage.getItem(_STORAGE_API_KEY); } catch(_){} return null; })() ||
             _DEFAULT_API
         ).replace(/\/+$/, '');
-        // URL parametr orqali kelgan bo'lsa — localStorage ga saqlab qo'yamiz
-        if (_urlParams.get('api')) {
+        // Eski ngrok manzili keshda (localStorage yoki URL) qolgan bo'lsa — uni
+        // tashlab joriy domenga o'tamiz (ngrok endi butunlay ishlatilmaydi).
+        if (/ngrok/i.test(API_BASE_URL)) {
+            API_BASE_URL = _DEFAULT_API;
+            try { localStorage.setItem(_STORAGE_API_KEY, _DEFAULT_API); } catch(_) {}
+        }
+        // URL parametr orqali kelgan bo'lsa (va ngrok bo'lmasa) — saqlab qo'yamiz
+        if (_urlParams.get('api') && !/ngrok/i.test(_urlParams.get('api'))) {
             try { localStorage.setItem(_STORAGE_API_KEY, _urlParams.get('api')); } catch(_) {}
         }
         // URL parametr orqali o'zgartirilgan bo'lsa, eslab qolamiz
