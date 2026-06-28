@@ -16,6 +16,47 @@ from database._formatters import (
 
 
 class SalesMixin:
+    # ── Kassa terminallari (offline) ──────────────────────────────────────────
+    async def assign_kassa_no(self, device_id: str, name: str = "") -> int:
+        """Qurilmaga (device_id) DOIMIY noyob kassa raqamini biriktiradi.
+        Tanish qurilma — o'sha raqamni qaytaradi; yangi qurilma — mavjud
+        eng katta raqam + 1 (birinchisi 1). Shu raqam chek prefiksi bo'ladi
+        ("<kassa_no>-<seq>"), shunda terminallar raqamlari to'qnashmaydi.
+        device_id bo'sh bo'lsa 0 qaytaradi (kassa eski default 1 da qoladi)."""
+        device_id = (device_id or "").strip()[:64]
+        if not device_id:
+            return 0
+        name = (name or "").strip()[:80]
+        with self._lock:
+            conn = self._conn()
+            try:
+                row = conn.execute(
+                    "SELECT kassa_no FROM kassa_devices WHERE device_id=?",
+                    (device_id,)
+                ).fetchone()
+                if row:
+                    conn.execute(
+                        "UPDATE kassa_devices SET last_seen=?, "
+                        "name=CASE WHEN ?<>'' THEN ? ELSE name END WHERE device_id=?",
+                        (_now(), name, name, device_id)
+                    )
+                    conn.commit()
+                    return int(row[0])
+                mx = conn.execute(
+                    "SELECT MAX(kassa_no) FROM kassa_devices"
+                ).fetchone()[0]
+                next_no = (int(mx) if mx else 0) + 1
+                conn.execute(
+                    "INSERT INTO kassa_devices"
+                    "(device_id, kassa_no, name, created_at, last_seen) "
+                    "VALUES(?,?,?,?,?)",
+                    (device_id, next_no, name, _now(), _now())
+                )
+                conn.commit()
+                return next_no
+            finally:
+                conn.close()
+
     # ── Sotuv (kassa) ────────────────────────────────────────────────────────
     async def create_sale(self, cashier_id: int, cashier_name: str,
                           items: list,

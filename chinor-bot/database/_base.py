@@ -194,6 +194,18 @@ class BaseDB:
         for col, ddl in sale_new_cols:
             if col not in sale_cols:
                 conn.execute(f"ALTER TABLE sales ADD COLUMN {col} {ddl}")
+        # kassa_devices — har bir offline kassa terminaliga DOIMIY noyob kassa
+        # raqami biriktiriladi (chek raqami prefiksi: "<kassa_no>-<seq>"). Shunda
+        # turli terminallar chek raqamlari to'qnashmaydi va qurilmalararo sinxron
+        # to'g'ri ishlaydi. device_id — kassa o'zi yaratadigan barqaror UUID.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS kassa_devices ("
+            " device_id  TEXT PRIMARY KEY,"
+            " kassa_no   INTEGER UNIQUE,"
+            " name       TEXT DEFAULT '',"
+            " created_at TEXT,"
+            " last_seen  TEXT)"
+        )
         # payments USD ustunlari
         pay_cols = {r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()}
         for col, ddl in [

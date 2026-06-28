@@ -299,6 +299,49 @@ input { font-family: inherit; }
 .btn-sell:disabled { opacity: .45; cursor: not-allowed; }
 .btn-sell:active:not(:disabled) { transform: translateY(1px); }
 
+/* ── To'lovni bo'lish (split) ──────────────────────────── */
+.split-toggle {
+  margin-top: 7px; width: 100%; padding: 11px 6px; border-radius: 11px;
+  border: 2px dashed var(--line); background: var(--panel-2); color: var(--text);
+  font-weight: 700; font-size: 14px; display: flex; align-items: center;
+  justify-content: center; gap: 7px;
+}
+.split-toggle .ico { width: 18px; height: 18px; }
+.split-toggle.active {
+  border-style: solid; border-color: var(--gold);
+  background: rgba(212,160,23,.12); color: var(--gold);
+}
+.split-total {
+  padding: 14px 18px 4px; font-size: 15px; color: var(--muted);
+}
+.split-total b { color: var(--text); font-size: 19px; font-weight: 900; }
+.split-rows { padding: 8px 18px 0; display: flex; flex-direction: column; gap: 9px; }
+.split-row { display: flex; align-items: center; gap: 9px; }
+.split-row label { flex: 0 0 78px; font-size: 14px; font-weight: 700; }
+.split-input {
+  flex: 1; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); font-size: 17px; font-weight: 800;
+  text-align: right;
+}
+.split-input:focus { border-color: var(--green-l); outline: none; }
+.split-rest {
+  flex: 0 0 auto; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--muted); font-size: 13px; font-weight: 700;
+}
+.split-rest:hover { border-color: var(--green-l); color: var(--text); }
+.split-row.disabled { opacity: .4; pointer-events: none; }
+.split-remain {
+  margin: 12px 18px 0; padding: 9px 12px; border-radius: 9px; text-align: center;
+  font-size: 15px; font-weight: 800; background: rgba(45,145,66,.12); color: var(--green);
+}
+.split-remain.over { background: rgba(214,69,69,.14); color: var(--danger); }
+.split-remain.left { background: rgba(212,160,23,.14); color: var(--gold); }
+.split-hint {
+  margin: 8px 18px 0; font-size: 12.5px; color: var(--gold); text-align: center;
+}
+.split-actions { display: flex; gap: 10px; padding: 14px 18px 18px; }
+.split-actions .btn-sell-sm, .split-actions .btn-sell { padding: 14px; font-size: 17px; }
+
 /* ── STATUS BAR ────────────────────────────────────────── */
 .statusbar {
   flex: 0 0 30px; display: flex; align-items: center; gap: 18px;
@@ -329,6 +372,13 @@ input { font-family: inherit; }
   background: var(--panel-2); color: var(--text); font-weight: 700; font-size: 13px;
 }
 .rc-tab.active { background: var(--green); color: #fff; border-color: var(--green); }
+/* 🔄 Real-vaqt sinxron tugmasi */
+.rc-tab.rc-sync { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.rc-tab.rc-sync:hover { border-color: var(--green); }
+.rc-sync .rc-sync-ico { display: inline-block; line-height: 1; }
+.rc-tab.rc-sync.spinning { opacity: .7; pointer-events: none; }
+.rc-tab.rc-sync.spinning .rc-sync-ico { animation: rc-spin .8s linear infinite; }
+@keyframes rc-spin { to { transform: rotate(360deg); } }
 
 /* Eski cheklarni qidirish paneli */
 .rc-filters {

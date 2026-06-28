@@ -11,6 +11,7 @@ let selIndex = -1;        // tanlangan savat qatori
 let selClient = null;     // {id, name}
 let keypadMode = 'qty';   // 'qty' | 'price' | 'discount'
 let payMethod = 'cash';   // 'cash' | 'card' | 'click'
+let splitPay = null;      // aralash to'lov: {cash, card, click, debt} (so'm) yoki null
 let USD_RATE = 12500;
 let editIndex = -1;       // tahrirlanayotgan savat qatori
 let checksTab = 'sales';
@@ -180,8 +181,72 @@ function clearClient() { selClient = null; updateClientChip(); closeModal('clien
 // To'lov turini standart holatga (Naqd) qaytaradi — har sotuvdan keyin
 function resetPayMethod() {
   payMethod = 'cash';
+  splitPay = null;
   document.querySelectorAll('.pay-toggle').forEach((x) =>
     x.classList.toggle('active', x.dataset.pay === 'cash'));
+  const sb = $('splitBtn'); if (sb) sb.classList.remove('active');
+}
+
+// ── To'lovni bo'lish (split / aralash to'lov) ──────────────────────────
+const SPLIT_IDS = ['splitCash', 'splitCard', 'splitClick', 'splitDebt'];
+function splitParse(id) { return parseInt(($(id).value || '').replace(/[^\d]/g, ''), 10) || 0; }
+// Taqsimlanadigan butun summa — ekranda ko'rinadigan (yumaloqlangan) JAMI bilan bir xil
+function splitTarget() { return Math.round(effectiveTotal()); }
+// Qarz qatori faqat qarzga ruxsatli klientga ishlaydi
+function splitDebtAllowed() { return !!(selClient && selClient.allow_credit && !selClient.is_internal); }
+function splitSum() {
+  return splitParse('splitCash') + splitParse('splitCard')
+    + splitParse('splitClick') + (splitDebtAllowed() ? splitParse('splitDebt') : 0);
+}
+function updateSplitRemain() {
+  const left = splitTarget() - splitSum();
+  const el = $('splitRemain');
+  el.classList.remove('over', 'left');
+  if (left === 0) el.textContent = '✓ To\'liq taqsimlandi';
+  else if (left > 0) { el.textContent = `Qoldiq: ${nf(left)} so'm`; el.classList.add('left'); }
+  else { el.textContent = `Ortiqcha: ${nf(-left)} so'm`; el.classList.add('over'); }
+}
+function openSplitModal() {
+  if (!CART.length) { toast('Savat bo\'sh', true); return; }
+  if (selClient && selClient.is_internal) { toast('🏠 Chinor rasxodida bo\'lish ishlamaydi', true); return; }
+  const total = splitTarget();
+  $('splitTotal').textContent = nf(total);
+  if (splitPay) {
+    $('splitCash').value = splitPay.cash ? nf(splitPay.cash) : '';
+    $('splitCard').value = splitPay.card ? nf(splitPay.card) : '';
+    $('splitClick').value = splitPay.click ? nf(splitPay.click) : '';
+    $('splitDebt').value = splitPay.debt ? nf(splitPay.debt) : '';
+  } else {
+    $('splitCash').value = nf(total);   // standart: hammasi naqd (oson tahrirlash uchun)
+    $('splitCard').value = ''; $('splitClick').value = ''; $('splitDebt').value = '';
+  }
+  const allowed = splitDebtAllowed();
+  $('splitDebtRow').classList.toggle('disabled', !allowed);
+  $('splitDebtHint').classList.toggle('hidden', allowed);
+  if (!allowed) $('splitDebt').value = '';
+  updateSplitRemain();
+  openModal('splitModal');
+  setTimeout(() => { const i = $('splitCash'); if (i) { i.focus(); i.select(); } }, 30);
+}
+// Inputlarni o'qib, validatsiya qilib splitPay ni o'rnatadi. Xato → null.
+function commitSplit() {
+  const total = splitTarget();
+  const cash = splitParse('splitCash');
+  const card = splitParse('splitCard');
+  const click = splitParse('splitClick');
+  const debt = splitDebtAllowed() ? splitParse('splitDebt') : 0;
+  if (!splitDebtAllowed() && splitParse('splitDebt') > 0) {
+    toast('❌ Qarz uchun ruxsatli klient tanlang', true); return null;
+  }
+  const sum = cash + card + click + debt;
+  if (sum !== total) {
+    toast(sum < total ? `❌ ${nf(total - sum)} so'm taqsimlanmadi`
+      : `❌ ${nf(sum - total)} so'm ortiqcha`, true);
+    return null;
+  }
+  splitPay = { cash, card, click, debt };
+  $('splitBtn').classList.add('active');
+  return splitPay;
 }
 
 // ── Cheklar — butun oynali (Telegram uslubi) ────────────────────────────
@@ -208,8 +273,57 @@ function openReceipts() {
   $('receiptsScreen').classList.remove('hidden');
   loadPrinters();
   setRcTab('sales');
+  rcResync(false);     // ochilishda serverdan to'liq tortib barcha qurilma cheklarini ko'rsatamiz
+  startRcAuto();       // ochiq turganda real-vaqt avto-yangilanish
 }
-function closeReceipts() { $('receiptsScreen').classList.add('hidden'); focusScan(); }
+function closeReceipts() { stopRcAuto(); $('receiptsScreen').classList.add('hidden'); focusScan(); }
+
+// ── Cheklar real-vaqt sinxron ──────────────────────────────────────────────
+let rcAutoTimer = null;
+let rcResyncing = false;
+// Serverdan oxirgi 90 kunni TO'LIQ qayta tortib (barcha qurilmalar) ro'yxatni
+// yangilaydi. manual=true — tugma bosildi (toast bilan), aks holda jim avto-yangilanish.
+async function rcResync(manual = false) {
+  if (rcResyncing) return;
+  rcResyncing = true;
+  const btn = $('rcSyncBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    const r = await window.kassa.resyncReceipts();
+    if (checksTab === 'sales') {
+      rcAllSales = r.sales || [];
+      buildRcMonths();
+      renderRcSales();
+    }
+    if (manual) {
+      toast(r.online ? `Yangilandi · ${(r.sales || []).length} ta chek`
+                     : 'Server bilan aloqa yo\'q — lokal ko\'rsatilyapti', !r.online);
+    }
+  } catch (e) {
+    if (manual) toast('Sinxron xatosi', true);
+  } finally {
+    rcResyncing = false;
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+function startRcAuto() {
+  stopRcAuto();
+  rcAutoTimer = setInterval(rcAutoRefresh, 12000);   // har 12 soniyada yengil yangilanish
+}
+// Avto-yangilanish — YENGIL inkremental tortish (faqat yangi cheklar), real-vaqt
+// uchun. To'liq 90-kun qayta tortish faqat ochilishda va 🔄 tugmada bo'ladi.
+async function rcAutoRefresh() {
+  if (rcResyncing || checksTab !== 'sales') return;
+  try {
+    const r = await window.kassa.getRecentSales();
+    rcAllSales = r.sales || [];
+    buildRcMonths();
+    renderRcSales();
+  } catch (_) {}
+}
+function stopRcAuto() {
+  if (rcAutoTimer) { clearInterval(rcAutoTimer); rcAutoTimer = null; }
+}
 function setRcTab(tab) {
   checksTab = tab;
   rcSelKey = null;
@@ -219,7 +333,7 @@ function setRcTab(tab) {
   renderRcList();
   if (tab === 'sales') { const s = $('rcSearch'); if (s) setTimeout(() => s.focus(), 30); }
 }
-function payLabel(p) { return p === 'cash' ? 'Naqd' : p === 'card' ? 'Karta' : p === 'click' ? 'CLICK' : p === 'qarz' ? '🤝 Qarz' : p === 'rasxod' ? '🔻 Rasxod' : p === 'qaytarish' ? '↩️ Qaytarish' : 'Boshqa'; }
+function payLabel(p) { return p === 'cash' ? 'Naqd' : p === 'card' ? 'Karta' : p === 'click' ? 'CLICK' : p === 'qarz' ? '🤝 Qarz' : p === 'split' ? '🔀 Aralash' : p === 'rasxod' ? '🔻 Rasxod' : p === 'qaytarish' ? '↩️ Qaytarish' : 'Boshqa'; }
 // Chek turi yorlig'i — qaytarish (refund) bo'lsa alohida ko'rsatamiz
 function isReturnSale(s) { return !!(s && (s.is_return || s.payment === 'qaytarish')); }
 function saleKindLabel(s) { return isReturnSale(s) ? '↩️ Qaytarish' : payLabel(s.payment); }
@@ -279,6 +393,7 @@ function rcMatchesPay(s, pay) {
   if (pay === 'qaytarish') return isReturnSale(s);
   if (isReturnSale(s)) return false;          // refundlar faqat "Qaytarish" filtrida
   if (pay === 'qarz') return s.payment === 'qarz' || !!s.is_nasiya;
+  if (pay === 'split') return s.payment === 'split' || !!s.split;
   return s.payment === pay;
 }
 // Filtrlarni qo'llaymiz: oy + sana + to'lov + matn (chek№/SKU/shtrix/nomi/klient)
@@ -360,6 +475,18 @@ function renderSaleDetail(s) {
   const ret = isReturnSale(s);
   const title = ret ? ('Qaytarish ' + (s.receipt_no || ('№' + (s.id || ''))))
     : (s.receipt_no ? ('Chek ' + s.receipt_no) : (s.id ? ('Chek №' + s.id) : 'Chek'));
+  // Aralash (split) to'lov taqsimoti + QR(lar)
+  const sp = s.split;
+  const splitRows = sp ? `
+    ${sp.cash ? `<div class="rc-tot-row"><span>💵 Naqd</span><span>${nf(sp.cash)} so'm</span></div>` : ''}
+    ${sp.card ? `<div class="rc-tot-row"><span>💳 Karta</span><span>${nf(sp.card)} so'm</span></div>` : ''}
+    ${sp.click ? `<div class="rc-tot-row"><span>⚡ Click</span><span>${nf(sp.click)} so'm</span></div>` : ''}
+    ${sp.debt ? `<div class="rc-tot-row"><span>🤝 Qarz</span><span>${nf(sp.debt)} so'm</span></div>` : ''}` : '';
+  const rcLinks = (Array.isArray(s.qrLinks) && s.qrLinks.length) ? s.qrLinks : (s.qrLink ? [s.qrLink] : []);
+  const qrPanel = rcLinks.length
+    ? `<div class="rc-tot-row grand" style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><span>QR to'lov${rcLinks.length > 1 ? ` (${rcLinks.length})` : ''}</span></div>`
+      + rcLinks.map((lnk) => `<div class="c" style="margin:8px 0"><img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(lnk)}" style="width:120px;height:120px;display:block;margin:0 auto"><div style="font-size:11px;color:var(--muted);word-break:break-all;margin-top:4px">${escapeHtml(lnk)}</div></div>`).join('')
+    : '';
   $('rcDetail').innerHTML = `
     <div class="rc-d-head"><span class="rc-d-title${ret ? ' is-return' : ''}">${title}</span></div>
     <div class="rc-d-meta">
@@ -377,9 +504,9 @@ function renderSaleDetail(s) {
       <div class="rc-tot-row"><span>Oraliq jami</span><span>${nf(subtotal)} so'm</span></div>
       ${disc > 0 ? `<div class="rc-tot-row disc"><span>Chegirma (${pct}%)</span><span>−${nf(disc)} so'm</span></div>` : ''}
       <div class="rc-tot-row grand"><span>JAMI</span><span>${nf(total)} so'm</span></div>
+      ${splitRows}
     </div>
-    ${s.qrLink ? `<div class="rc-tot-row grand" style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><span>QR to'lov</span></div>
-    <div class="c" style="margin:8px 0"><img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(s.qrLink)}" style="width:120px;height:120px;display:block;margin:0 auto"><div style="font-size:11px;color:var(--muted);word-break:break-all;margin-top:4px">${escapeHtml(s.qrLink)}</div></div>` : ''}
+    ${qrPanel}
     <button class="rc-print" id="rcPrintBtn"><svg class="ico" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>Chop etish</button>
     ${canReturn(s) ? `<button class="rc-return" id="rcReturnBtn"><svg class="ico" viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>Qaytarish</button>` : ''}`;
   $('rcPrintBtn').addEventListener('click', () => printReceipt(s));
@@ -403,10 +530,34 @@ function buildReceiptHtml(s) {
     const skuLine = (bc || sk) ? `<div class="sub">${escapeHtml(bc)}${bc && sk ? ' · ' : ''}${sk}</div>` : '';
     return `<div class="it"><div class="it-name">${escapeHtml(it.name || '')}</div><div class="it-line">${line}</div>${skuLine}</div>`;
   }).join('');
-  // QR — sotuvda ham, eski chekni qayta chop etishda ham bir xil chiqadi
-  const qrUrl = s.qrLink
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&qzone=1&data=${encodeURIComponent(s.qrLink)}`
-    : '';
+  // To'lov ko'rinishi — aralash (split) bo'lsa har turdagi summa alohida qator
+  const splitObj = s.split;
+  let payBlock;
+  if (splitObj) {
+    const lines = [];
+    if (splitObj.cash) lines.push(['Naqd', splitObj.cash]);
+    if (splitObj.card) lines.push(['Karta', splitObj.card]);
+    if (splitObj.click) lines.push(['Click', splitObj.click]);
+    if (splitObj.debt) lines.push(['🤝 Qarz', splitObj.debt]);
+    payBlock = `<div class="pay"><span>To'lov</span><span>🔀 Aralash</span></div>`
+      + lines.map(([l, v]) => `<div class="pay paysub"><span>${l}</span><span>${nf(v)}</span></div>`).join('');
+  } else {
+    payBlock = `<div class="pay"><span>To'lov</span><span>${payLabel(s.payment)}</span></div>`;
+  }
+  // QR(lar) — bitta (oddiy) yoki bir nechta (split onlayn qismlari: karta, click).
+  // Eski cheklarda qrLink (bitta string) bo'lishi mumkin — orqaga moslik.
+  const qrls = (Array.isArray(s.qrLinks) && s.qrLinks.length) ? s.qrLinks
+    : (s.qrLink ? [s.qrLink] : []);
+  const qrLabels = [];
+  if (splitObj) {
+    if (splitObj.card) qrLabels.push(`Karta · ${nf(splitObj.card)} so'm`);
+    if (splitObj.click) qrLabels.push(`Click · ${nf(splitObj.click)} so'm`);
+  }
+  const qrBlock = qrls.map((lnk, i) => {
+    const url = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&qzone=1&data=${encodeURIComponent(lnk)}`;
+    const ttl = qrLabels[i] || 'To\'lov uchun · QR';
+    return `<hr class="dash"><div class="qrttl">${ttl}</div><img class="qrimg" src="${url}"><div class="qrcap">${escapeHtml(lnk)}</div>`;
+  }).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{margin:0}
     *{margin:0;padding:0;box-sizing:border-box}
@@ -429,6 +580,7 @@ function buildReceiptHtml(s) {
     .tot{display:flex;justify-content:space-between;font-size:17px;margin:1px 0}
     .jami{display:flex;justify-content:space-between;font-size:27px;font-weight:900;margin-top:5px}
     .pay{display:flex;justify-content:space-between;font-size:18px;margin-top:1px}
+    .paysub{font-size:15px;font-weight:700;padding-left:8px}
     .qrttl{text-align:center;font-weight:800;font-size:17px;margin-bottom:3px}
     .qrimg{display:block;margin:0 auto;width:40mm;height:40mm}
     .qrcap{text-align:center;font-size:12px;font-weight:600;word-break:break-all;margin-top:2px}
@@ -448,16 +600,120 @@ function buildReceiptHtml(s) {
     <div class="tot"><span>Oraliq jami</span><span>${nf(subtotal)}</span></div>
     ${disc > 0 ? `<div class="tot"><span>Chegirma</span><span>-${nf(disc)}</span></div>` : ''}
     <div class="jami"><span>JAMI</span><span>${nf(total)}</span></div>
-    <div class="pay"><span>To'lov</span><span>${payLabel(s.payment)}</span></div>
-    ${qrUrl ? `<hr class="dash"><div class="qrttl">To'lov uchun · QR</div><img class="qrimg" src="${qrUrl}"><div class="qrcap">${escapeHtml(s.qrLink)}</div>` : ''}
+    ${payBlock}
+    ${qrBlock}
     <hr class="dash">
     <div class="thanks">Haridingiz uchun rahmat!</div>
   </body></html>`;
 }
+// ── macOS chek "model"i (matnli ESC/POS uchun) ─────────────────────────────
+// macOS'da termal printerda drayver yo'q → HTML rasterь chunarsiz. Shu sabab
+// chekni MATNLI ESC/POS model sifatida quramiz (main.js raw printerga yuboradi).
+function payLabelEsc(p) {
+  return p === 'cash' ? 'Naqd' : p === 'card' ? 'Karta' : p === 'click' ? 'CLICK'
+    : p === 'qarz' ? 'Qarz' : p === 'rasxod' ? 'Rasxod' : p === 'qaytarish' ? 'Qaytarish' : 'Boshqa';
+}
+// ESC/POS 80mm, A shrift ~48 belgi (main.js ESC_COLS bilan bir xil bo'lishi shart)
+const ESC_COLS_R = 48;
+// Uzun matnni belgilab berilgan kenglikка o'raydi (so'z chegarasidan, bo'lmasa qattiq kesib)
+function wrapText(s, w) {
+  s = String(s == null ? '' : s); const out = [];
+  while (s.length > w) {
+    let cut = s.lastIndexOf(' ', w);
+    if (cut <= 0) cut = w;
+    out.push(s.slice(0, cut));
+    s = s.slice(cut).replace(/^\s+/, '');
+  }
+  if (s.length) out.push(s);
+  return out.length ? out : [''];
+}
+function buildReceiptModel(s) {
+  const subtotal = s.subtotal_sum || (s.items || []).reduce((a, it) => a + it.price_sum * it.qty, 0);
+  const total = s.total_sum;
+  const disc = (s.discount_sum != null) ? s.discount_sum : Math.max(0, subtotal - total);
+  const date = (s.created_at || '').slice(0, 10).split('-').reverse().join('.');
+  const time = (s.created_at || '').slice(11, 16);
+  const kassaNo = s.receipt_no ? String(s.receipt_no).split('-')[0] : ((window._lastState && window._lastState.kassaNo) || 1);
+  const L = [];
+  L.push({ t: 'image', src: 'logo' });   // chek tepasida Chinor logosi (doirasiz)
+  L.push({ t: 'text', s: SHOP_PHONE, align: 'center', bold: true });
+  L.push({ t: 'text', s: SHOP_ADDR, align: 'center' });
+  L.push({ t: 'sep', ch: '=' });
+  L.push({ t: 'row', l: 'Chek #: ' + (s.receipt_no || s.id || ''), r: date });
+  L.push({ t: 'row', l: 'Kassa-' + kassaNo, r: time });
+  if (s.cashier_name) L.push({ t: 'row', l: 'Sotuvchi:', r: s.cashier_name });
+  if (s.client_name) L.push({ t: 'row', l: 'Klient:', r: s.client_name });
+  L.push({ t: 'sep', ch: '-' });
+  let _idx = 0;
+  for (const it of (s.items || [])) {
+    _idx++;
+    const qp = `${it.qty} x ${nf(it.price_sum)} = ${nf(it.price_sum * it.qty)}`;
+    const nm = `${_idx}) ${it.name || ''}`;
+    // Narx HAR DOIM nomning 1-qatori to'g'risida (o'ngda). Uzun nom o'ngdagi narx joyini
+    // egallamasdan, pastki qatorlarga o'raladi (kesilmaydi).
+    const leftW = Math.max(8, ESC_COLS_R - qp.length - 1);
+    const nameLines = wrapText(nm, leftW);
+    L.push({ t: 'row', l: nameLines[0], r: qp });
+    for (let i = 1; i < nameLines.length; i++) L.push({ t: 'text', s: '   ' + nameLines[i] });
+    // SKU / barcode — nom ostida ozgina chekinish bilan
+    const bc = String(it.barcode || '').trim();
+    const sk = String(it.sku || it.product_id || '').trim();
+    const sub = bc ? (sk ? `${bc} / ${sk}` : bc) : (sk ? `SKU: ${sk}` : '');
+    if (sub) L.push({ t: 'text', s: '   ' + sub });
+  }
+  L.push({ t: 'sep', ch: '-' });
+  L.push({ t: 'row', l: 'Oraliq jami', r: nf(subtotal) });
+  if (disc > 0) L.push({ t: 'row', l: 'Chegirma', r: '-' + nf(disc) });
+  L.push({ t: 'row', l: 'JAMI', r: nf(total), bold: true });
+  // To'lov — aralash (split) bo'lsa har turdagi summa alohida qator
+  const sp = s.split;
+  if (sp) {
+    L.push({ t: 'row', l: "To'lov", r: 'Aralash' });
+    if (sp.cash) L.push({ t: 'row', l: '  Naqd', r: nf(sp.cash) });
+    if (sp.card) L.push({ t: 'row', l: '  Karta', r: nf(sp.card) });
+    if (sp.click) L.push({ t: 'row', l: '  Click', r: nf(sp.click) });
+    if (sp.debt) L.push({ t: 'row', l: '  Qarz', r: nf(sp.debt) });
+  } else {
+    L.push({ t: 'row', l: "To'lov", r: payLabelEsc(s.payment) });
+  }
+  // QR(lar) — bitta (oddiy) yoki bir nechta (split onlayn qismlari: karta, click)
+  const qrls = (Array.isArray(s.qrLinks) && s.qrLinks.length) ? s.qrLinks : (s.qrLink ? [s.qrLink] : []);
+  const qrLabels = [];
+  if (sp) {
+    if (sp.card) qrLabels.push('Karta - ' + nf(sp.card) + ' som');
+    if (sp.click) qrLabels.push('Click - ' + nf(sp.click) + ' som');
+  }
+  qrls.forEach((lnk, i) => {
+    L.push({ t: 'sep', ch: '-' });
+    L.push({ t: 'text', s: qrLabels[i] || "To'lov uchun QR", align: 'center', bold: true });
+    L.push({ t: 'qr', data: lnk });
+  });
+  L.push({ t: 'sep', ch: '-' });
+  L.push({ t: 'text', s: 'Haridingiz uchun rahmat!', align: 'center', bold: true });
+  L.push({ t: 'feed', n: 3 });
+  L.push({ t: 'cut' });
+  return { lines: L };
+}
+// HTML'ni oddiy matnga (qaytarish/smena hisoboti macOS'da — formatsiz, lekin o'qiladigan)
+function htmlToText(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  d.querySelectorAll('style,script,img').forEach((e) => e.remove());
+  return (d.innerText || d.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+// Universal chop etish: macOS → ESC/POS (model bo'lsa formatli, bo'lmasa matn); Windows → HTML.
+async function smartPrint(html, model) {
+  if (window.kassa.isMac) {
+    const m = model || { lines: [{ t: 'pre', text: htmlToText(html) }, { t: 'feed', n: 3 }, { t: 'cut' }] };
+    return await window.kassa.printReceiptMac(m);
+  }
+  return await window.kassa.printReceipt(html);
+}
+
 async function printReceipt(s) {
   if (!s) return;
   if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
-  const res = await window.kassa.printReceipt(buildReceiptHtml(s));
+  const res = await smartPrint(buildReceiptHtml(s), buildReceiptModel(s));
   if (res && res.ok) toast('Chek chop etildi');
   else if (res && res.reason && res.reason !== 'cancelled') toast('Chop etib bo\'lmadi (printerni tekshiring)', true);
 }
@@ -713,7 +969,7 @@ async function confirmReturn() {
     orig_receipt_no: returnSale.receipt_no || '',
   };
   if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
-  await window.kassa.printReceipt(buildReturnReceiptHtml(ret));
+  await smartPrint(buildReturnReceiptHtml(ret));
   if (res.state) applyState(res.state);
   await loadCatalog();
   returnSale = null;
@@ -873,7 +1129,7 @@ async function doCloseShift() {
   const res = await window.kassa.closeShift();
   if (res && res.ok && res.summary) {
     if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
-    await window.kassa.printReceipt(buildShiftReportHtml(res.summary, 'Z'));
+    await smartPrint(buildShiftReportHtml(res.summary, 'Z'));
     if (res.state) applyState(res.state);
     closeModal('shiftModal');
     toast('🧾 Z-hisobot chop etildi · Smena yopildi');
@@ -881,7 +1137,7 @@ async function doCloseShift() {
 }
 async function printShiftReport(z, kind) {
   if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
-  await window.kassa.printReceipt(buildShiftReportHtml(z, kind));
+  await smartPrint(buildShiftReportHtml(z, kind));
   toast((kind === 'Z' ? 'Z' : 'X') + '-hisobot chop etildi');
 }
 // X/Z smena hisoboti — termal chek ko'rinishida
@@ -939,6 +1195,8 @@ function buildShiftReportHtml(z, kind) {
 function cashCheckout() {
   if (!CART.length) { toast('Savat bo\'sh', true); return; }
   payMethod = 'cash';
+  splitPay = null;   // F6 — sof naqd; aralash bekor
+  const sb = $('splitBtn'); if (sb) sb.classList.remove('active');
   document.querySelectorAll('.pay-toggle').forEach((x) => x.classList.toggle('active', x.dataset.pay === 'cash'));
   sell();
 }
@@ -1169,6 +1427,14 @@ function renderCart() {
   syncActive();
   renderTabs();
   persistTabs();
+  // Aralash (split) to'lov savat/jami o'zgarsa eskiradi — mos kelmasa bekor qilamiz
+  if (splitPay) {
+    const spSum = (splitPay.cash || 0) + (splitPay.card || 0) + (splitPay.click || 0) + (splitPay.debt || 0);
+    if (spSum !== Math.round(effectiveTotal())) {
+      splitPay = null;
+      const sb = $('splitBtn'); if (sb) sb.classList.remove('active');
+    }
+  }
   const body = $('cartBody');
   if (!CART.length) {
     selIndex = -1;
@@ -1340,10 +1606,30 @@ function applyKp(val) {
 }
 
 // ── To'lov (QR bilan - Telegram bot orqali) ────────────────────────────────
+// Bitta to'lov linki uchun: eski xabarlarni tozalab (beginPayment), botga so'rov
+// yuboradi va 60 soniya polling qiladi. Link yoki '' (vaqt tugadi) qaytaradi.
+async function requestPaymentLink(promptText, idx = 1, count = 1) {
+  try { await window.kassa.beginPayment(); } catch (_) {}
+  window.kassa.sendPaymentMsg(promptText);
+  for (let i = 0; i < 30; i++) {
+    const secLeft = 60 - (i * 2 + 2);
+    if (secLeft === 10 || secLeft === 5) {
+      const pfx = count > 1 ? `(${idx}/${count}) ` : '';
+      window.kassa.sendPaymentMsg(`⏳ ${pfx}To'lov linki kutilmoqda... ${secLeft} soniya qoldi`);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+    const poll = await window.kassa.pollPaymentLink();
+    if (poll && poll.ok && poll.link) return poll.link;
+  }
+  return '';
+}
+
 async function sellWithQR() {
   if (!CART.length) return;
   // «Chinor» ichki rasxod yoki qarzga savdoda QR to'lov bo'lmaydi — oddiy yozuv
   if (selClient && selClient.is_internal) { return sell(); }
+  // Aralash (split) to'lov — alohida oqim (onlayn qismlar uchun alohida QR)
+  if (splitPay) { return sellSplitWithQR(); }
   if (payMethod === 'nasiya') { toast('🤝 Qarz uchun «Chek» tugmasidan foydalaning', true); return; }
   const subtotal = cartTotal();
   const total = effectiveTotal();
@@ -1366,26 +1652,9 @@ async function sellWithQR() {
     return;
   }
   const saleId = res.sale ? res.sale.local_id || res.sale.server_id || '' : '';
-  // 2) Eski xabarlarni tozalaymiz — faqat shu so'rovdan keyin kelgan link qabul qilinadi
-  //    (aks holda oldingi to'lovning eski linkiga QR generatsiya qilinardi)
-  try { await window.kassa.beginPayment(); } catch (_) {}
-  // Botga SMS yuboramiz
-  window.kassa.sendPaymentMsg(`💳 Yangi to'lov kutilmoqda!\n💰 Summa: ${nf(total)} so'm\n🧾 ID: ${saleId || '—'}\n📎 Iltimos, to'lov linkini yuboring (60 soniya)`);
   toast('⏳ Telegram botdan link kutilmoqda...');
-  // 3) Botdan linkni polling qilamiz (har 2 soniyada, maks 30 marta = 60 soniya)
-  let link = '';
-  for (let i = 0; i < 30; i++) {
-    const secLeft = 60 - (i * 2 + 2);
-    if (secLeft === 10 || secLeft === 5) {
-      window.kassa.sendPaymentMsg(`⏳ To'lov linki kutilmoqda... ${secLeft} soniya qoldi`);
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-    const poll = await window.kassa.pollPaymentLink();
-    if (poll && poll.ok && poll.link) {
-      link = poll.link;
-      break;
-    }
-  }
+  // 2) Botdan linkni so'raymiz (60 soniya)
+  const link = await requestPaymentLink(`💳 Yangi to'lov kutilmoqda!\n💰 Summa: ${nf(total)} so'm\n🧾 ID: ${saleId || '—'}\n📎 Iltimos, to'lov linkini yuboring (60 soniya)`);
   if (!link) {
     window.kassa.sendPaymentMsg(`⚠ Vaqt tugadi. To'lov linki kelmadi.`);
     toast('⚠ Link kelmadi. Chek QR kodsiz chop etildi', true);
@@ -1397,11 +1666,11 @@ async function sellWithQR() {
   }
   window.kassa.sendPaymentMsg(`✅ Link qabul qilindi! QR kod bilan chek chop etilmoqda.`);
   toast(`✅ Link olindi → QR kod bilan chop etilmoqda`);
-  // 4) Sotuvni yangilab, qrLink ni saqlaymiz
+  // 3) Sotuvni yangilab, qrLink ni saqlaymiz
   if (saleId) {
     await window.kassa.updateSaleQr(saleId, link);
   }
-  // 5) Chek ma'lumotlari (qrLink bilan — QR kodni buildReceiptHtml o'zi chizadi)
+  // 4) Chek ma'lumotlari (qrLink bilan — QR kodni buildReceiptHtml o'zi chizadi)
   const saleData = {
     items: CART.map((c) => ({
       product_id: c.product_id, name: c.name, sku: c.sku, barcode: c.barcode,
@@ -1418,9 +1687,9 @@ async function sellWithQR() {
     receipt_no: (res.sale && res.sale.receipt_no) || '',
     qrLink: link,  // Saqlaymiz - keyin cheklar bo'limida ko'rsatish uchun
   };
-  // QR li chek (buildReceiptHtml qrLink bo'lsa QR kodni avtomatik qo'shadi)
+  // QR li chek (Windows: HTML QR rasm; macOS: native QR — buildReceiptModel)
   if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
-  await window.kassa.printReceipt(buildReceiptHtml(saleData));
+  await smartPrint(buildReceiptHtml(saleData), buildReceiptModel(saleData));
   // 5) Tozalaymiz
   CART = []; selIndex = -1; selClient = null; clearOverride(); updateClientChip(); resetKp(); renderCart();
   if (res.state) applyState(res.state);
@@ -1429,19 +1698,103 @@ async function sellWithQR() {
   toast('✅ To\'lov · QR bilan chek chop etildi');
 }
 
+// Aralash (split) to'lovda «To'lov» — onlayn qismlar (karta/click) uchun BOTdan
+// HAR BIRIGA alohida link olib, chekka alohida QR bosadi (tepa/past). Naqd/qarz
+// qismi QR talab qilmaydi.
+async function sellSplitWithQR() {
+  const split = splitPay;
+  if (!split) return;
+  if (split.debt > 0 && !(selClient && selClient.allow_credit)) {
+    toast('❌ Qarz qismi uchun ruxsatli klient tanlang', true); return;
+  }
+  const subtotal = cartTotal();
+  const total = split.cash + split.card + split.click + split.debt;   // paid_total = total kafolati
+  const cashierName = (window._lastState && window._lastState.cashier && window._lastState.cashier.name) || '';
+  const items = CART.map((c) => ({
+    product_id: c.product_id, name: c.name, sku: c.sku, barcode: c.barcode,
+    qty: c.qty, price_sum: c.price_sum, orig: origOf(c),
+  }));
+  // Onlayn (QR talab qiladigan) qismlar — fiksirlangan tartibda: karta, keyin click
+  const online = [];
+  if (split.card > 0) online.push({ label: 'Karta', amount: split.card });
+  if (split.click > 0) online.push({ label: 'Click', amount: split.click });
+  // 1) Sotuvni saqlaymiz (split bilan)
+  const res = await window.kassa.recordSale({
+    items, payment: 'split', split,
+    discountSum: Math.max(0, subtotal - total),
+    subtotalSum: subtotal, totalSum: total,
+    clientId: selClient ? selClient.id : 0,
+    clientName: selClient ? selClient.name : '',
+  });
+  if (!res || !res.ok) { toast('❌ Xato: ' + ((res && res.error) || 'saqlanmadi'), true); return; }
+  const saleId = res.sale ? res.sale.local_id || res.sale.server_id || '' : '';
+
+  // Chek chop etib, tozalaydigan yordamchi
+  const finishAndPrint = async (links) => {
+    if (saleId && links.length) { await window.kassa.updateSaleQrs(saleId, links); }
+    const saleData = {
+      items, payment: 'split', split,
+      total_sum: total, subtotal_sum: subtotal, discount_sum: Math.max(0, subtotal - total),
+      cashier_name: cashierName, client_name: selClient ? selClient.name : '',
+      created_at: new Date().toISOString(), id: saleId,
+      receipt_no: (res.sale && res.sale.receipt_no) || '',
+      qrLinks: links,
+    };
+    if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
+    await smartPrint(buildReceiptHtml(saleData), buildReceiptModel(saleData));
+    CART = []; selIndex = -1; selClient = null; clearOverride(); updateClientChip(); resetPayMethod(); resetKp(); renderCart();
+    if (res.state) applyState(res.state);
+    await loadCatalog();
+    focusScan();
+  };
+
+  // Onlayn qism yo'q (faqat naqd va/yoki qarz) — QR kerak emas
+  if (!online.length) {
+    toast(`🔀 Aralash to'lov · ${nf(total)} so'm`);
+    await finishAndPrint([]);
+    return;
+  }
+
+  // Har onlayn qism uchun KETMA-KET link olamiz (bot relay bitta linkli)
+  const links = [];
+  for (let k = 0; k < online.length; k++) {
+    const part = online[k];
+    toast(`⏳ ${part.label} uchun link kutilmoqda... (${k + 1}/${online.length})`);
+    const link = await requestPaymentLink(
+      `💳 Aralash to'lov ${k + 1}/${online.length}\n💳 ${part.label}: ${nf(part.amount)} so'm\n🧾 ID: ${saleId || '—'}\n📎 Shu qism uchun to'lov linkini yuboring (60 soniya)`,
+      k + 1, online.length);
+    if (!link) {
+      window.kassa.sendPaymentMsg(`⚠ Vaqt tugadi. ${part.label} (${nf(part.amount)} so'm) uchun link kelmadi.`);
+      toast(`⚠ ${part.label} linki kelmadi. Chek mavjud QR bilan chop etildi`, true);
+      break;
+    }
+    links.push(link);
+    window.kassa.sendPaymentMsg(`✅ ${part.label} linki qabul qilindi (${k + 1}/${online.length}).`);
+  }
+  toast(`✅ Aralash to'lov · chek chop etilmoqda`);
+  await finishAndPrint(links);
+}
+
 // ── Sotuv (oddiy) ──────────────────────────────────────────────────────────
 async function sell() {
   if (!CART.length) return;
   // «Chinor» tanlansa — ichki rasxod (tannarxda, server qayta hisoblaydi)
   const isInternal = !!(selClient && selClient.is_internal);
-  // Qarzga (nasiya) — faqat ruxsat berilgan mijozga
-  const isNasiya = !isInternal && payMethod === 'nasiya';
+  // Aralash (split) to'lov — ichki rasxodda ishlamaydi
+  const split = (!isInternal && splitPay) ? splitPay : null;
+  // Qarzga (nasiya) — faqat ruxsat berilgan mijozga (split bo'lsa qarz qismi split.debt orqali)
+  const isNasiya = !isInternal && !split && payMethod === 'nasiya';
   if (isNasiya && !(selClient && selClient.allow_credit)) {
     toast('❌ Bu mijozga qarzga savdo ruxsat etilmagan', true);
     return;
   }
+  if (split && split.debt > 0 && !(selClient && selClient.allow_credit)) {
+    toast('❌ Qarz qismi uchun ruxsatli klient tanlang', true);
+    return;
+  }
   const subtotal = cartTotal();
-  const total = effectiveTotal();
+  // Split bo'lsa jami = bo'lingan summalar yig'indisi (paid_total = total kafolati)
+  const total = split ? (split.cash + split.card + split.click + split.debt) : effectiveTotal();
   const res = await window.kassa.recordSale({
     items: CART.map((c) => ({
       product_id: c.product_id, name: c.name, sku: c.sku, barcode: c.barcode,
@@ -1455,11 +1808,13 @@ async function sell() {
     clientName: selClient ? selClient.name : '',
     isNasiya,
     isInternal,
+    split,
   });
   if (res && res.ok) {
     toast(isInternal ? '🔻 Chinor rasxodi yozildi (tannarxda)'
+      : (split ? `🔀 Aralash to'lov · ${nf(total)} so'm`
       : (isNasiya ? `🤝 Qarzga yozildi · ${nf(total)} so'm`
-      : `✅ Sotildi · ${nf(total)} so'm`));
+      : `✅ Sotildi · ${nf(total)} so'm`)));
     // Avtomatik chek chop etish (1x tanlangan bo'lsa). Ichki rasxod uchun
     // mijoz cheki chop etilmaydi.
     if (printOnSell && !isInternal) {
@@ -1468,7 +1823,8 @@ async function sell() {
           product_id: c.product_id, name: c.name, sku: c.sku, barcode: c.barcode,
           qty: c.qty, price_sum: c.price_sum, orig: origOf(c),
         })),
-        payment: payMethod,
+        payment: split ? 'split' : payMethod,
+        split,
         total_sum: total,
         subtotal_sum: subtotal,
         discount_sum: Math.max(0, subtotal - total),
@@ -1780,9 +2136,52 @@ function wireEvents() {
   document.querySelectorAll('.pay-toggle').forEach((b) =>
     b.addEventListener('click', () => {
       payMethod = b.dataset.pay;
+      // Bitta tur tanlansa — aralash (split) bekor bo'ladi
+      splitPay = null;
+      const sb = $('splitBtn'); if (sb) sb.classList.remove('active');
       document.querySelectorAll('.pay-toggle').forEach((x) => x.classList.toggle('active', x === b));
       focusScan();
     }));
+
+  // To'lovni bo'lish (split) — tugma + modal
+  $('splitBtn').addEventListener('click', openSplitModal);
+  SPLIT_IDS.forEach((id) => {
+    const el = $(id);
+    el.addEventListener('input', () => {
+      // raqamni minglik ajratgich bilan ko'rsatish (kursor oxirida qoladi)
+      const n = parseInt((el.value || '').replace(/[^\d]/g, ''), 10) || 0;
+      el.value = n ? nf(n) : '';
+      // Kalkulyator: Naqd "qolgan"ni avtomatik to'ldiradi. Karta/Click/Qarz
+      // o'zgartirilsa Naqd = JAMI − (boshqalar). Naqd o'zi yozilsa tegmaymiz.
+      if (id !== 'splitCash') {
+        const others = splitParse('splitCard') + splitParse('splitClick')
+          + (splitDebtAllowed() ? splitParse('splitDebt') : 0);
+        const cash = Math.max(0, splitTarget() - others);
+        $('splitCash').value = cash ? nf(cash) : '';
+      }
+      updateSplitRemain();
+    });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('splitChekBtn').click(); });
+  });
+  document.querySelectorAll('.split-rest').forEach((b) =>
+    b.addEventListener('click', () => {
+      // shu qatorga qolgan (taqsimlanmagan) summani qo'yadi
+      const id = b.dataset.rest;
+      const cur = splitParse(id);
+      const left = splitTarget() - splitSum() + cur;   // shu qatorni hisobdan chiqarib qoldiq
+      $(id).value = left > 0 ? nf(left) : '';
+      updateSplitRemain();
+    }));
+  $('splitChekBtn').addEventListener('click', () => {
+    if (!commitSplit()) return;
+    closeModal('splitModal');
+    sell();
+  });
+  $('splitPayBtn').addEventListener('click', () => {
+    if (!commitSplit()) return;
+    closeModal('splitModal');
+    sellWithQR();
+  });
 
   // Print toggle (1x / —)
   document.querySelectorAll('.print-toggle').forEach((b) =>
@@ -1846,8 +2245,10 @@ function wireEvents() {
     window.kassa.setPrinter(e.target.value);
     toast(e.target.value ? 'Printer belgilandi' : 'Standart printer');
   });
-  document.querySelectorAll('.rc-tab').forEach((b) =>
+  document.querySelectorAll('.rc-tab[data-tab]').forEach((b) =>
     b.addEventListener('click', () => setRcTab(b.dataset.tab)));
+  // 🔄 Real-vaqt sinxron — barcha qurilmalar cheklarini serverdan to'liq yangilaydi
+  $('rcSyncBtn').addEventListener('click', () => rcResync(true));
 
   // Eski cheklarni qidirish: matn / sana / to'lov turi (oy tugmalari buildRcMonths ichida ulanadi)
   $('rcSearch').addEventListener('input', (e) => {

@@ -141,6 +141,7 @@
           <button class="pay-toggle" data-pay="click"><svg viewBox="0 0 24 24" width="19" height="19" style="flex:0 0 auto"><defs><linearGradient id="clkg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#2BC4FF"/><stop offset="1" stop-color="#0A6BFF"/></linearGradient></defs><path d="M12 1.8c5 .25 8.4 4.3 8.4 9.9 0 5.9-3.9 10.5-8.4 10.5S3.6 17.6 3.6 11.7C3.6 6.1 7 2.05 12 1.8Zm0 5.1a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Z" fill="url(#clkg)"/></svg>CLICK</button>
           <button class="pay-toggle" data-pay="nasiya"><svg class="ico" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 0 1 2-2h2"/><path d="M9 9h6M9 13h4"/></svg>Qarz</button>
         </div>
+        <button id="splitBtn" class="split-toggle"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>➗ To'lovni bo'lish</button>
 
         <div id="discLine" class="disc-line hidden"></div>
         <div class="summa-box">
@@ -172,12 +173,49 @@
     </div>
   </div>
 
+  <!-- To'lovni bo'lish (split) modal -->
+  <div id="splitModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>➗ To'lovni bo'lish</span><button class="modal-x" data-close>✕</button></div>
+      <div class="split-total">JAMI: <b id="splitTotal">0</b> so'm</div>
+      <div class="split-rows">
+        <div class="split-row">
+          <label>💵 Naqd</label>
+          <input id="splitCash" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitCash">Qolgani</button>
+        </div>
+        <div class="split-row">
+          <label>💳 Karta</label>
+          <input id="splitCard" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitCard">Qolgani</button>
+        </div>
+        <div class="split-row">
+          <label>⚡ Click</label>
+          <input id="splitClick" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitClick">Qolgani</button>
+        </div>
+        <div class="split-row" id="splitDebtRow">
+          <label>🤝 Qarz</label>
+          <input id="splitDebt" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitDebt">Qolgani</button>
+        </div>
+      </div>
+      <div id="splitRemain" class="split-remain">Qoldiq: 0 so'm</div>
+      <div id="splitDebtHint" class="split-hint hidden">🤝 Qarz uchun avval <b>Klient</b> tanlang (qarzga ruxsatli).</div>
+      <div class="split-actions">
+        <button id="splitChekBtn" class="btn-sell-sm">📄 Chek</button>
+        <button id="splitPayBtn" class="btn-sell">💳 To'lov</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Cheklar — butun oynali (Telegram uslubi) -->
   <div id="receiptsScreen" class="receipts-screen hidden">
     <header class="rc-head">
       <button id="rcBack" class="btn-ghost"><svg class="ico" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Orqaga</button>
       <div class="rc-title">Cheklar</div>
       <div class="rc-tabs">
+        <button id="rcSyncBtn" class="rc-tab rc-sync" title="Real-vaqt sinxron — barcha qurilmalar cheklarini serverdan yangilash"><span class="rc-sync-ico">🔄</span> Sinxron</button>
         <select id="rcPrinter" class="rc-printer" title="Chek printeri"></select>
         <button class="rc-tab active" data-tab="sales">Hamma cheklar</button>
         <button class="rc-tab" data-tab="drafts">Qoralamalar</button>
@@ -204,6 +242,7 @@
           <button class="rc-chip" data-pay="cash">💵 Naqd</button>
           <button class="rc-chip" data-pay="click">⚡ Click</button>
           <button class="rc-chip" data-pay="card">💳 Karta</button>
+          <button class="rc-chip" data-pay="split">🔀 Aralash</button>
           <button class="rc-chip" data-pay="qarz">🤝 Qarz (nasiya)</button>
           <button class="rc-chip" data-pay="qaytarish">↩️ Qaytarish</button>
         </div>

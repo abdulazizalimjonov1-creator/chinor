@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
@@ -110,6 +110,13 @@ async function pushPendingSales() {
     created_at: s.created_at,
     source: DEVICE,
     receipt_no: s.receipt_no || '',
+    // Aralash (split) to'lov — har turdagi summa alohida; server paid_*/qarzga yozadi
+    ...(s.split ? {
+      paid_cash: Number(s.split.cash) || 0,
+      paid_card: Number(s.split.card) || 0,
+      paid_other: Number(s.split.click) || 0,   // click → paid_other
+      debt_sum: Number(s.split.debt) || 0,
+    } : {}),
   }));
   const { ok, data } = await api.pushSales(store.data.serverUrl, store.data.token, payload);
   if (!ok || !data.ok) {
@@ -125,20 +132,27 @@ async function pushPendingSales() {
 }
 
 async function pullCatalog() {
-  const { ok, data } = await api.catalog(store.data.serverUrl, store.data.token);
+  const { ok, data } = await api.catalog(store.data.serverUrl, store.data.token, store.data.deviceId);
   if (!ok || !data.ok) {
     status.lastError = (data && data.error) || 'Katalogni yuklab bo\'lmadi';
     return { pulled: 0, error: status.lastError };
   }
   store.setCatalog(data.products || [], data.usd_rate, data.clients || []);
+  // Server bu qurilmaga noyob kassa raqamini bergan bo'lsa — qo'llaymiz
+  // (login'dan tashqari har sinxronda; qayta login shart emas).
+  if (data.kassa_no && Number(data.kassa_no) > 0 && Number(data.kassa_no) !== store.data.kassaNo) {
+    store.setKassaNo(Number(data.kassa_no));
+  }
   return { pulled: (data.products || []).length };
 }
 
 // Cheklarni inkremental tarzda yuklab, lokal keshga birlashtiramiz —
 // shunda har qurilmada barcha qurilmalar cheklari vaqt bo'yicha ko'rinadi.
-async function pullReceipts() {
-  // keshda hech narsa yo'q bo'lsa — oxirgi 90 kunni so'raymiz; bo'lsa faqat yangisini
-  let since = store.data.receiptsLastTs || '';
+async function pullReceipts({ full = false } = {}) {
+  // full=true — keshdagi "oxirgi vaqt"ni e'tiborsiz qoldirib, oxirgi 90 kunni
+  // TO'LIQ qayta so'raymiz (qurilmalararo yo'qolgan cheklar tiklanadi).
+  // keshda hech narsa yo'q bo'lsa ham — oxirgi 90 kunni so'raymiz; bo'lsa faqat yangisini
+  let since = full ? '' : (store.data.receiptsLastTs || '');
   if (!since) {
     const d = new Date(Date.now() - 90 * 24 * 3600 * 1000 + 5 * 3600 * 1000);
     since = d.toISOString().slice(0, 19).replace('T', ' ');
@@ -185,6 +199,147 @@ async function tick() {
   await doSync();
 }
 
+// ── macOS chek chop etish: matnli ESC/POS (+ native QR) → `lp -o raw` ────────
+// macOS'da arzon termal printerlar (XP-80) uchun to'g'ri CUPS drayveri ko'pincha
+// bo'lmaydi → webContents.print() chunarsiz chiqaradi. Katta RASTER ham bu
+// printer buferini to'ldirib chunarsiz qiladi. Eng ishonchli yo'l — MATNLI
+// ESC/POS (juda kichik ma'lumot) + QR'ni printerning NATIVE buyrug'i (GS ( k)
+// bilan bosish. Chek "model" (renderer'dan keladi: matn/qator/ajratuvchi/QR)
+// ESC/POS baytlariga aylantiriladi.
+const ESC_COLS = 48;   // 80mm, A shrift: ~48 belgi
+
+// Raw baytlarni `lp -o raw` orqali printerga yuboradi (CUPS filtrини chetlab o'tadi).
+function sendRawToPrinter(file, queue) {
+  return new Promise((resolve) => {
+    const args = [];
+    if (queue) args.push('-d', queue);
+    args.push('-o', 'raw', file);
+    let p;
+    try { p = spawn('/usr/bin/lp', args, { stdio: 'ignore' }); }
+    catch (e) { return resolve({ ok: false, reason: String(e.message || e) }); }
+    p.on('close', (code) => resolve({ ok: code === 0, reason: code === 0 ? '' : ('lp exit ' + code) }));
+    p.on('error', (e) => resolve({ ok: false, reason: String(e.message || e) }));
+  });
+}
+
+// Matnni printer kodlashiga mos qilamiz: ASCII bo'lmagan belgilarni olib tashlaymiz
+// (Uzbek lotin asosan ASCII; emoji/×/· kabilar tushib qoladi — chunarsizlikdan ko'ra yaxshi).
+function _ascii(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7E]/g, ''); }
+function _pad(l, r) {
+  l = _ascii(l); r = _ascii(r);
+  let sp = ESC_COLS - l.length - r.length;
+  if (sp < 1) { l = l.slice(0, Math.max(0, ESC_COLS - r.length - 1)); sp = 1; }
+  return l + ' '.repeat(sp) + r;
+}
+// Native QR (GS ( k, model 2) baytlari
+function _qrBytes(data) {
+  const d = Buffer.from(_ascii(data), 'latin1');
+  const n = d.length + 3;
+  return Buffer.concat([
+    Buffer.from([0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]),       // model 2
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x07]),             // modul o'lchami 7
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31]),             // EC: M
+    Buffer.from([0x1d, 0x28, 0x6b, n & 0xff, (n >> 8) & 0xff, 0x31, 0x50, 0x30]), d,  // store
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]),             // print
+  ]);
+}
+
+// Chek tepasidagi logo (doirasiz) → ESC/POS raster (GS v 0). 80mm = 576 nuqta,
+// logo markazga tekislanadi. nativeImage bilan o'qiladi (qo'shimcha kutubxona shart emas).
+const LOGO_FILE = path.join(__dirname, 'renderer', 'logo_nocircle.png');
+function _logoBytes(targetW) {
+  try {
+    let img = nativeImage.createFromPath(LOGO_FILE);
+    if (!img || img.isEmpty()) return Buffer.alloc(0);
+    const s0 = img.getSize();
+    const W = Math.max(64, Math.min(targetW || 300, 576));
+    const H = Math.max(1, Math.round(s0.height * (W / s0.width)));
+    img = img.resize({ width: W, height: H, quality: 'best' });
+    const sz = img.getSize();
+    const bw = sz.width, bh = sz.height;
+    const bmp = img.toBitmap();                 // RGBA/BGRA — kulrang logo uchun farqi yo'q
+    const FULL = 576, BPR = FULL >> 3;          // 72 bayt/qator
+    const xoff = Math.max(0, (FULL - bw) >> 1); // markazga
+    const raster = Buffer.alloc(BPR * bh, 0);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const i = (y * bw + x) * 4;
+        const a = bmp[i + 3];
+        const lum = a < 128 ? 255 : (0.299 * bmp[i + 2] + 0.587 * bmp[i + 1] + 0.114 * bmp[i]);
+        if (lum < 128) { const X = xoff + x; raster[y * BPR + (X >> 3)] |= (0x80 >> (X & 7)); }
+      }
+    }
+    return Buffer.concat([
+      Buffer.from([0x1d, 0x76, 0x30, 0x00, BPR & 0xff, (BPR >> 8) & 0xff, bh & 0xff, (bh >> 8) & 0xff]),
+      raster,
+    ]);
+  } catch (_) { return Buffer.alloc(0); }
+}
+
+// Chek "model" (elementlar ro'yxati) → ESC/POS baytlari.
+// Element turlari: text{s,align,bold,big,tall} · row{l,r,bold,tall} · sep{ch}
+//                  pre{text} (ko'p qatorli xom matn) · qr{data} · feed{n} · cut
+function escposFromModel(model) {
+  const E = (s) => Buffer.from(_ascii(s), 'latin1');
+  const B = (a) => Buffer.from(a);
+  const lf = B([0x0a]);
+  const C = {
+    init: [0x1b, 0x40], left: [0x1b, 0x61, 0], center: [0x1b, 0x61, 1], right: [0x1b, 0x61, 2],
+    boldOn: [0x1b, 0x45, 1], boldOff: [0x1b, 0x45, 0],
+    big: [0x1d, 0x21, 0x11], tall: [0x1d, 0x21, 0x01], norm: [0x1d, 0x21, 0],
+    cut: [0x1d, 0x56, 0x42, 0x00],
+  };
+  const parts = [B(C.init)];
+  for (const el of (model && model.lines) || []) {
+    if (!el) continue;
+    if (el.t === 'text') {
+      parts.push(B(el.align === 'center' ? C.center : el.align === 'right' ? C.right : C.left));
+      if (el.bold) parts.push(B(C.boldOn));
+      if (el.big) parts.push(B(C.big)); else if (el.tall) parts.push(B(C.tall));
+      parts.push(E(el.s), lf);
+      if (el.big || el.tall) parts.push(B(C.norm));
+      if (el.bold) parts.push(B(C.boldOff));
+      parts.push(B(C.left));
+    } else if (el.t === 'row') {
+      parts.push(B(C.left));
+      if (el.bold) parts.push(B(C.boldOn));
+      if (el.tall) parts.push(B(C.tall));
+      parts.push(E(_pad(el.l, el.r)), lf);
+      if (el.tall) parts.push(B(C.norm));
+      if (el.bold) parts.push(B(C.boldOff));
+    } else if (el.t === 'sep') {
+      parts.push(B(C.left), E((el.ch || '-').repeat(ESC_COLS)), lf);
+    } else if (el.t === 'pre') {
+      parts.push(B(C.left));
+      for (const ln of String(el.text || '').split('\n')) parts.push(E(ln), lf);
+    } else if (el.t === 'qr') {
+      parts.push(B(C.center), _qrBytes(el.data), lf, B(C.left));
+    } else if (el.t === 'image') {
+      const lb = _logoBytes(el.w || 300);
+      if (lb.length) parts.push(B(C.center), lb, lf, B(C.left));
+    } else if (el.t === 'feed') {
+      for (let i = 0; i < (el.n || 1); i++) parts.push(lf);
+    } else if (el.t === 'cut') {
+      parts.push(B(C.cut));
+    }
+  }
+  return Buffer.concat(parts);
+}
+
+// macOS: chek modelini ESC/POS qilib raw printerga yuboradi.
+async function printModelMac(model) {
+  try {
+    const esc = escposFromModel(model);
+    const tmp = path.join(os.tmpdir(), `chinor-receipt-${Date.now()}.bin`);
+    fs.writeFileSync(tmp, esc);
+    const res = await sendRawToPrinter(tmp, store.data.printerName);
+    setTimeout(() => { try { fs.unlinkSync(tmp); } catch (_) {} }, 5000);
+    return res;
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e) };
+  }
+}
+
 // ── IPC handlerlari ────────────────────────────────────────────────────
 function wireIpc() {
   ipcMain.handle('state:get', () => snapshot());
@@ -205,11 +360,16 @@ function wireIpc() {
     const h = await api.health(base);
     status.online = !!h.ok;
     if (status.online) {
-      const { ok, data } = await api.login(base, login, password);
+      const { ok, data } = await api.login(base, login, password, store.data.deviceId);
       if (!ok || !data.ok) {
         return { ok: false, error: (data && data.error) || 'Kirib bo\'lmadi' };
       }
       store.setSession(data.session_token, data.cashier, data.usd_rate);
+      // Server bu terminalga noyob kassa raqamini berdi — chek prefiksini
+      // shunga moslaymiz (qo'lda sozlash shart emas, qurilmalar to'qnashmaydi).
+      if (data.kassa_no && Number(data.kassa_no) > 0) {
+        store.setKassaNo(Number(data.kassa_no));
+      }
       store.setAuthHash(credHash(login, password));   // offlayn kirish uchun eslab qolamiz
       await doSync({ force: true });
       return { ok: true, state: snapshot() };
@@ -279,7 +439,12 @@ function wireIpc() {
     return true;
   });
 
-  // Chek chop etish — JIM (belgilangan/standart printerga, dialog so'ramasdan)
+  // macOS: chek modelini ESC/POS qilib raw printerga yuboradi (renderer isMac'da shuni chaqiradi).
+  ipcMain.handle('receipt:printmac', async (_e, model) => {
+    return printModelMac(model);
+  });
+
+  // Chek chop etish — JIM (Windows: odatiy drayver bilan webContents.print).
   ipcMain.handle('receipt:print', async (_e, html) => {
     return new Promise((resolve) => {
       // sandbox:false — Windows printer drayveriga to'liq kirish uchun.
@@ -336,90 +501,33 @@ function wireIpc() {
     });
   });
 
-  // Telegram bot orqali to'lov linkini olish (getUpdates polling) va SMS yuborish.
-  // Token KODDA saqlanmaydi: avval PAYMENT_BOT_TOKEN muhit o'zgaruvchisi, bo'lmasa
-  // loyiha ildizidagi gitignored .env faylidagi PAYMENT_BOT_TOKEN dan o'qiladi (lokal test).
-  let BOT_TOKEN = process.env.PAYMENT_BOT_TOKEN || '';
-  if (!BOT_TOKEN) {
-    try {
-      const _env = fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8');
-      const _m = _env.match(/^\s*PAYMENT_BOT_TOKEN\s*=\s*(.+?)\s*$/m);
-      if (_m) BOT_TOKEN = _m[1].replace(/^["']|["']$/g, '');
-    } catch (_) {}
-  }
-  const MY_TELEGRAM_ID = 6787907623;
-  let lastUpdateId = 0;
-  let paymentSince = 0;   // faqat shu vaqtdan (Unix sek.) keyin kelgan xabarlar hisobga olinadi
-
-  // Xabardan haqiqiy URL (to'lov linki) ni ajratib olamiz.
-  // Oddiy matn yoki eski yozuv link sifatida qabul qilinmaydi.
-  function extractPaymentLink(text) {
-    const m = String(text || '').match(/https?:\/\/\S+/i);
-    return m ? m[0] : '';
-  }
-
-  // Telegram navbatidagi eski/o'qilmagan xabarlarni "tasdiqlab" tashlaymiz —
-  // shunda yangi to'lov uchun faqat so'rovdan KEYIN kelgan xabar hisobga olinadi.
-  async function drainBotUpdates() {
-    for (let i = 0; i < 6; i++) {
-      try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=0`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        const data = await res.json();
-        if (!data.ok || !data.result || !data.result.length) break;
-        for (const upd of data.result) if (upd.update_id > lastUpdateId) lastUpdateId = upd.update_id;
-        if (data.result.length < 100) break;
-      } catch (_) { break; }
-    }
-  }
-
-  async function botSend(text) {
-    try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: MY_TELEGRAM_ID, text }),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch (_) {}
-  }
+  // To'lov-link relay — SERVER orqali (alohida to'lov boti serverda kuzatiladi).
+  // Kassa endi Telegram'ga to'g'ridan-to'g'ri ulanmaydi va token saqlamaydi:
+  // .exe ichida .env bo'lmagani uchun eski usul ishlamasdi. Endi server
+  // (VPS, 24/7) to'lov botini kuzatadi; kassa faqat serverga murojaat qiladi.
+  let paymentSince = 0;   // server qaytargan "shu vaqtdan keyin" belgisi (Unix sek.)
 
   ipcMain.handle('payment:sendmsg', async (_e, text) => {
-    await botSend(text);
+    try { await api.paymentNotify(store.data.serverUrl, store.data.token, text); } catch (_) {}
     return true;
   });
 
-  // Yangi to'lov boshlanishidan oldin: eski xabarlarni tozalab, "shu vaqtdan keyin"
-  // belgisini qo'yamiz. Shunda eski linkka QR generatsiya qilinmaydi.
-  // DIQQAT: bu yerda ALOHIDA to'lov boti (BOT_TOKEN, yuqorida) ishlatiladi —
-  // u serverning asosiy boti bilan to'qnashmaydi. Link to'g'ridan-to'g'ri shu
-  // bot orqali olinadi (server/ngrok kerak emas).
+  // Yangi to'lov boshlanishi: server "shu vaqtdan keyin" belgisini qaytaradi.
+  // Shunda yangi to'lov uchun faqat so'rovdan KEYIN kelgan link hisobga olinadi.
   ipcMain.handle('payment:begin', async () => {
-    await drainBotUpdates();
-    paymentSince = Math.floor(Date.now() / 1000);
+    paymentSince = 0;
+    try {
+      const { ok, data } = await api.paymentBegin(store.data.serverUrl, store.data.token);
+      if (ok && data && data.ok) paymentSince = Number(data.since) || 0;
+    } catch (_) {}
     return true;
   });
 
   ipcMain.handle('payment:poll', async () => {
     try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=10`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      const data = await res.json();
-      if (!data.ok || !data.result || !data.result.length) return { ok: false };
-      let link = '';
-      for (const upd of data.result) {
-        if (upd.update_id > lastUpdateId) lastUpdateId = upd.update_id;
-        const msg = upd.message || upd.channel_post || {};
-        // Faqat: o'zimdan + to'lov so'rovidan KEYIN kelgan + ichida haqiqiy URL bo'lgan xabar
-        if (msg.from && msg.from.id === MY_TELEGRAM_ID && msg.text
-            && msg.date && msg.date >= paymentSince) {
-          const cand = extractPaymentLink(msg.text);
-          if (cand) link = cand;
-        }
-      }
-      if (!link) return { ok: false };
-      return { ok: true, link };
+      const { ok, data } = await api.paymentPoll(store.data.serverUrl, store.data.token, paymentSince);
+      if (ok && data && data.ok && data.link) return { ok: true, link: data.link };
+      return { ok: false };
     } catch (e) {
       return { ok: false, error: String(e.message || e) };
     }
@@ -544,9 +652,15 @@ function wireIpc() {
     pushState();
     return { ok: !!z, summary: z, state: snapshot() };
   });
-  ipcMain.handle('sale:updateQr', (_e, { local_id, qrLink }) => {
+  ipcMain.handle('sale:updateQr', (_e, { local_id, qrLink, qrLinks }) => {
     const s = store.data.sales.find((x) => x.local_id === local_id);
-    if (s) { s.qrLink = qrLink || ''; store.save(); }
+    if (s) {
+      const arr = Array.isArray(qrLinks) ? qrLinks.filter(Boolean)
+        : (qrLink ? [qrLink] : []);
+      s.qrLinks = arr;
+      s.qrLink = arr[0] || qrLink || '';   // birinchisi — orqaga moslik uchun
+      store.save();
+    }
     return true;
   });
 
@@ -567,6 +681,36 @@ function wireIpc() {
       try { await pullReceipts(); } catch (_) {}
     }
     return {
+      source: status.online ? 'server' : 'local',
+      sales: store.getReceiptsMerged(),
+    };
+  });
+
+  // Cheklar bo'limi uchun real-vaqt TO'LIQ sinxron — "🔄 Sinxron" tugmasi va
+  // avto-yangilanish chaqiradi. Serverni tekshiradi, yubormagan sotuvlarni
+  // jo'natadi, oxirgi 90 kunni qayta tortib barcha qurilmalar cheklarini
+  // birlashtiradi. {online, pulled, sales} qaytaradi.
+  ipcMain.handle('sales:resync', async () => {
+    let pulled = 0;
+    if (store.data.token) {
+      try {
+        const h = await api.health(store.data.serverUrl);
+        status.online = !!h.ok;
+        if (status.online) {
+          status.lastError = '';
+          await pushPendingSales();
+          const r = await pullReceipts({ full: true });
+          pulled = r.pulled || 0;
+          status.lastSync = new Date().toISOString();
+          pushState();
+        }
+      } catch (e) {
+        status.lastError = String(e.message || e);
+      }
+    }
+    return {
+      online: status.online,
+      pulled,
       source: status.online ? 'server' : 'local',
       sales: store.getReceiptsMerged(),
     };

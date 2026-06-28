@@ -1,6 +1,6 @@
 {
   "name": "chinor-kassa",
-  "version": "1.6.3",
+  "version": "1.6.13",
   "description": "Chinor offline kassa — Windows desktop POS (Electron)",
   "main": "main.js",
   "author": "Chinor",
@@ -60,7 +60,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://unnatural-vibes-praying.ngrok-free.dev/updates/"
+        "url": "https://kassa.chinorpos.com/updates/"
       }
     ]
   }

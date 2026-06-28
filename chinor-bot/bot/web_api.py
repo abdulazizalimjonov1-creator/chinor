@@ -1715,13 +1715,25 @@ async def api_desktop_login(request: web.Request):
         "is_glavniy": (tg_id == GLAVNIY_ADMIN_ID), "desktop": True,
     }
     token = _create_session(auth_info, ttl=_DESKTOP_SESSION_TTL)
+    cashier_name = user.get("full_name") or user.get("username") or login_in
+    # Bu terminalga (device_id) DOIMIY noyob kassa raqamini biriktiramiz —
+    # chek raqami prefiksi shu raqam bo'ladi ("<kassa_no>-<seq>"), shunda turli
+    # terminallar chek raqamlari to'qnashmaydi va qurilmalararo sinxron buzilmaydi.
+    device_id = (body.get("device_id") or "").strip()
+    kassa_no = 0
+    if device_id:
+        try:
+            kassa_no = await _db.assign_kassa_no(device_id, name=cashier_name)
+        except Exception as e:
+            logger.warning(f"[desktop/login] kassa_no biriktirish xato: {e}")
     return web.json_response({
         "ok": True,
         "session_token": token,
         "cashier": {
             "id": tg_id,
-            "name": user.get("full_name") or user.get("username") or login_in,
+            "name": cashier_name,
         },
+        "kassa_no": kassa_no,
         "usd_rate": _db.get_usd_rate(),
     })
 
@@ -1733,6 +1745,18 @@ async def api_sync_catalog(request: web.Request):
     auth = await _authenticate(request, _db)
     if not auth or auth["role"] != "admin":
         return _err("Avtorizatsiya talab qilinadi", 401)
+
+    # Bu terminalga (device_id) noyob kassa raqamini biriktiramiz — login'dan
+    # tashqari HAR sinxronda ham, shunda qurilma qayta login qilmasa ham raqamni
+    # avtomatik oladi (chek prefiksi "<kassa_no>-<seq>", terminallar to'qnashmaydi).
+    device_id = (request.query.get("device_id") or "").strip()
+    kassa_no = 0
+    if device_id:
+        try:
+            kassa_no = await _db.assign_kassa_no(
+                device_id, name=(auth["user"].get("full_name") or ""))
+        except Exception as e:
+            logger.warning(f"[sync/catalog] kassa_no biriktirish xato: {e}")
 
     prods = await _db.get_all_products(active_only=True)
     out = []
@@ -1771,6 +1795,7 @@ async def api_sync_catalog(request: web.Request):
         "products": out,
         "count": len(out),
         "clients": clients,
+        "kassa_no": kassa_no,
     })
 
 

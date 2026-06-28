@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_SERVER = 'https://unnatural-vibes-praying.ngrok-free.dev';
+const DEFAULT_SERVER = 'https://kassa.chinorpos.com';
 
 function nowTashkent() {
   // Server _now() bilan bir xil format: 'YYYY-MM-DD HH:MM:SS' (UTC+5)
@@ -57,7 +57,14 @@ class Store {
     try {
       const raw = fs.readFileSync(this.file, 'utf8');
       const d = JSON.parse(raw);
-      return Object.assign(this._default(), d);
+      const data = Object.assign(this._default(), d);
+      // Eski ngrok manzili keshda qolgan bo'lsa — joriy production domeniga
+      // o'tamiz (ngrok endi ishlatilmaydi). Foydalanuvchi o'zi boshqa server
+      // kiritmagan bo'lsa avtomatik to'g'rilanadi.
+      if (/ngrok/i.test(String(data.serverUrl || ''))) {
+        data.serverUrl = DEFAULT_SERVER;
+      }
+      return data;
     } catch {
       return this._default();
     }
@@ -147,16 +154,24 @@ class Store {
   }
 
   // ── Sotuv ──────────────────────────────────────────────────────────
-  addSale({ items, payment, discountSum, subtotalSum, totalSum, clientId, clientName, qrLink, isNasiya, isInternal }) {
+  addSale({ items, payment, discountSum, subtotalSum, totalSum, clientId, clientName, qrLink, qrLinks, isNasiya, isInternal, split }) {
     this.data.salesSeq += 1;
     const local_id = `${this.data.deviceId.slice(0, 8)}-${this.data.salesSeq}`;
     const receipt_no = `${this.data.kassaNo || 1}-${this.data.salesSeq}`;
+    // Aralash (split) to'lov — har turdagi summa alohida {cash,card,click,debt}
+    const splitObj = split && typeof split === 'object' ? {
+      cash: Number(split.cash) || 0,
+      card: Number(split.card) || 0,
+      click: Number(split.click) || 0,
+      debt: Number(split.debt) || 0,
+    } : null;
     const sale = {
       local_id,
       receipt_no,                  // ko'rinadigan chek raqami: "<kassaNo>-<seq>" (qurilmalararo to'qnashmaydi)
       items,                       // [{product_id, name, sku, barcode, qty, price_sum, orig}]
-      // payment maydoni ham ko'rinish belgisi: 'rasxod' (Chinor) / 'qarz' (nasiya) / cash|card
-      payment: isInternal ? 'rasxod' : (isNasiya ? 'qarz' : (payment || 'cash')),
+      // payment maydoni ham ko'rinish belgisi: 'rasxod' (Chinor) / 'qarz' (nasiya) / 'split' / cash|card
+      payment: isInternal ? 'rasxod' : (splitObj ? 'split' : (isNasiya ? 'qarz' : (payment || 'cash'))),
+      split: splitObj,             // aralash to'lov taqsimoti (yoki null)
       isNasiya: !!isNasiya,        // qarzga (nasiya) savdo
       isInternal: !!isInternal,    // «Chinor» ichki rasxod (tannarxda)
       discountSum: Number(discountSum) || 0,
@@ -164,7 +179,8 @@ class Store {
       totalSum: Number(totalSum) || 0,
       clientId: Number(clientId) || 0,
       clientName: clientName || '',
-      qrLink: qrLink || '',       // QR to'lov linki
+      qrLink: qrLink || '',       // QR to'lov linki (bitta — orqaga moslik)
+      qrLinks: Array.isArray(qrLinks) ? qrLinks.slice() : (qrLink ? [qrLink] : []),  // bir nechta QR (split)
       created_at: nowTashkent(),
       synced: false,
       server_id: null,
@@ -327,11 +343,19 @@ class Store {
         continue;
       }
       z.sales.count++; z.sales.total += amt;
-      const p = s.payment || 'cash';
-      if (s.isNasiya || p === 'qarz') z.sales.nasiya += amt;
-      else if (p === 'card') z.sales.card += amt;
-      else if (p === 'click') z.sales.click += amt;
-      else z.sales.cash += amt;
+      if (s.split) {
+        // Aralash to'lov — har qism o'z chelagiga (naqd qismi alohida → naqd hisobot to'g'ri)
+        z.sales.cash += Number(s.split.cash) || 0;
+        z.sales.card += Number(s.split.card) || 0;
+        z.sales.click += Number(s.split.click) || 0;
+        z.sales.nasiya += Number(s.split.debt) || 0;
+      } else {
+        const p = s.payment || 'cash';
+        if (s.isNasiya || p === 'qarz') z.sales.nasiya += amt;
+        else if (p === 'card') z.sales.card += amt;
+        else if (p === 'click') z.sales.click += amt;
+        else z.sales.cash += amt;
+      }
     }
     for (const mv of (sh.cashMoves || [])) {
       if (mv.type === 'out') z.cashOut += Number(mv.amount) || 0;
@@ -475,7 +499,14 @@ class Store {
   mergeReceipts(list) {
     if (!Array.isArray(list) || !list.length) return;
     const byKey = new Map();
-    const keyOf = (s) => String(s.receipt_no || ('#' + (s.id || s.local_id || '')));
+    // Global noyob kalit: serverdagi id bo'yicha (qurilmalararo TO'QNASHMAYDI —
+    // shu sabab boshqa qurilmaning "1-5" cheki ustidan yozilmaydi). Hali
+    // yuborilmagan lokal sotuv id'siz → receipt_no/local_id (o'z qurilmasida noyob).
+    const keyOf = (s) => {
+      const sid = (s.id != null && s.id !== '') ? s.id : s.server_id;
+      if (sid != null && sid !== '') return '#' + sid;
+      return 'R:' + String(s.receipt_no || s.local_id || '');
+    };
     for (const s of this.data.receiptsCache) byKey.set(keyOf(s), s);
     for (const s of list) byKey.set(keyOf(s), s);   // yangisi eskisini almashtiradi
     let merged = Array.from(byKey.values());
@@ -484,7 +515,16 @@ class Store {
     const cutoffStr = d.toISOString().slice(0, 19).replace('T', ' ');
     merged = merged.filter((s) => (s.created_at || '') >= cutoffStr);
     // vaqt bo'yicha kamayuvchi (yangi tepada)
-    merged.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    merged.sort((a, b) => {
+      // Barqaror tartib: avval vaqt (yangi tepada), bir xil vaqtda — global
+      // noyob server id bo'yicha. Shunda BARCHA qurilmalarda cheklar AYNAN bir
+      // xil tartibda chiqadi (bir xil soniyada urilgan cheklar chalkashmaydi).
+      const t = String(b.created_at || '').localeCompare(String(a.created_at || ''));
+      if (t !== 0) return t;
+      const ai = Number(a.id != null ? a.id : (a.server_id || 0)) || 0;
+      const bi = Number(b.id != null ? b.id : (b.server_id || 0)) || 0;
+      return bi - ai;
+    });
     this.data.receiptsCache = merged.slice(0, 3000);
     // eng so'nggi created_at — keyingi inkremental sync uchun
     this.data.receiptsLastTs = merged.reduce(
@@ -496,7 +536,14 @@ class Store {
   // lokal sotuvlar, receipt_no bo'yicha dublikatsiz, vaqt bo'yicha tartiblangan.
   getReceiptsMerged() {
     const byKey = new Map();
-    const keyOf = (s) => String(s.receipt_no || ('#' + (s.id || s.local_id || '')));
+    // Global noyob kalit: serverdagi id bo'yicha (qurilmalararo TO'QNASHMAYDI —
+    // shu sabab boshqa qurilmaning "1-5" cheki ustidan yozilmaydi). Hali
+    // yuborilmagan lokal sotuv id'siz → receipt_no/local_id (o'z qurilmasida noyob).
+    const keyOf = (s) => {
+      const sid = (s.id != null && s.id !== '') ? s.id : s.server_id;
+      if (sid != null && sid !== '') return '#' + sid;
+      return 'R:' + String(s.receipt_no || s.local_id || '');
+    };
     for (const s of this.data.receiptsCache || []) byKey.set(keyOf(s), s);
     // hali sinxronlanmagan lokal sotuvlarni "chek" ko'rinishiga keltiramiz
     for (const s of this.pendingSales()) {
@@ -516,6 +563,8 @@ class Store {
         client_id: s.clientId || 0,
         client_name: s.clientName || '',
         qrLink: s.qrLink || '',
+        qrLinks: Array.isArray(s.qrLinks) ? s.qrLinks : (s.qrLink ? [s.qrLink] : []),
+        split: s.split || null,
         items: (s.items || []).map((it) => ({
           name: it.name, qty: it.qty, price_sum: it.price_sum,
           product_id: it.product_id, sku: it.sku, barcode: it.barcode, orig: it.orig,
@@ -523,18 +572,32 @@ class Store {
       };
       byKey.set(keyOf(r), r);   // pending o'zining keshdagi nusxasini ustlaydi
     }
-    // QR linkni saqlab qolish: lokal sotuvlardan qrLink ni olish (serverdan kelgan versiyada bo'lmasa)
+    // QR linkni saqlab qolish: lokal sotuvlardan qrLink/qrLinks/split ni olish
+    // (serverdan kelgan versiyada bo'lmasligi mumkin)
     for (const s of this.data.sales || []) {
-      if (s.qrLink) {
+      if (s.qrLink || (s.qrLinks && s.qrLinks.length) || s.split) {
         const key = keyOf(s);
         const existing = byKey.get(key);
-        if (existing && !existing.qrLink) {
-          existing.qrLink = s.qrLink;
+        if (existing) {
+          if (!existing.qrLink && s.qrLink) existing.qrLink = s.qrLink;
+          if ((!existing.qrLinks || !existing.qrLinks.length) && s.qrLinks && s.qrLinks.length) {
+            existing.qrLinks = s.qrLinks.slice();
+          }
+          if (!existing.split && s.split) existing.split = s.split;
         }
       }
     }
     return Array.from(byKey.values())
-      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      .sort((a, b) => {
+      // Barqaror tartib: avval vaqt (yangi tepada), bir xil vaqtda — global
+      // noyob server id bo'yicha. Shunda BARCHA qurilmalarda cheklar AYNAN bir
+      // xil tartibda chiqadi (bir xil soniyada urilgan cheklar chalkashmaydi).
+      const t = String(b.created_at || '').localeCompare(String(a.created_at || ''));
+      if (t !== 0) return t;
+      const ai = Number(a.id != null ? a.id : (a.server_id || 0)) || 0;
+      const bi = Number(b.id != null ? b.id : (b.server_id || 0)) || 0;
+      return bi - ai;
+    });
   }
 }
 

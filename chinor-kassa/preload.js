@@ -30,12 +30,16 @@ contextBridge.exposeInMainWorld('kassa', {
   syncNow: () => ipcRenderer.invoke('sync:now'),
   getTodaySales: () => ipcRenderer.invoke('sales:today'),
   getRecentSales: () => ipcRenderer.invoke('sales:recent'),
+  resyncReceipts: () => ipcRenderer.invoke('sales:resync'),
   getDrafts: () => ipcRenderer.invoke('drafts:get'),
   saveDraft: (draft) => ipcRenderer.invoke('drafts:save', draft),
   removeDraft: (id) => ipcRenderer.invoke('drafts:remove', id),
   getTabs: () => ipcRenderer.invoke('tabs:get'),
   saveTabs: (list) => ipcRenderer.invoke('tabs:set', list),
   printReceipt: (html) => ipcRenderer.invoke('receipt:print', html),
+  // macOS: termal printer drayverisiz — chek "model"ini ESC/POS qilib bosamiz
+  isMac: process.platform === 'darwin',
+  printReceiptMac: (model) => ipcRenderer.invoke('receipt:printmac', model),
   getLogo: () => ipcRenderer.invoke('assets:logo'),
   getPrinters: () => ipcRenderer.invoke('printers:list'),
   setPrinter: (name) => ipcRenderer.invoke('printer:set', name),
@@ -47,6 +51,7 @@ contextBridge.exposeInMainWorld('kassa', {
   pollPaymentLink: () => ipcRenderer.invoke('payment:poll'),
   sendPaymentMsg: (text) => ipcRenderer.invoke('payment:sendmsg', text),
   updateSaleQr: (local_id, qrLink) => ipcRenderer.invoke('sale:updateQr', { local_id, qrLink }),
+  updateSaleQrs: (local_id, qrLinks) => ipcRenderer.invoke('sale:updateQr', { local_id, qrLinks }),
   // Holat o'zgarganda (online/offline, sinxron) UI ni yangilash uchun
   onState: (cb) => {
     const handler = (_e, state) => cb(state);
