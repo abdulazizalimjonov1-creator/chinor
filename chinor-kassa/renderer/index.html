@@ -46,6 +46,7 @@
         <span id="netBadge" class="badge badge-off">● Offline</span>
         <span id="pendingBadge" class="badge badge-pending hidden">⏳ 0</span>
         <button id="bindBtn" class="btn-ghost" title="Shtrix-kod biriktirish rejimi"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1"/><line x1="7" y1="9" x2="7" y2="15"/><line x1="10.5" y1="9" x2="10.5" y2="15"/><line x1="13.5" y1="9" x2="13.5" y2="15"/><line x1="17" y1="9" x2="17" y2="15"/></svg><span id="bindBtnLabel">Shtrix</span></button>
+        <button id="botBtn" class="btn-ghost" title="To'lov boti sozlamalari"><svg class="ico" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1.4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><line x1="9.5" y1="17" x2="14.5" y2="17"/></svg><span id="botBtnLabel">Bot</span></button>
         <button id="shiftBtn" class="btn-ghost" title="Smena"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg><span id="shiftBtnLabel">Smena</span></button>
         <button id="lockBtn" class="btn-ghost" title="Kassani qulflash (almashtirish)"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Qulflash</button>
         <button id="hotkeyBtn" class="btn-ghost" title="Tezkor tugmalar"><svg class="ico" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6" y2="9"/><line x1="10" y1="9" x2="10" y2="9"/><line x1="14" y1="9" x2="14" y2="9"/><line x1="18" y1="9" x2="18" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg></button>
@@ -141,6 +142,7 @@
           <button class="pay-toggle" data-pay="click"><svg viewBox="0 0 24 24" width="19" height="19" style="flex:0 0 auto"><defs><linearGradient id="clkg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#2BC4FF"/><stop offset="1" stop-color="#0A6BFF"/></linearGradient></defs><path d="M12 1.8c5 .25 8.4 4.3 8.4 9.9 0 5.9-3.9 10.5-8.4 10.5S3.6 17.6 3.6 11.7C3.6 6.1 7 2.05 12 1.8Zm0 5.1a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Z" fill="url(#clkg)"/></svg>CLICK</button>
           <button class="pay-toggle" data-pay="nasiya"><svg class="ico" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 0 1 2-2h2"/><path d="M9 9h6M9 13h4"/></svg>Qarz</button>
         </div>
+        <button id="splitBtn" class="split-toggle"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>➗ To'lovni bo'lish</button>
 
         <div id="discLine" class="disc-line hidden"></div>
         <div class="summa-box">
@@ -172,12 +174,49 @@
     </div>
   </div>
 
+  <!-- To'lovni bo'lish (split) modal -->
+  <div id="splitModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>➗ To'lovni bo'lish</span><button class="modal-x" data-close>✕</button></div>
+      <div class="split-total">JAMI: <b id="splitTotal">0</b> so'm</div>
+      <div class="split-rows">
+        <div class="split-row">
+          <label>💵 Naqd</label>
+          <input id="splitCash" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitCash">Qolgani</button>
+        </div>
+        <div class="split-row">
+          <label>💳 Karta</label>
+          <input id="splitCard" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitCard">Qolgani</button>
+        </div>
+        <div class="split-row">
+          <label>⚡ Click</label>
+          <input id="splitClick" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitClick">Qolgani</button>
+        </div>
+        <div class="split-row" id="splitDebtRow">
+          <label>🤝 Qarz</label>
+          <input id="splitDebt" class="split-input" type="text" inputmode="numeric" autocomplete="off" value="0">
+          <button class="split-rest" data-rest="splitDebt">Qolgani</button>
+        </div>
+      </div>
+      <div id="splitRemain" class="split-remain">Qoldiq: 0 so'm</div>
+      <div id="splitDebtHint" class="split-hint hidden">🤝 Qarz uchun avval <b>Klient</b> tanlang (qarzga ruxsatli).</div>
+      <div class="split-actions">
+        <button id="splitChekBtn" class="btn-sell-sm">📄 Chek</button>
+        <button id="splitPayBtn" class="btn-sell">💳 To'lov</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Cheklar — butun oynali (Telegram uslubi) -->
   <div id="receiptsScreen" class="receipts-screen hidden">
     <header class="rc-head">
       <button id="rcBack" class="btn-ghost"><svg class="ico" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Orqaga</button>
       <div class="rc-title">Cheklar</div>
       <div class="rc-tabs">
+        <button id="rcSyncBtn" class="rc-tab rc-sync" title="Real-vaqt sinxron — barcha qurilmalar cheklarini serverdan yangilash"><span class="rc-sync-ico">🔄</span> Sinxron</button>
         <select id="rcPrinter" class="rc-printer" title="Chek printeri"></select>
         <button class="rc-tab active" data-tab="sales">Hamma cheklar</button>
         <button class="rc-tab" data-tab="drafts">Qoralamalar</button>
@@ -204,6 +243,7 @@
           <button class="rc-chip" data-pay="cash">💵 Naqd</button>
           <button class="rc-chip" data-pay="click">⚡ Click</button>
           <button class="rc-chip" data-pay="card">💳 Karta</button>
+          <button class="rc-chip" data-pay="split">🔀 Aralash</button>
           <button class="rc-chip" data-pay="qarz">🤝 Qarz (nasiya)</button>
           <button class="rc-chip" data-pay="qaytarish">↩️ Qaytarish</button>
         </div>
@@ -312,6 +352,35 @@
         <div class="edit-actions">
           <button class="modal-btn" data-close>Bekor</button>
           <button id="lcConfirm" class="modal-btn primary">🔒 Sanadim — qulflash</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- To'lov boti sozlamalari modal -->
+  <div id="botModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>🤖 To'lov boti</span><button class="modal-x" data-close>✕</button></div>
+      <div class="bot-body">
+        <div class="bot-hint">Kassa to'lov linkini Telegram bot orqali oladi. Tokenni va to'lov linkini yuboradigan operatorning telefon raqamini shu yerda sozlang.</div>
+
+        <div class="edit-field">
+          <label>1) Bot tokeni</label>
+          <input id="botTokenInput" type="text" placeholder="123456:ABC-..." autocomplete="off" spellcheck="false">
+          <div id="botTokenMsg" class="bot-msg"></div>
+        </div>
+
+        <div class="edit-field">
+          <label>2) Operator telefon raqami</label>
+          <input id="botPhoneInput" type="tel" placeholder="+998 90 123 45 67" autocomplete="off">
+        </div>
+
+        <div id="botStatus" class="bot-status"></div>
+        <div id="botSteps" class="bot-steps"></div>
+
+        <div class="edit-actions">
+          <button id="botUnbind" class="modal-btn" style="display:none">Bog'lashni bekor qilish</button>
+          <button id="botSave" class="modal-btn primary">Saqlash</button>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
@@ -110,6 +110,13 @@ async function pushPendingSales() {
     created_at: s.created_at,
     source: DEVICE,
     receipt_no: s.receipt_no || '',
+    // Aralash (split) to'lov — har turdagi summa alohida; server paid_*/qarzga yozadi
+    ...(s.split ? {
+      paid_cash: Number(s.split.cash) || 0,
+      paid_card: Number(s.split.card) || 0,
+      paid_other: Number(s.split.click) || 0,   // click → paid_other
+      debt_sum: Number(s.split.debt) || 0,
+    } : {}),
   }));
   const { ok, data } = await api.pushSales(store.data.serverUrl, store.data.token, payload);
   if (!ok || !data.ok) {
@@ -125,20 +132,27 @@ async function pushPendingSales() {
 }
 
 async function pullCatalog() {
-  const { ok, data } = await api.catalog(store.data.serverUrl, store.data.token);
+  const { ok, data } = await api.catalog(store.data.serverUrl, store.data.token, store.data.deviceId);
   if (!ok || !data.ok) {
     status.lastError = (data && data.error) || 'Katalogni yuklab bo\'lmadi';
     return { pulled: 0, error: status.lastError };
   }
   store.setCatalog(data.products || [], data.usd_rate, data.clients || []);
+  // Server bu qurilmaga noyob kassa raqamini bergan bo'lsa — qo'llaymiz
+  // (login'dan tashqari har sinxronda; qayta login shart emas).
+  if (data.kassa_no && Number(data.kassa_no) > 0 && Number(data.kassa_no) !== store.data.kassaNo) {
+    store.setKassaNo(Number(data.kassa_no));
+  }
   return { pulled: (data.products || []).length };
 }
 
 // Cheklarni inkremental tarzda yuklab, lokal keshga birlashtiramiz —
 // shunda har qurilmada barcha qurilmalar cheklari vaqt bo'yicha ko'rinadi.
-async function pullReceipts() {
-  // keshda hech narsa yo'q bo'lsa — oxirgi 90 kunni so'raymiz; bo'lsa faqat yangisini
-  let since = store.data.receiptsLastTs || '';
+async function pullReceipts({ full = false } = {}) {
+  // full=true — keshdagi "oxirgi vaqt"ni e'tiborsiz qoldirib, oxirgi 90 kunni
+  // TO'LIQ qayta so'raymiz (qurilmalararo yo'qolgan cheklar tiklanadi).
+  // keshda hech narsa yo'q bo'lsa ham — oxirgi 90 kunni so'raymiz; bo'lsa faqat yangisini
+  let since = full ? '' : (store.data.receiptsLastTs || '');
   if (!since) {
     const d = new Date(Date.now() - 90 * 24 * 3600 * 1000 + 5 * 3600 * 1000);
     since = d.toISOString().slice(0, 19).replace('T', ' ');
@@ -185,6 +199,375 @@ async function tick() {
   await doSync();
 }
 
+// ── macOS chek chop etish: matnli ESC/POS (+ native QR) → `lp -o raw` ────────
+// macOS'da arzon termal printerlar (XP-80) uchun to'g'ri CUPS drayveri ko'pincha
+// bo'lmaydi → webContents.print() chunarsiz chiqaradi. Katta RASTER ham bu
+// printer buferini to'ldirib chunarsiz qiladi. Eng ishonchli yo'l — MATNLI
+// ESC/POS (juda kichik ma'lumot) + QR'ni printerning NATIVE buyrug'i (GS ( k)
+// bilan bosish. Chek "model" (renderer'dan keladi: matn/qator/ajratuvchi/QR)
+// ESC/POS baytlariga aylantiriladi.
+const ESC_COLS = 48;   // 80mm, A shrift: ~48 belgi
+
+// Raw baytlarni `lp -o raw` orqali printerga yuboradi (CUPS filtrини chetlab o'tadi).
+function sendRawToPrinter(file, queue) {
+  return new Promise((resolve) => {
+    const args = [];
+    if (queue) args.push('-d', queue);
+    args.push('-o', 'raw', file);
+    let p;
+    try { p = spawn('/usr/bin/lp', args, { stdio: 'ignore' }); }
+    catch (e) { return resolve({ ok: false, reason: String(e.message || e) }); }
+    p.on('close', (code) => resolve({ ok: code === 0, reason: code === 0 ? '' : ('lp exit ' + code) }));
+    p.on('error', (e) => resolve({ ok: false, reason: String(e.message || e) }));
+  });
+}
+
+// Matnni printer kodlashiga mos qilamiz: ASCII bo'lmagan belgilarni olib tashlaymiz
+// (Uzbek lotin asosan ASCII; emoji/×/· kabilar tushib qoladi — chunarsizlikdan ko'ra yaxshi).
+function _ascii(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7E]/g, ''); }
+function _pad(l, r) {
+  l = _ascii(l); r = _ascii(r);
+  let sp = ESC_COLS - l.length - r.length;
+  if (sp < 1) { l = l.slice(0, Math.max(0, ESC_COLS - r.length - 1)); sp = 1; }
+  return l + ' '.repeat(sp) + r;
+}
+// Native QR (GS ( k, model 2) baytlari
+function _qrBytes(data) {
+  const d = Buffer.from(_ascii(data), 'latin1');
+  const n = d.length + 3;
+  return Buffer.concat([
+    Buffer.from([0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]),       // model 2
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x07]),             // modul o'lchami 7
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31]),             // EC: M
+    Buffer.from([0x1d, 0x28, 0x6b, n & 0xff, (n >> 8) & 0xff, 0x31, 0x50, 0x30]), d,  // store
+    Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]),             // print
+  ]);
+}
+
+// Chek tepasidagi logo (doirasiz) → ESC/POS raster (GS v 0). 80mm = 576 nuqta,
+// logo markazga tekislanadi. nativeImage bilan o'qiladi (qo'shimcha kutubxona shart emas).
+const LOGO_FILE = path.join(__dirname, 'renderer', 'logo_nocircle.png');
+function _logoBytes(targetW) {
+  try {
+    let img = nativeImage.createFromPath(LOGO_FILE);
+    if (!img || img.isEmpty()) return Buffer.alloc(0);
+    const s0 = img.getSize();
+    const W = Math.max(64, Math.min(targetW || 300, 576));
+    const H = Math.max(1, Math.round(s0.height * (W / s0.width)));
+    img = img.resize({ width: W, height: H, quality: 'best' });
+    const sz = img.getSize();
+    const bw = sz.width, bh = sz.height;
+    const bmp = img.toBitmap();                 // RGBA/BGRA — kulrang logo uchun farqi yo'q
+    const FULL = 576, BPR = FULL >> 3;          // 72 bayt/qator
+    const xoff = Math.max(0, (FULL - bw) >> 1); // markazga
+    const raster = Buffer.alloc(BPR * bh, 0);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const i = (y * bw + x) * 4;
+        const a = bmp[i + 3];
+        const lum = a < 128 ? 255 : (0.299 * bmp[i + 2] + 0.587 * bmp[i + 1] + 0.114 * bmp[i]);
+        if (lum < 128) { const X = xoff + x; raster[y * BPR + (X >> 3)] |= (0x80 >> (X & 7)); }
+      }
+    }
+    return Buffer.concat([
+      Buffer.from([0x1d, 0x76, 0x30, 0x00, BPR & 0xff, (BPR >> 8) & 0xff, bh & 0xff, (bh >> 8) & 0xff]),
+      raster,
+    ]);
+  } catch (_) { return Buffer.alloc(0); }
+}
+
+// Chek "model" (elementlar ro'yxati) → ESC/POS baytlari.
+// Element turlari: text{s,align,bold,big,tall} · row{l,r,bold,tall} · sep{ch}
+//                  pre{text} (ko'p qatorli xom matn) · qr{data} · feed{n} · cut
+function escposFromModel(model) {
+  const E = (s) => Buffer.from(_ascii(s), 'latin1');
+  const B = (a) => Buffer.from(a);
+  const lf = B([0x0a]);
+  const C = {
+    init: [0x1b, 0x40], left: [0x1b, 0x61, 0], center: [0x1b, 0x61, 1], right: [0x1b, 0x61, 2],
+    boldOn: [0x1b, 0x45, 1], boldOff: [0x1b, 0x45, 0],
+    big: [0x1d, 0x21, 0x11], tall: [0x1d, 0x21, 0x01], norm: [0x1d, 0x21, 0],
+    cut: [0x1d, 0x56, 0x42, 0x00],
+  };
+  const parts = [B(C.init)];
+  for (const el of (model && model.lines) || []) {
+    if (!el) continue;
+    if (el.t === 'text') {
+      parts.push(B(el.align === 'center' ? C.center : el.align === 'right' ? C.right : C.left));
+      if (el.bold) parts.push(B(C.boldOn));
+      if (el.big) parts.push(B(C.big)); else if (el.tall) parts.push(B(C.tall));
+      parts.push(E(el.s), lf);
+      if (el.big || el.tall) parts.push(B(C.norm));
+      if (el.bold) parts.push(B(C.boldOff));
+      parts.push(B(C.left));
+    } else if (el.t === 'row') {
+      parts.push(B(C.left));
+      if (el.bold) parts.push(B(C.boldOn));
+      if (el.tall) parts.push(B(C.tall));
+      parts.push(E(_pad(el.l, el.r)), lf);
+      if (el.tall) parts.push(B(C.norm));
+      if (el.bold) parts.push(B(C.boldOff));
+    } else if (el.t === 'sep') {
+      parts.push(B(C.left), E((el.ch || '-').repeat(ESC_COLS)), lf);
+    } else if (el.t === 'pre') {
+      parts.push(B(C.left));
+      for (const ln of String(el.text || '').split('\n')) parts.push(E(ln), lf);
+    } else if (el.t === 'qr') {
+      parts.push(B(C.center), _qrBytes(el.data), lf, B(C.left));
+    } else if (el.t === 'image') {
+      const lb = _logoBytes(el.w || 300);
+      if (lb.length) parts.push(B(C.center), lb, lf, B(C.left));
+    } else if (el.t === 'feed') {
+      for (let i = 0; i < (el.n || 1); i++) parts.push(lf);
+    } else if (el.t === 'cut') {
+      parts.push(B(C.cut));
+    }
+  }
+  return Buffer.concat(parts);
+}
+
+// Windows: RAW (ESC/POS) baytlarni printer NOMI bo'yicha spooler orqali yuboradi.
+// Drayver render qilmaydi — baytlar to'g'ridan-to'g'ri printerga ketadi (Mac'dagi
+// `lp -o raw` ning aynan ekvivalenti). Shu sabab chek Mac'dagidek IXCHAM chiqadi.
+const WIN_RAW_PS = `param([string]$BinPath,[string]$Printer)
+$ErrorActionPreference='Stop'
+if([string]::IsNullOrWhiteSpace($Printer)){ try { $Printer=(Get-CimInstance Win32_Printer -Filter "Default=True" -ErrorAction Stop).Name } catch {} }
+if([string]::IsNullOrWhiteSpace($Printer)){ throw "Printer tanlanmagan" }
+$code=@'
+using System;using System.Runtime.InteropServices;
+public class RP{
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)] public struct DI{ [MarshalAs(UnmanagedType.LPStr)] public string n;[MarshalAs(UnmanagedType.LPStr)] public string o;[MarshalAs(UnmanagedType.LPStr)] public string t; }
+ [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
+ [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
+ [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
+ [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
+ [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h);
+ [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);
+ [DllImport("winspool.Drv",EntryPoint="WritePrinter",SetLastError=true)] public static extern bool WritePrinter(IntPtr h,IntPtr b,int c,out int w);
+ public static void Send(string pn,byte[] data){ IntPtr h; if(!OpenPrinter(pn,out h,IntPtr.Zero)) throw new Exception("OpenPrinter "+Marshal.GetLastWin32Error()); var di=new DI(); di.n="Chinor Chek"; di.t="RAW"; IntPtr p=Marshal.AllocCoTaskMem(data.Length); Marshal.Copy(data,0,p,data.Length); int w; try{ if(!StartDocPrinter(h,1,ref di)) throw new Exception("StartDoc "+Marshal.GetLastWin32Error()); StartPagePrinter(h); if(!WritePrinter(h,p,data.Length,out w)) throw new Exception("WritePrinter "+Marshal.GetLastWin32Error()); EndPagePrinter(h); EndDocPrinter(h);} finally { Marshal.FreeCoTaskMem(p); ClosePrinter(h);} }
+}
+'@
+Add-Type -TypeDefinition $code -Language CSharp
+$bytes=[System.IO.File]::ReadAllBytes($BinPath)
+[RP]::Send($Printer,$bytes)
+Write-Output "OK"`;
+
+function sendRawToPrinterWin(file, queue) {
+  return new Promise((resolve) => {
+    let ps1;
+    try {
+      ps1 = path.join(os.tmpdir(), `chinor-print-${Date.now()}.ps1`);
+      fs.writeFileSync(ps1, WIN_RAW_PS, 'utf8');
+    } catch (e) { return resolve({ ok: false, reason: String(e && e.message || e) }); }
+    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', ps1, '-BinPath', file, '-Printer', queue || ''];
+    let p, err = '';
+    try { p = spawn('powershell.exe', args, { stdio: ['ignore', 'ignore', 'pipe'] }); }
+    catch (e) { return resolve({ ok: false, reason: String(e.message || e) }); }
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('close', (code) => {
+      setTimeout(() => { try { fs.unlinkSync(ps1); } catch (_) {} }, 4000);
+      resolve({ ok: code === 0, reason: code === 0 ? '' : (err.trim().split('\n')[0] || ('powershell exit ' + code)) });
+    });
+    p.on('error', (e) => resolve({ ok: false, reason: String(e.message || e) }));
+  });
+}
+
+// Chek modelini ESC/POS qilib raw printerga yuboradi.
+// Windows → spooler RAW (drayversiz), macOS → `lp -o raw`. Ikkalasi ham bir xil
+// ixcham ESC/POS chekni chiqaradi (renderer'dagi buildReceiptModel'dan).
+async function printModel(model) {
+  try {
+    const esc = escposFromModel(model);
+    const tmp = path.join(os.tmpdir(), `chinor-receipt-${Date.now()}.bin`);
+    fs.writeFileSync(tmp, esc);
+    const res = process.platform === 'win32'
+      ? await sendRawToPrinterWin(tmp, store.data.printerName)
+      : await sendRawToPrinter(tmp, store.data.printerName);
+    setTimeout(() => { try { fs.unlinkSync(tmp); } catch (_) {} }, 5000);
+    return res;
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e) };
+  }
+}
+
+// ── Telegram to'lov boti (kassa ichida, uzluksiz loop) ────────────────
+// Kassa ochiq turganda fonda ishlaydi:
+//  • /start  → "📱 Raqamni tasdiqlash" tugmasi (request_contact)
+//  • contact → kassada kiritilgan raqam bilan solishtiradi, mos kelsa operatorni bog'laydi
+//  • link    → tasdiqlangan operatordan, to'lov so'rovidan keyin kelgan URL ni ushlaydi
+const bot = {
+  loopOn: false,    // loop ishlayaptimi
+  stop: false,      // to'xtatish signali
+  since: 0,         // to'lov so'rovi vaqti (Unix sek) — shu vaqtdan keyingi link qabul qilinadi
+  link: '',         // oxirgi ushlangan to'lov linki (payment:poll o'qib tozalaydi)
+  username: '',     // bot @username (UI da ko'rsatish uchun)
+  announced: false, // "ishga tushdi" xabari shu sessiyada yuborilganmi
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Token: 1) kassada kiritilgan; 2) PAYMENT_BOT_TOKEN env; 3) ../.env (lokal test)
+function botToken() {
+  let t = (store && store.data.botToken) || process.env.PAYMENT_BOT_TOKEN || '';
+  if (!t) {
+    try {
+      const env = fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8');
+      const m = env.match(/^\s*PAYMENT_BOT_TOKEN\s*=\s*(.+?)\s*$/m);
+      if (m) t = m[1].replace(/^["']|["']$/g, '');
+    } catch (_) {}
+  }
+  return String(t || '').trim();
+}
+
+// Telefon raqamini solishtirish uchun normallashtiramiz (oxirgi 9 raqam).
+function normPhone(p) {
+  return String(p || '').replace(/\D+/g, '').slice(-9);
+}
+
+function extractLink(text) {
+  const m = String(text || '').match(/https?:\/\/\S+/i);
+  return m ? m[0] : '';
+}
+
+// Telegram Bot API chaqiruvi (POST JSON)
+async function tg(method, body) {
+  const tok = botToken();
+  if (!tok) return { ok: false, error: 'no token' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${tok}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: AbortSignal.timeout(35000),
+    });
+    return await res.json();
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+}
+
+async function botSendTo(chatId, text, extra) {
+  if (!chatId) return;
+  await tg('sendMessage', Object.assign({ chat_id: chatId, text }, extra || {}));
+}
+
+// Tasdiqlangan operatorga xabar (bog'lanmagan bo'lsa — jim o'tadi)
+async function botNotifyOperator(text) {
+  const id = store && store.data.operatorTgId;
+  if (id) await botSendTo(id, text);
+}
+
+// UI uchun bot holati
+function botConfig() {
+  return {
+    hasToken: !!botToken(),
+    tokenInApp: !!(store && store.data.botToken),
+    username: bot.username || '',
+    phone: (store && store.data.operatorPhone) || '',
+    operatorId: (store && store.data.operatorTgId) || 0,
+    operatorName: (store && store.data.operatorName) || '',
+    bound: !!(store && store.data.operatorTgId),
+  };
+}
+
+// Bitta update'ni qayta ishlaymiz
+async function botHandleUpdate(upd) {
+  const msg = upd.message || {};
+  const chatId = msg.chat && msg.chat.id;
+  const fromId = msg.from && msg.from.id;
+
+  // 1) /start — raqam tasdiqlash tugmasi
+  if (msg.text && /^\/(start|begin)\b/i.test(msg.text.trim())) {
+    await botSendTo(chatId,
+      'Assalomu alaykum! 👋\nChinor Kassa to\'lov yordamchisi.\n\n' +
+      'Kassada ko\'rsatilgan telefon raqamingizni tasdiqlash uchun pastdagi tugmani bosing.',
+      { reply_markup: {
+          keyboard: [[{ text: '📱 Raqamni tasdiqlash', request_contact: true }]],
+          resize_keyboard: true, one_time_keyboard: true } });
+    return;
+  }
+
+  // 2) Kontakt ulashildi — kassadagi raqam bilan solishtiramiz (faqat O'Z kontakti)
+  if (msg.contact && msg.contact.phone_number) {
+    const ownerId = msg.contact.user_id;
+    const got = normPhone(msg.contact.phone_number);
+    const want = (store.data.operatorPhone || '');
+    if (!ownerId || ownerId !== fromId) {
+      await botSendTo(chatId, '⚠️ Iltimos, O\'Z raqamingizni «📱 Raqamni tasdiqlash» tugmasi orqali yuboring.',
+        { reply_markup: { remove_keyboard: true } });
+      return;
+    }
+    if (!want) {
+      await botSendTo(chatId, '⚠️ Avval kassada telefon raqamini kiriting, so\'ng bu yerda tasdiqlang.',
+        { reply_markup: { remove_keyboard: true } });
+      return;
+    }
+    if (got === want) {
+      const name = [msg.from && msg.from.first_name, msg.from && msg.from.last_name]
+        .filter(Boolean).join(' ').trim() || (msg.contact.first_name || '');
+      store.setOperator(ownerId, name);
+      pushState();
+      await botSendTo(chatId,
+        `✅ Raqam tasdiqlandi!\n${name ? name + ', ' : ''}endi to'lov linklarini shu yerga yuborib turing.`,
+        { reply_markup: { remove_keyboard: true } });
+    } else {
+      await botSendTo(chatId,
+        `❌ Raqam mos kelmadi.\nKassada kiritilgan raqam: …${want.slice(-4)}\nSizning raqamingiz boshqacha.`,
+        { reply_markup: { remove_keyboard: true } });
+    }
+    return;
+  }
+
+  // 3) To'lov linki — faqat tasdiqlangan operatordan + to'lov so'rovidan keyin
+  if (msg.text && fromId && store.data.operatorTgId && fromId === store.data.operatorTgId
+      && msg.date && bot.since && msg.date >= bot.since) {
+    const link = extractLink(msg.text);
+    if (link) bot.link = link;
+  }
+}
+
+// Uzluksiz long-poll loop (kassa ochiq turganda)
+async function botLoop() {
+  if (bot.loopOn) return;
+  bot.loopOn = true; bot.stop = false;
+  while (!bot.stop) {
+    const tok = botToken();
+    if (!tok) { await sleep(3000); continue; }
+    if (!bot.username) {
+      const me = await tg('getMe', {});
+      if (me && me.ok && me.result) bot.username = me.result.username || '';
+    }
+    try {
+      const r = await tg('getUpdates', { offset: (store.data.botLastUpdateId || 0) + 1, timeout: 25 });
+      if (r && r.ok && Array.isArray(r.result) && r.result.length) {
+        for (const upd of r.result) {
+          if (upd.update_id > (store.data.botLastUpdateId || 0)) store.data.botLastUpdateId = upd.update_id;
+          try { await botHandleUpdate(upd); } catch (_) {}
+        }
+        store.save();
+      } else if (r && r.error_code === 409) {
+        await sleep(4000);   // boshqa joyda polling — biroz kutamiz
+      } else if (!r || !r.ok) {
+        await sleep(2000);   // tarmoq xatosi / token yo'q
+      }
+    } catch (_) { await sleep(2000); }
+  }
+  bot.loopOn = false;
+}
+
+// Token o'zgarsa username keshini yangilab loopni uyg'otamiz
+function botRestart() {
+  bot.username = '';
+  if (!bot.loopOn) botLoop();
+}
+
+// "Kassa ishga tushdi" — login bo'lgan va operator bog'langan bo'lsa, bir marta
+async function botAnnounceStart() {
+  if (bot.announced) return;
+  if (!store || !store.loggedIn || !store.data.operatorTgId) return;
+  bot.announced = true;
+  await botNotifyOperator(`🟢 Kassa ishga tushdi · ${DEVICE} · Kassa-${store.data.kassaNo || 1}`);
+}
+
 // ── IPC handlerlari ────────────────────────────────────────────────────
 function wireIpc() {
   ipcMain.handle('state:get', () => snapshot());
@@ -205,13 +588,19 @@ function wireIpc() {
     const h = await api.health(base);
     status.online = !!h.ok;
     if (status.online) {
-      const { ok, data } = await api.login(base, login, password);
+      const { ok, data } = await api.login(base, login, password, store.data.deviceId);
       if (!ok || !data.ok) {
         return { ok: false, error: (data && data.error) || 'Kirib bo\'lmadi' };
       }
       store.setSession(data.session_token, data.cashier, data.usd_rate);
+      // Server bu terminalga noyob kassa raqamini berdi — chek prefiksini
+      // shunga moslaymiz (qo'lda sozlash shart emas, qurilmalar to'qnashmaydi).
+      if (data.kassa_no && Number(data.kassa_no) > 0) {
+        store.setKassaNo(Number(data.kassa_no));
+      }
       store.setAuthHash(credHash(login, password));   // offlayn kirish uchun eslab qolamiz
       await doSync({ force: true });
+      botAnnounceStart().catch(() => {});   // operator bog'langan bo'lsa "ishga tushdi" xabari
       return { ok: true, state: snapshot() };
     }
     // Offlayn: avval internetli kirgan bo'lsa va parol mos kelsa — kiritamiz
@@ -219,6 +608,7 @@ function wireIpc() {
         && store.data.token && store.data.cashier) {
       store.restoreSession();
       pushState();
+      botAnnounceStart().catch(() => {});
       return { ok: true, offline: true, state: snapshot() };
     }
     return {
@@ -279,7 +669,12 @@ function wireIpc() {
     return true;
   });
 
-  // Chek chop etish — JIM (belgilangan/standart printerga, dialog so'ramasdan)
+  // Chek modelini ESC/POS qilib raw printerga yuboradi (Windows va macOS — bir xil ixcham chek).
+  ipcMain.handle('receipt:printmac', async (_e, model) => {
+    return printModel(model);
+  });
+
+  // Chek chop etish — JIM (Windows: odatiy drayver bilan webContents.print).
   ipcMain.handle('receipt:print', async (_e, html) => {
     return new Promise((resolve) => {
       // sandbox:false — Windows printer drayveriga to'liq kirish uchun.
@@ -336,93 +731,46 @@ function wireIpc() {
     });
   });
 
-  // Telegram bot orqali to'lov linkini olish (getUpdates polling) va SMS yuborish.
-  // Token KODDA saqlanmaydi: avval PAYMENT_BOT_TOKEN muhit o'zgaruvchisi, bo'lmasa
-  // loyiha ildizidagi gitignored .env faylidagi PAYMENT_BOT_TOKEN dan o'qiladi (lokal test).
-  let BOT_TOKEN = process.env.PAYMENT_BOT_TOKEN || '';
-  if (!BOT_TOKEN) {
-    try {
-      const _env = fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8');
-      const _m = _env.match(/^\s*PAYMENT_BOT_TOKEN\s*=\s*(.+?)\s*$/m);
-      if (_m) BOT_TOKEN = _m[1].replace(/^["']|["']$/g, '');
-    } catch (_) {}
-  }
-  const MY_TELEGRAM_ID = 6787907623;
-  let lastUpdateId = 0;
-  let paymentSince = 0;   // faqat shu vaqtdan (Unix sek.) keyin kelgan xabarlar hisobga olinadi
-
-  // Xabardan haqiqiy URL (to'lov linki) ni ajratib olamiz.
-  // Oddiy matn yoki eski yozuv link sifatida qabul qilinmaydi.
-  function extractPaymentLink(text) {
-    const m = String(text || '').match(/https?:\/\/\S+/i);
-    return m ? m[0] : '';
-  }
-
-  // Telegram navbatidagi eski/o'qilmagan xabarlarni "tasdiqlab" tashlaymiz —
-  // shunda yangi to'lov uchun faqat so'rovdan KEYIN kelgan xabar hisobga olinadi.
-  async function drainBotUpdates() {
-    for (let i = 0; i < 6; i++) {
-      try {
-        const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=0`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        const data = await res.json();
-        if (!data.ok || !data.result || !data.result.length) break;
-        for (const upd of data.result) if (upd.update_id > lastUpdateId) lastUpdateId = upd.update_id;
-        if (data.result.length < 100) break;
-      } catch (_) { break; }
-    }
-  }
-
-  async function botSend(text) {
-    try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: MY_TELEGRAM_ID, text }),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch (_) {}
-  }
-
+  // To'lov boti — KASSA ICHIDA (bot.* obyekti, uzluksiz loop main process'da).
+  // Token kassada kiritiladi; operator telefon raqami orqali tasdiqlanadi.
+  // Bu yerda faqat renderer bilan bog'lovchi IPC handlerlari.
+  ipcMain.handle('payment:begin', () => {
+    bot.since = Math.floor(Date.now() / 1000);
+    bot.link = '';
+    return true;
+  });
+  // Fon loop ushlagan linkni qaytaradi (o'qilgach tozalaydi).
+  ipcMain.handle('payment:poll', () => {
+    if (bot.link) { const l = bot.link; bot.link = ''; return { ok: true, link: l }; }
+    return { ok: false };
+  });
+  // Tasdiqlangan operatorga xabar yuboradi (raqam tasdiqlanmagan bo'lsa — jim).
   ipcMain.handle('payment:sendmsg', async (_e, text) => {
-    await botSend(text);
+    await botNotifyOperator(text);
     return true;
   });
 
-  // Yangi to'lov boshlanishidan oldin: eski xabarlarni tozalab, "shu vaqtdan keyin"
-  // belgisini qo'yamiz. Shunda eski linkka QR generatsiya qilinmaydi.
-  // DIQQAT: bu yerda ALOHIDA to'lov boti (BOT_TOKEN, yuqorida) ishlatiladi —
-  // u serverning asosiy boti bilan to'qnashmaydi. Link to'g'ridan-to'g'ri shu
-  // bot orqali olinadi (server/ngrok kerak emas).
-  ipcMain.handle('payment:begin', async () => {
-    await drainBotUpdates();
-    paymentSince = Math.floor(Date.now() / 1000);
-    return true;
-  });
-
-  ipcMain.handle('payment:poll', async () => {
-    try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=10`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      const data = await res.json();
-      if (!data.ok || !data.result || !data.result.length) return { ok: false };
-      let link = '';
-      for (const upd of data.result) {
-        if (upd.update_id > lastUpdateId) lastUpdateId = upd.update_id;
-        const msg = upd.message || upd.channel_post || {};
-        // Faqat: o'zimdan + to'lov so'rovidan KEYIN kelgan + ichida haqiqiy URL bo'lgan xabar
-        if (msg.from && msg.from.id === MY_TELEGRAM_ID && msg.text
-            && msg.date && msg.date >= paymentSince) {
-          const cand = extractPaymentLink(msg.text);
-          if (cand) link = cand;
-        }
-      }
-      if (!link) return { ok: false };
-      return { ok: true, link };
-    } catch (e) {
-      return { ok: false, error: String(e.message || e) };
+  // ── Bot sozlamalari (token + operator raqami) ──────────────────────
+  ipcMain.handle('bot:get', () => botConfig());
+  ipcMain.handle('bot:setToken', async (_e, t) => {
+    store.setBotToken(t);
+    const me = await tg('getMe', {});
+    if (me && me.ok && me.result) {
+      bot.username = me.result.username || '';
+      botRestart();
+      return { ok: true, username: bot.username, config: botConfig() };
     }
+    return { ok: false, error: 'Token noto\'g\'ri yoki internet yo\'q', config: botConfig() };
+  });
+  ipcMain.handle('bot:setPhone', (_e, p) => {
+    store.setOperatorPhone(p);
+    pushState();
+    return { ok: true, config: botConfig() };
+  });
+  ipcMain.handle('bot:unbind', () => {
+    store.setOperator(0, '');
+    pushState();
+    return { ok: true, config: botConfig() };
   });
 
   // Yangilanish — Windows: electron-updater; macOS: o'zimizning updater (imzosiz)
@@ -544,9 +892,15 @@ function wireIpc() {
     pushState();
     return { ok: !!z, summary: z, state: snapshot() };
   });
-  ipcMain.handle('sale:updateQr', (_e, { local_id, qrLink }) => {
+  ipcMain.handle('sale:updateQr', (_e, { local_id, qrLink, qrLinks }) => {
     const s = store.data.sales.find((x) => x.local_id === local_id);
-    if (s) { s.qrLink = qrLink || ''; store.save(); }
+    if (s) {
+      const arr = Array.isArray(qrLinks) ? qrLinks.filter(Boolean)
+        : (qrLink ? [qrLink] : []);
+      s.qrLinks = arr;
+      s.qrLink = arr[0] || qrLink || '';   // birinchisi — orqaga moslik uchun
+      store.save();
+    }
     return true;
   });
 
@@ -567,6 +921,36 @@ function wireIpc() {
       try { await pullReceipts(); } catch (_) {}
     }
     return {
+      source: status.online ? 'server' : 'local',
+      sales: store.getReceiptsMerged(),
+    };
+  });
+
+  // Cheklar bo'limi uchun real-vaqt TO'LIQ sinxron — "🔄 Sinxron" tugmasi va
+  // avto-yangilanish chaqiradi. Serverni tekshiradi, yubormagan sotuvlarni
+  // jo'natadi, oxirgi 90 kunni qayta tortib barcha qurilmalar cheklarini
+  // birlashtiradi. {online, pulled, sales} qaytaradi.
+  ipcMain.handle('sales:resync', async () => {
+    let pulled = 0;
+    if (store.data.token) {
+      try {
+        const h = await api.health(store.data.serverUrl);
+        status.online = !!h.ok;
+        if (status.online) {
+          status.lastError = '';
+          await pushPendingSales();
+          const r = await pullReceipts({ full: true });
+          pulled = r.pulled || 0;
+          status.lastSync = new Date().toISOString();
+          pushState();
+        }
+      } catch (e) {
+        status.lastError = String(e.message || e);
+      }
+    }
+    return {
+      online: status.online,
+      pulled,
       source: status.online ? 'server' : 'local',
       sales: store.getReceiptsMerged(),
     };
@@ -746,10 +1130,26 @@ app.whenReady().then(() => {
   // Har 12 soniyada tirik tekshiruv + sinxron
   setInterval(tick, 12000);
   setTimeout(tick, 1500);
+  // To'lov boti loopini ishga tushiramiz (token bo'lmasa idle turadi)
+  botLoop();
+  // Allaqachon (offlayn) login bo'lib turgan bo'lsa — "ishga tushdi" xabari
+  setTimeout(() => botAnnounceStart().catch(() => {}), 2000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// Kassa yopilayotganda operatorga "yopildi" xabari (best-effort), so'ng chiqamiz
+let _quitNotified = false;
+app.on('before-quit', (e) => {
+  bot.stop = true;
+  if (_quitNotified || !store || !store.data.operatorTgId) return;
+  _quitNotified = true;
+  e.preventDefault();
+  botNotifyOperator(`🔴 Kassa yopildi · ${DEVICE} · Kassa-${store.data.kassaNo || 1}`)
+    .catch(() => {})
+    .finally(() => setTimeout(() => app.quit(), 250));
 });
 
 app.on('window-all-closed', () => {

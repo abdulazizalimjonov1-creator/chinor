@@ -33,10 +33,11 @@ async function req(base, path, opts = {}) {
 
 module.exports = {
   health: (base) => req(base, '/api/health', { timeout: 6000 }),
-  login: (base, login, password) =>
-    req(base, '/api/desktop/login', { method: 'POST', body: { login, password }, timeout: 15000 }),
-  catalog: (base, token) =>
-    req(base, '/api/sync/catalog', { token, timeout: 30000 }),
+  login: (base, login, password, deviceId = '') =>
+    req(base, '/api/desktop/login', { method: 'POST', body: { login, password, device_id: deviceId }, timeout: 15000 }),
+  catalog: (base, token, deviceId = '') =>
+    req(base, '/api/sync/catalog' + (deviceId ? ('?device_id=' + encodeURIComponent(deviceId)) : ''),
+      { token, timeout: 30000 }),
   pushSales: (base, token, sales) =>
     req(base, '/api/sync/sales', { method: 'POST', token, body: { sales }, timeout: 30000 }),
   recentSales: (base, token, since = '', limit = 1000) => {
@@ -45,4 +46,14 @@ module.exports = {
       : `limit=60`;
     return req(base, `/api/sync/recent-sales?${qs}`, { token, timeout: 30000 });
   },
+  // ── To'lov-link relay (server orqali — alohida to'lov boti) ──────────
+  // Yangi to'lov boshlanishi: server "shu vaqtdan keyin" belgisini qaytaradi.
+  paymentBegin: (base, token) =>
+    req(base, '/api/desktop/payment/begin', { method: 'POST', token, timeout: 12000 }),
+  // Linkni so'rash: server `since` dan keyin egadan kelgan oxirgi linkni qaytaradi.
+  paymentPoll: (base, token, since) =>
+    req(base, `/api/desktop/payment/poll?since=${encodeURIComponent(since || 0)}`, { token, timeout: 15000 }),
+  // Botga (egaga) xabar yuborish — server to'lov boti orqali jo'natadi.
+  paymentNotify: (base, token, text) =>
+    req(base, '/api/desktop/payment/notify', { method: 'POST', token, body: { text }, timeout: 12000 }),
 };
