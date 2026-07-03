@@ -7,6 +7,32 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 GLAVNIY_ADMIN_ID = int(os.getenv("GLAVNIY_ADMIN_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
+# ── Chek turlariga qarab maxsus kanallar (avtomatik post) ─────────────────
+# Bot SHU kanallarning har biriga admin bo'lishi shart. Chek turi aniqlanib,
+# tegishli kanalga avtomatik post tashlanadi. .env orqali o'zgartirsa bo'ladi.
+#   • CHANNEL_INTERNAL_ID   — «Chinor» ichki rasxod cheklari
+#   • CHANNEL_OUTOFSTOCK_ID — qolmagan (tugagan) tovarlar cheki
+#   • CHANNEL_SALES_ID      — hamma oddiy sotuvlar
+#   • CHANNEL_DRAFTS_ID     — qoralama (parked) cheklar
+CHANNEL_INTERNAL_ID   = os.getenv("CHANNEL_INTERNAL_ID",   "-1004464526447").strip()
+CHANNEL_OUTOFSTOCK_ID = os.getenv("CHANNEL_OUTOFSTOCK_ID", "-1004434424899").strip()
+CHANNEL_SALES_ID      = os.getenv("CHANNEL_SALES_ID",      "-1004476274146").strip()
+CHANNEL_DRAFTS_ID     = os.getenv("CHANNEL_DRAFTS_ID",     "-1004451962859").strip()
+
+# ── To'lov-link boti (kassa QR to'lovi uchun) ─────────────────────────────
+# Kassa "QR to'lov" bosilganda egaga (PAYMENT_OWNER_IDS) xabar boradi; ega
+# to'lov linkini SHU botga yuboradi, server uni ushlab kassaga uzatadi.
+# ASOSIY botdan ALOHIDA token bo'lishi shart (getUpdates to'qnashmasligi uchun).
+# Bo'sh qoldirilsa — QR to'lov funksiyasi o'chiq (kassa chekni QR'siz chop etadi).
+PAYMENT_BOT_TOKEN = os.getenv("PAYMENT_BOT_TOKEN", "").strip()
+# Linkni kim yuborishi mumkin (vergul bilan, Telegram ID lar). Bo'sh bo'lsa —
+# GLAVNIY_ADMIN_ID ishlatiladi. Eski kassa qotirgan ID ham standart qo'shiladi.
+_pay_owners_env = os.getenv("PAYMENT_OWNER_IDS", "").strip()
+if _pay_owners_env:
+    PAYMENT_OWNER_IDS = [int(x) for x in _pay_owners_env.replace(" ", "").split(",") if x]
+else:
+    PAYMENT_OWNER_IDS = [i for i in (GLAVNIY_ADMIN_ID, 6787907623) if i]
+
 # Past qoldiq ostonasi — bu sondan kam (yoki teng) qolgan tovarlar uchun
 # avtomatik admin(lar)ga ogohlantirish yuboriladi.
 # Standart 0 — faqat tovar TUGAGANDA xabar keladi.

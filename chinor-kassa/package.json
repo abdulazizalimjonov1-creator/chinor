@@ -1,6 +1,6 @@
 {
   "name": "chinor-kassa",
-  "version": "1.7.1",
+  "version": "1.7.4",
   "description": "Chinor offline kassa — Windows desktop POS (Electron)",
   "main": "main.js",
   "author": "Chinor",

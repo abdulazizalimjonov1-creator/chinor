@@ -52,4 +52,12 @@ def make_low_stock_handler(bot: Bot):
             f"{tail}"
         )
         await notify_admins(bot, text)
+        # Tovar butunlay tugagan bo'lsa — «qolmagan tovarlar» kanaliga ham chek tashlaymiz.
+        if qty <= 0:
+            try:
+                from bot.config import CHANNEL_OUTOFSTOCK_ID
+                from database._formatters import _fmt_out_of_stock
+                await db._post_to(CHANNEL_OUTOFSTOCK_ID, _fmt_out_of_stock(p))
+            except Exception as e:
+                print(f"[Tugagan tovar kanal post xato] {e}")
     return handler

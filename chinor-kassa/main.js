@@ -639,6 +639,12 @@ function wireIpc() {
   ipcMain.handle('drafts:save', (_e, draft) => {
     const d = store.saveDraft(draft || {});
     pushState();
+    // Serverdagi «qoralama cheklar» kanaliga ham yuboramiz (onlayn bo'lsa,
+    // best-effort — xato bo'lsa qoralama lokal saqlanaveradi).
+    if (store.data.token) {
+      api.draftPost(store.data.serverUrl, store.data.token, d)
+        .catch((e) => console.warn('[draftPost] xato:', e && e.message));
+    }
     return d;
   });
   ipcMain.handle('drafts:remove', (_e, id) => {

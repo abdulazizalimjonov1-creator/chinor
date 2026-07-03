@@ -11,11 +11,52 @@ from database._helpers import (
 )
 from database._formatters import (
     _fmt_product, _fmt_client, _fmt_order, _fmt_sale, _fmt_payment, _fmt_admin,
-    _fmt_client_receipt, _fmt_cash_movement,
+    _fmt_client_receipt, _fmt_cash_movement, _fmt_internal_expense,
 )
 
 
 class SalesMixin:
+    # ── Kassa terminallari (offline) ──────────────────────────────────────────
+    async def assign_kassa_no(self, device_id: str, name: str = "") -> int:
+        """Qurilmaga (device_id) DOIMIY noyob kassa raqamini biriktiradi.
+        Tanish qurilma — o'sha raqamni qaytaradi; yangi qurilma — mavjud
+        eng katta raqam + 1 (birinchisi 1). Shu raqam chek prefiksi bo'ladi
+        ("<kassa_no>-<seq>"), shunda terminallar raqamlari to'qnashmaydi.
+        device_id bo'sh bo'lsa 0 qaytaradi (kassa eski default 1 da qoladi)."""
+        device_id = (device_id or "").strip()[:64]
+        if not device_id:
+            return 0
+        name = (name or "").strip()[:80]
+        with self._lock:
+            conn = self._conn()
+            try:
+                row = conn.execute(
+                    "SELECT kassa_no FROM kassa_devices WHERE device_id=?",
+                    (device_id,)
+                ).fetchone()
+                if row:
+                    conn.execute(
+                        "UPDATE kassa_devices SET last_seen=?, "
+                        "name=CASE WHEN ?<>'' THEN ? ELSE name END WHERE device_id=?",
+                        (_now(), name, name, device_id)
+                    )
+                    conn.commit()
+                    return int(row[0])
+                mx = conn.execute(
+                    "SELECT MAX(kassa_no) FROM kassa_devices"
+                ).fetchone()[0]
+                next_no = (int(mx) if mx else 0) + 1
+                conn.execute(
+                    "INSERT INTO kassa_devices"
+                    "(device_id, kassa_no, name, created_at, last_seen) "
+                    "VALUES(?,?,?,?,?)",
+                    (device_id, next_no, name, _now(), _now())
+                )
+                conn.commit()
+                return next_no
+            finally:
+                conn.close()
+
     # ── Sotuv (kassa) ────────────────────────────────────────────────────────
     async def create_sale(self, cashier_id: int, cashier_name: str,
                           items: list,
@@ -24,6 +65,7 @@ class SalesMixin:
                           paid_other: float = 0, paid_other_usd: float = 0,
                           paid_currency: str = "sum",
                           client_id: int = 0, is_nasiya: bool = False,
+                          debt_sum: float = 0, debt_usd: float = 0,
                           override_total_usd: float = 0,
                           override_total_sum: float = 0,
                           created_at: str = "",
@@ -36,6 +78,10 @@ class SalesMixin:
                           Faqat birini bersangiz, ikkinchisi joriy kurs bo'yicha hisoblanadi.
         paid_*_usd — agar to'lov USDda qabul qilingan bo'lsa, USD qiymati bilan birga keladi.
         paid_currency — 'sum' yoki 'usd' (sotuv qaysi valyutada amalga oshganini belgilaydi).
+        debt_sum/debt_usd — split (aralash) to'lovda QARZGA yoziladigan qism: to'langan
+                            paid_* qism olinadi, qolgani mijoz qarziga qo'shiladi (to'liq
+                            is_nasiya dan farqli — bu yerda pul ham olinadi). Faqat
+                            client_id bo'lsa ishlaydi.
         created_at — offline kassadan kelgan sotuvlar uchun asl vaqtni saqlash
                      (bo'sh bo'lsa hozirgi vaqt olinadi).
         is_internal — «Chinor» (do'konning o'zi) uchun ichki rasxod: tovar
@@ -70,6 +116,7 @@ class SalesMixin:
             sale_items.append({
                 "product_id": it["product_id"],
                 "name": name,
+                "barcode": (p.get("barcode", "") if p else "") or "",
                 "qty": it["qty"],
                 "unit": unit,
                 "price": price_sum,
@@ -130,6 +177,16 @@ class SalesMixin:
                 paid_other_usd = round(sum_to_usd(paid_other, rate), 4)
             paid_total = paid_cash + paid_card + paid_other
             paid_total_usd = paid_cash_usd + paid_card_usd + paid_other_usd
+            # Qisman qarz (split aralash to'lov): to'langan qism yuqorida paid_* ga
+            # yozildi, qolgan qism mijoz qarziga qo'shiladi. To'liq is_nasiya dan
+            # farqli — bu yerda sotuvda pul ham olinadi (paid_total > 0).
+            if (debt_sum or debt_usd) and client_id:
+                if debt_usd and not debt_sum:
+                    debt_sum = round(usd_to_sum(debt_usd, rate), 2)
+                elif debt_sum and not debt_usd:
+                    debt_usd = round(sum_to_usd(debt_sum, rate), 4)
+                await self.add_debt(client_id, amount_sum=debt_sum,
+                                    amount_usd=debt_usd)
 
         if paid_currency not in ("sum", "usd"):
             paid_currency = "sum"
@@ -206,6 +263,17 @@ class SalesMixin:
                     conn.commit()
                 finally:
                     conn.close()
+        # ── Chek turiga qarab maxsus kanalga avtomatik post ──────────────────
+        # is_internal → ichki rasxod kanali; aks holda → oddiy sotuvlar kanali.
+        # (Qaytarish/return alohida create_return da, bu yerda emas.)
+        try:
+            from bot.config import CHANNEL_INTERNAL_ID, CHANNEL_SALES_ID
+            if is_internal:
+                await self._post_to(CHANNEL_INTERNAL_ID, _fmt_internal_expense(data))
+            else:
+                await self._post_to(CHANNEL_SALES_ID, _fmt_sale(data))
+        except Exception as e:
+            print(f"[Sotuv kanal post xato] {e}")
         # Mijoz nomiga sotuv bo'lsa — unga Telegram orqali elektron chek yuboramiz.
         # «Chinor» ichki rasxodi bundan mustasno (chek mijozga ketmaydi).
         if client_id and not is_internal:

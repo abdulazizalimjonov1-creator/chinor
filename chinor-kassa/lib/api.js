@@ -56,4 +56,7 @@ module.exports = {
   // Botga (egaga) xabar yuborish — server to'lov boti orqali jo'natadi.
   paymentNotify: (base, token, text) =>
     req(base, '/api/desktop/payment/notify', { method: 'POST', token, body: { text }, timeout: 12000 }),
+  // Qoralama (parked) chek — server uni «qoralama cheklar» kanaliga post qiladi.
+  draftPost: (base, token, draft) =>
+    req(base, '/api/desktop/draft-post', { method: 'POST', token, body: { draft }, timeout: 10000 }),
 };

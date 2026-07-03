@@ -261,6 +261,9 @@ class Store {
     this.data.draftSeq = (this.data.draftSeq || 0) + 1;
     const d = {
       id: this.data.draftSeq,
+      // Chek raqami — kassa raqami bilan: "1-Q3" (Q = qoralama). Kanaldagi
+      // qoralama postida ko'rinadi, oddiy cheklar bilan to'qnashmaydi.
+      no: `${this.data.kassaNo || 1}-Q${this.data.draftSeq}`,
       items: items || [],
       client: client || null,
       created_at: nowTashkent(),

@@ -194,6 +194,18 @@ class BaseDB:
         for col, ddl in sale_new_cols:
             if col not in sale_cols:
                 conn.execute(f"ALTER TABLE sales ADD COLUMN {col} {ddl}")
+        # kassa_devices — har bir offline kassa terminaliga DOIMIY noyob kassa
+        # raqami biriktiriladi (chek raqami prefiksi: "<kassa_no>-<seq>"). Shunda
+        # turli terminallar chek raqamlari to'qnashmaydi va qurilmalararo sinxron
+        # to'g'ri ishlaydi. device_id — kassa o'zi yaratadigan barqaror UUID.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS kassa_devices ("
+            " device_id  TEXT PRIMARY KEY,"
+            " kassa_no   INTEGER UNIQUE,"
+            " name       TEXT DEFAULT '',"
+            " created_at TEXT,"
+            " last_seen  TEXT)"
+        )
         # payments USD ustunlari
         pay_cols = {r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()}
         for col, ddl in [
@@ -316,8 +328,24 @@ class BaseDB:
     # rasm yuboruvchi `_send_photo` esa odatdagidek ishlaydi.
 
     async def _send(self, text: str) -> int:
-        # Matn-only postlar kanalga yuborilmaydi (faqat rasmli mahsulotlar)
+        # Matn-only postlar asosiy kanalga yuborilmaydi (faqat rasmli mahsulotlar)
         return 0
+
+    async def _post_to(self, chat_id: str, text: str) -> int:
+        """Berilgan kanal/chatga matnli (HTML) post yuboradi. Xatoda 0 qaytaradi.
+        Chek turlariga ajratilgan maxsus kanallar uchun — ichki rasxod, oddiy
+        sotuv, tugagan tovar, qoralama. Bot o'sha kanalga admin bo'lishi shart."""
+        if not self._bot or not chat_id:
+            return 0
+        try:
+            msg = await self._bot.send_message(
+                chat_id, text, parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+            return msg.message_id
+        except Exception as e:
+            print(f"[Kanal post xato] {chat_id}: {e}")
+            return 0
 
     def _buy_markup(self, product_id: int) -> Optional[InlineKeyboardMarkup]:
         """Kanal postining ostida 'Sotib olish' tugmasi (bot deep-link).

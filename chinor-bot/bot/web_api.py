@@ -35,6 +35,7 @@ from bot.auth import (
     LoginAttemptTracker,
 )
 from bot.config import BOT_TOKEN, CORS_ALLOW_ORIGIN, GLAVNIY_ADMIN_ID, CHANNEL_ID
+from bot import payment_relay
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +269,9 @@ def _create_session(auth: dict, ttl: float = _SESSION_TTL) -> str:
     return token
 
 def _check_session(token: str) -> dict | None:
-    """Token haqiqiy va muddati o'tmagan bo'lsa auth dict qaytaradi."""
+    """Token haqiqiy va muddati o'tmagan bo'lsa auth dict qaytaradi.
+    Desktop (kassa) sessiyalari SLIDING — har ishlatilganda muddati 30 kunga
+    uzayadi, shunda kassa muntazam ishlatilsa qayta kirish kerak bo'lmaydi."""
     if not token:
         return None
     conn = _sess_db()
@@ -282,7 +285,15 @@ def _check_session(token: str) -> dict | None:
             conn.execute("DELETE FROM web_sessions WHERE token=?", (token,))
             conn.commit()
             return None
-        return _json.loads(row["data"])
+        data = _json.loads(row["data"])
+        # Desktop sessiya — muddatni sirpanuvchi qilib uzaytiramiz. Har so'rovda
+        # emas (kassa har 12s so'rov yuboradi), faqat farq 1 soatdan oshsa yozamiz.
+        if data.get("desktop"):
+            new_exp = time.time() + _DESKTOP_SESSION_TTL
+            if new_exp - row["expires"] > 3600:
+                conn.execute("UPDATE web_sessions SET expires=? WHERE token=?", (new_exp, token))
+                conn.commit()
+        return data
     finally:
         conn.close()
 
@@ -1043,6 +1054,12 @@ def _purch_db() -> sqlite3.Connection:
         items_json    TEXT    DEFAULT '[]',
         source        TEXT    DEFAULT ''
     )""")
+    # Migratsiya: eski jadvalga yetkazib beruvchi ustunlarini qo'shamiz
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(purchases)")}
+    if "supplier_id" not in cols:
+        conn.execute("ALTER TABLE purchases ADD COLUMN supplier_id INTEGER DEFAULT 0")
+    if "supplier_name" not in cols:
+        conn.execute("ALTER TABLE purchases ADD COLUMN supplier_name TEXT DEFAULT ''")
     conn.commit()
     return conn
 
@@ -1062,6 +1079,15 @@ async def api_prixod_save(request: web.Request):
         return _err("Bo'sh hujjat — kamida bitta tovar kerak")
     note = (body.get("note") or "").strip()
     source = (body.get("source") or "").strip()
+    # Prixod doim yetkazib beruvchidan bo'ladi — talab qilamiz, qabul qilingan
+    # har bir tovarga shu yetkazib beruvchini biriktiramiz.
+    supplier_id = int(body.get("supplier_id") or 0)
+    if not supplier_id:
+        return _err("Yetkazib beruvchini tanlang")
+    supplier = await _db.get_supplier(supplier_id)
+    if not supplier:
+        return _err("Yetkazib beruvchi topilmadi", 404)
+    supplier_name = supplier.get("name", "") or ""
     rate = _db.get_usd_rate()
 
     saved, errs = [], []
@@ -1079,7 +1105,8 @@ async def api_prixod_save(request: web.Request):
             cost = _to_float(ln.get("cost"))
             sell = _to_float(ln.get("sell"))
             whs = _to_float(ln.get("wholesale"))
-            upd = {}
+            # Yetkazib beruvchini har qabul qilingan tovarga biriktiramiz
+            upd = {"supplier_id": supplier_id}
             if cost > 0:
                 upd["cost_price_usd"] = round(sum_to_usd(cost, rate), 4)
             if sell > 0:
@@ -1109,10 +1136,12 @@ async def api_prixod_save(request: web.Request):
     try:
         cur = conn.execute(
             "INSERT INTO purchases(created_at, employee_name, note, item_count, "
-            "total_qty, total_cost, total_sell, items_json, source) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "total_qty, total_cost, total_sell, items_json, source, "
+            "supplier_id, supplier_name) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (created_at, emp, note, len(saved), total_qty, total_cost, total_sell,
-             _json.dumps(saved, ensure_ascii=False), source)
+             _json.dumps(saved, ensure_ascii=False), source,
+             supplier_id, supplier_name)
         )
         conn.commit()
         new_id = cur.lastrowid
@@ -1682,7 +1711,7 @@ async def api_sale(request: web.Request):
 # Windows kassa ilovasi internetsiz ishlaydi, internet kelganda shu
 # endpoint'lar orqali sotuvlarni serverga yuboradi va katalogni yangilaydi.
 
-_DESKTOP_SESSION_TTL = 24 * 3600  # 24 soat — kassa kun bo'yi ochiq turadi
+_DESKTOP_SESSION_TTL = 30 * 24 * 3600  # 30 kun, sliding — kassa muntazam ishlatilsa qayta kirish kerak emas
 
 
 @ROUTES.post("/api/desktop/login")
@@ -1715,15 +1744,106 @@ async def api_desktop_login(request: web.Request):
         "is_glavniy": (tg_id == GLAVNIY_ADMIN_ID), "desktop": True,
     }
     token = _create_session(auth_info, ttl=_DESKTOP_SESSION_TTL)
+    cashier_name = user.get("full_name") or user.get("username") or login_in
+    # Bu terminalga (device_id) DOIMIY noyob kassa raqamini biriktiramiz —
+    # chek raqami prefiksi shu raqam bo'ladi ("<kassa_no>-<seq>"), shunda turli
+    # terminallar chek raqamlari to'qnashmaydi va qurilmalararo sinxron buzilmaydi.
+    device_id = (body.get("device_id") or "").strip()
+    kassa_no = 0
+    if device_id:
+        try:
+            kassa_no = await _db.assign_kassa_no(device_id, name=cashier_name)
+        except Exception as e:
+            logger.warning(f"[desktop/login] kassa_no biriktirish xato: {e}")
     return web.json_response({
         "ok": True,
         "session_token": token,
         "cashier": {
             "id": tg_id,
-            "name": user.get("full_name") or user.get("username") or login_in,
+            "name": cashier_name,
         },
+        "kassa_no": kassa_no,
         "usd_rate": _db.get_usd_rate(),
     })
+
+
+async def _desktop_auth(request: web.Request):
+    """Kassa (desktop) session'ini tekshiradi. Auth bo'lsa dict, bo'lmasa None."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth.get("role") != "admin":
+        return None
+    return auth
+
+
+@ROUTES.post("/api/desktop/payment/begin")
+async def api_payment_begin(request: web.Request):
+    """Kassa QR to'lovni boshlaydi. Server "shu vaqtdan keyin" belgisini (since)
+    qaytaradi — keyin shu paytdan KEYIN kelgan link hisobga olinadi."""
+    if await _desktop_auth(request) is None:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not payment_relay.is_enabled():
+        return web.json_response({"ok": False, "error": "QR to'lov sozlanmagan"})
+    return web.json_response({"ok": True, "since": payment_relay.begin()})
+
+
+@ROUTES.get("/api/desktop/payment/poll")
+async def api_payment_poll(request: web.Request):
+    """`since` dan keyin egadan kelgan to'lov linki bo'lsa qaytaradi."""
+    if await _desktop_auth(request) is None:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        since = float(request.query.get("since", "0") or 0)
+    except (TypeError, ValueError):
+        since = 0.0
+    link = payment_relay.get_link(since)
+    if link:
+        return web.json_response({"ok": True, "link": link})
+    return web.json_response({"ok": False})
+
+
+@ROUTES.post("/api/desktop/payment/notify")
+async def api_payment_notify(request: web.Request):
+    """Kassadan egaga to'lov boti orqali xabar yuboradi (link so'rovi va h.k.)."""
+    if await _desktop_auth(request) is None:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    text = (body.get("text") or "").strip()
+    if not text:
+        return _err("Matn bo'sh")
+    await payment_relay.send_message(text)
+    return web.json_response({"ok": True})
+
+
+@ROUTES.post("/api/desktop/draft-post")
+async def api_desktop_draft_post(request: web.Request):
+    """Kassada qoralama (parked) chek saqlanganda — uni «qoralama cheklar»
+    kanaliga post qiladi. Body: {draft: {id, items[], client, created_at}}.
+    items — [{name, qty, price_sum, unit}]. Best-effort: kassa onlayn bo'lsa
+    chaqiradi, xato bo'lsa kassa savdoni baribir davom ettiradi."""
+    from database.channel_db import db as _db
+    from database._formatters import _fmt_draft
+    from bot.config import CHANNEL_DRAFTS_ID
+
+    auth = await _desktop_auth(request)
+    if auth is None:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    body = await _read_json(request)
+    draft = body.get("draft") or {}
+    if not isinstance(draft, dict) or not draft.get("items"):
+        return _err("Qoralama bo'sh")
+
+    # Kassir nomini session'dan to'ldiramiz (kassa yubormagan bo'lsa).
+    if not draft.get("cashier_name"):
+        draft["cashier_name"] = auth["user"].get("full_name") or "Kassa"
+
+    try:
+        await _db._post_to(CHANNEL_DRAFTS_ID, _fmt_draft(draft))
+    except Exception as e:
+        logger.warning(f"[draft-post] kanal post xato: {e}")
+        return web.json_response({"ok": False, "error": str(e)})
+    return web.json_response({"ok": True})
 
 
 @ROUTES.get("/api/sync/catalog")
@@ -1733,6 +1853,18 @@ async def api_sync_catalog(request: web.Request):
     auth = await _authenticate(request, _db)
     if not auth or auth["role"] != "admin":
         return _err("Avtorizatsiya talab qilinadi", 401)
+
+    # Bu terminalga (device_id) noyob kassa raqamini biriktiramiz — login'dan
+    # tashqari HAR sinxronda ham, shunda qurilma qayta login qilmasa ham raqamni
+    # avtomatik oladi (chek prefiksi "<kassa_no>-<seq>", terminallar to'qnashmaydi).
+    device_id = (request.query.get("device_id") or "").strip()
+    kassa_no = 0
+    if device_id:
+        try:
+            kassa_no = await _db.assign_kassa_no(
+                device_id, name=(auth["user"].get("full_name") or ""))
+        except Exception as e:
+            logger.warning(f"[sync/catalog] kassa_no biriktirish xato: {e}")
 
     prods = await _db.get_all_products(active_only=True)
     out = []
@@ -1771,6 +1903,7 @@ async def api_sync_catalog(request: web.Request):
         "products": out,
         "count": len(out),
         "clients": clients,
+        "kassa_no": kassa_no,
     })
 
 
@@ -1800,8 +1933,22 @@ async def api_sync_sales(request: web.Request):
         try:
             items_in = s.get("items") or []
             payment = (s.get("payment") or "cash").lower()
-            if payment not in ("cash", "card", "click", "other"):
+            if payment not in ("cash", "card", "click", "other", "split"):
                 payment = "cash"
+
+            # Split (aralash) to'lov — kassa har turdagi summani alohida yuboradi:
+            # paid_cash + paid_card + paid_other (click) + debt_sum (qarz qismi).
+            def _num(v):
+                try:
+                    return max(0.0, float(v or 0))
+                except (TypeError, ValueError):
+                    return 0.0
+            split_cash = _num(s.get("paid_cash"))
+            split_card = _num(s.get("paid_card"))
+            split_other = _num(s.get("paid_other"))
+            split_debt = _num(s.get("debt_sum"))
+            is_split = (payment == "split") or \
+                (split_cash + split_card + split_other + split_debt) > 0
             try:
                 client_id = int(s.get("client_id") or 0)
             except (TypeError, ValueError):
@@ -1888,6 +2035,16 @@ async def api_sync_sales(request: web.Request):
             if is_internal:
                 kw = {"is_internal": True}
                 override_sum = 0  # ichki rasxod — tannarx bo'yicha, chegirmasiz
+            elif is_split:
+                # Aralash to'lov: har qism o'z paid_* ustuniga; qarz qismi
+                # (faqat mijoz bo'lsa) qisman qarzga yoziladi.
+                kw = {
+                    "paid_cash": split_cash,
+                    "paid_card": split_card,
+                    "paid_other": split_other,
+                }
+                if split_debt > 0 and client_id:
+                    kw["debt_sum"] = split_debt
             elif is_nasiya:
                 kw = {"is_nasiya": True}
             else:

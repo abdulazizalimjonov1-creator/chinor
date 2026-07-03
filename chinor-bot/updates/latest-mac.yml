@@ -1,8 +1,8 @@
-version: 1.2.3
+version: 1.7.4
 files:
-  - url: ChinorKassa-mac-1.2.3.zip
-    sha512: NwZRcJOckxS7V8HoA57CXTwKw8HV1to6XhH9VjjlitjxCE+NdXmvIMz5khQkjGt2+oV9ZhSPnzjYE4Khg/SBGg==
-    size: 94460574
-path: ChinorKassa-mac-1.2.3.zip
-sha512: NwZRcJOckxS7V8HoA57CXTwKw8HV1to6XhH9VjjlitjxCE+NdXmvIMz5khQkjGt2+oV9ZhSPnzjYE4Khg/SBGg==
-releaseDate: '2026-06-19T10:14:21.408Z'
+  - url: ChinorKassa-mac-1.7.4.zip
+    sha512: by98sAdrd2KRk/s+Xn0rL067NEgT1vs5eW9bKW51UOj0+SgqqR2XA6wEdUqJJkObeVfdtwRTZThwFbJqYlAsvw==
+    size: 93793874
+path: ChinorKassa-mac-1.7.4.zip
+sha512: by98sAdrd2KRk/s+Xn0rL067NEgT1vs5eW9bKW51UOj0+SgqqR2XA6wEdUqJJkObeVfdtwRTZThwFbJqYlAsvw==
+releaseDate: '2026-07-01T22:23:34.217Z'

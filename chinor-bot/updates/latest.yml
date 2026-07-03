@@ -1,8 +1,8 @@
-version: 1.2.3
+version: 1.7.4
 files:
-  - url: ChinorKassa-Setup-1.2.3.exe
-    sha512: 6QpRHEKk+qdIisAMxQIET2X5/4McvgRyLVKQla02BeInF+AVosEYz6oSokhMmKFH4/tW2BBV9S3cqKwqIyCZdw==
-    size: 80128735
-path: ChinorKassa-Setup-1.2.3.exe
-sha512: 6QpRHEKk+qdIisAMxQIET2X5/4McvgRyLVKQla02BeInF+AVosEYz6oSokhMmKFH4/tW2BBV9S3cqKwqIyCZdw==
-releaseDate: '2026-06-19T10:14:56.450Z'
+  - url: ChinorKassa-Setup-1.7.4.exe
+    sha512: cHptDBktyQ5xBffAfaIn8Yuc9Fh9su1YoGpv7fLFEOOmnGbdfXCm8Bquxu2AMy7zwyRnPyPLxoAfHcpydiIuPQ==
+    size: 79388853
+path: ChinorKassa-Setup-1.7.4.exe
+sha512: cHptDBktyQ5xBffAfaIn8Yuc9Fh9su1YoGpv7fLFEOOmnGbdfXCm8Bquxu2AMy7zwyRnPyPLxoAfHcpydiIuPQ==
+releaseDate: '2026-07-01T22:24:10.318Z'

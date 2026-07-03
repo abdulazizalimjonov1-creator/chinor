@@ -353,8 +353,9 @@ async function renderRcList() {
       const cnt = (d.items || []).reduce((a, it) => a + it.qty, 0);
       const tot = (d.items || []).reduce((a, it) => a + it.price_sum * it.qty, 0);
       const cl = d.client ? ' · ' + escapeHtml(d.client.name) : '';
+      const dno = draftNo(d);
       return `<div class="rc-row ${rcSelKey === 'd' + i ? 'active' : ''}" data-i="${i}">
-        <div class="rc-row-top"><span class="rc-row-time">${time}</span><span class="rc-row-total">${nf(tot)}</span></div>
+        <div class="rc-row-top"><span class="rc-row-time">${dno ? '№' + escapeHtml(dno) + ' · ' : ''}${time}</span><span class="rc-row-total">${nf(tot)}</span></div>
         <div class="rc-row-sub"><span class="rc-pay">Qoralama</span><span>${cnt} dona${cl}</span></div>
       </div>`;
     }).join('');
@@ -541,6 +542,8 @@ function buildReceiptHtml(s) {
     if (splitObj.debt) lines.push(['🤝 Qarz', splitObj.debt]);
     payBlock = `<div class="pay"><span>To'lov</span><span>🔀 Aralash</span></div>`
       + lines.map(([l, v]) => `<div class="pay paysub"><span>${l}</span><span>${nf(v)}</span></div>`).join('');
+  } else if (s.isPrecheck) {
+    payBlock = '';
   } else {
     payBlock = `<div class="pay"><span>To'lov</span><span>${payLabel(s.payment)}</span></div>`;
   }
@@ -587,10 +590,11 @@ function buildReceiptHtml(s) {
     .thanks{text-align:center;margin-top:8px;font-size:20px;font-weight:900}
   </style></head><body>
     ${LOGO ? `<img class="logo" src="${LOGO}">` : '<div class="c" style="font-size:34px;font-weight:900;letter-spacing:2px">CHINOR</div>'}
+    ${s.isPrecheck ? '<div class="c" style="font-size:22px;font-weight:900;margin-top:2px">*** PRECHEK ***</div><div class="c" style="font-size:14px">(SOTUV EMAS — NAMUNA)</div>' : ''}
     <div class="phone">${SHOP_PHONE}</div>
     <div class="addr">${SHOP_ADDR}</div>
     <hr>
-    <div class="hrow"><span>Chek №: ${s.receipt_no || s.id || ''}</span><span>${date}</span></div>
+    <div class="hrow"><span>${s.isPrecheck ? 'PRECHEK' : ('Chek №: ' + (s.receipt_no || s.id || ''))}</span><span>${date}</span></div>
     <div class="hrow"><span>Kassa-${kassaNo}</span><span>${time}</span></div>
     ${s.cashier_name ? `<div class="hrow"><span>Sotuvchi:</span><span>${escapeHtml(s.cashier_name)}</span></div>` : ''}
     ${s.client_name ? `<div class="hrow"><span>Klient:</span><span>${escapeHtml(s.client_name)}</span></div>` : ''}
@@ -603,7 +607,7 @@ function buildReceiptHtml(s) {
     ${payBlock}
     ${qrBlock}
     <hr class="dash">
-    <div class="thanks">Haridingiz uchun rahmat!</div>
+    <div class="thanks">${s.isPrecheck ? 'BU — PRECHEK (NAMUNA)<br><span style="font-size:14px;font-weight:600">Tovarlar sotilmadi</span>' : 'Haridingiz uchun rahmat!'}</div>
   </body></html>`;
 }
 // ── macOS chek "model"i (matnli ESC/POS uchun) ─────────────────────────────
@@ -634,12 +638,18 @@ function buildReceiptModel(s) {
   const date = (s.created_at || '').slice(0, 10).split('-').reverse().join('.');
   const time = (s.created_at || '').slice(11, 16);
   const kassaNo = s.receipt_no ? String(s.receipt_no).split('-')[0] : ((window._lastState && window._lastState.kassaNo) || 1);
+  const pre = !!s.isPrecheck;
   const L = [];
   L.push({ t: 'image', src: 'logo' });   // chek tepasida Chinor logosi (doirasiz)
+  // «Chinor» tagida PRECHEK belgisi — bu urib yuborilgan sotuv EMAS, faqat namuna.
+  if (pre) {
+    L.push({ t: 'text', s: '*** PRECHEK ***', align: 'center', bold: true });
+    L.push({ t: 'text', s: '(SOTUV EMAS — NAMUNA)', align: 'center' });
+  }
   L.push({ t: 'text', s: SHOP_PHONE, align: 'center', bold: true });
   L.push({ t: 'text', s: SHOP_ADDR, align: 'center' });
   L.push({ t: 'sep', ch: '=' });
-  L.push({ t: 'row', l: 'Chek #: ' + (s.receipt_no || s.id || ''), r: date });
+  L.push({ t: 'row', l: pre ? 'PRECHEK' : ('Chek #: ' + (s.receipt_no || s.id || '')), r: date });
   L.push({ t: 'row', l: 'Kassa-' + kassaNo, r: time });
   if (s.cashier_name) L.push({ t: 'row', l: 'Sotuvchi:', r: s.cashier_name });
   if (s.client_name) L.push({ t: 'row', l: 'Klient:', r: s.client_name });
@@ -673,7 +683,7 @@ function buildReceiptModel(s) {
     if (sp.card) L.push({ t: 'row', l: '  Karta', r: nf(sp.card) });
     if (sp.click) L.push({ t: 'row', l: '  Click', r: nf(sp.click) });
     if (sp.debt) L.push({ t: 'row', l: '  Qarz', r: nf(sp.debt) });
-  } else {
+  } else if (!pre) {
     L.push({ t: 'row', l: "To'lov", r: payLabelEsc(s.payment) });
   }
   // QR(lar) — bitta (oddiy) yoki bir nechta (split onlayn qismlari: karta, click)
@@ -689,7 +699,12 @@ function buildReceiptModel(s) {
     L.push({ t: 'qr', data: lnk });
   });
   L.push({ t: 'sep', ch: '-' });
-  L.push({ t: 'text', s: 'Haridingiz uchun rahmat!', align: 'center', bold: true });
+  if (pre) {
+    L.push({ t: 'text', s: 'BU — PRECHEK (NAMUNA)', align: 'center', bold: true });
+    L.push({ t: 'text', s: 'Tovarlar sotilmadi', align: 'center' });
+  } else {
+    L.push({ t: 'text', s: 'Haridingiz uchun rahmat!', align: 'center', bold: true });
+  }
   L.push({ t: 'feed', n: 3 });
   L.push({ t: 'cut' });
   return { lines: L };
@@ -734,11 +749,20 @@ async function loadPrinters() {
     printers.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.display)}${p.isDefault ? ' (standart)' : ''}</option>`).join('');
   sel.value = current || '';
 }
+// Qoralama chek raqami — kassa yozgan `no` (mas. "1-Q3"), eski qoralamalar uchun
+// (no yo'q) id dan tuziladi.
+function draftNo(d) {
+  if (!d) return '';
+  if (d.no) return String(d.no);
+  const kn = (window._lastState && window._lastState.kassaNo) || 1;
+  return d.id ? `${kn}-Q${d.id}` : '';
+}
 function renderDraftDetail(d) {
   if (!d) return;
   const subtotal = (d.items || []).reduce((a, it) => a + it.price_sum * it.qty, 0);
+  const dno = draftNo(d);
   $('rcDetail').innerHTML = `
-    <div class="rc-d-head"><span class="rc-d-title">Qoralama</span></div>
+    <div class="rc-d-head"><span class="rc-d-title">Qoralama${dno ? ' №' + escapeHtml(dno) : ''}</span></div>
     <div class="rc-d-meta">
       <span>Vaqt: <b>${escapeHtml(d.created_at || '')}</b></span>
       ${d.client ? `<span>Klient: <b>${escapeHtml(d.client.name)}</b></span>` : ''}
@@ -753,6 +777,47 @@ function renderDraftDetail(d) {
     <button class="rc-resume" id="rcResumeBtn">Davom etish (savatga yuklash)</button>`;
   $('rcResumeBtn').addEventListener('click', () => resumeDraft(d.id));
 }
+// ── Prechek (namuna chek) — sotuv YOZMASDAN, savatdagi tovarlarni qog'ozga
+// bosib chiqaradi. "Chek №N" yorlig'ini 2s bosib turilganda chaqiriladi.
+function _localReceiptTime() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+async function printPrecheck(items, client, override) {
+  items = (items && items.length) ? items : CART;
+  if (!items.length) { toast('Savat bo\'sh — prechek yo\'q', true); return; }
+  if (!LOGO) { try { LOGO = await window.kassa.getLogo(); } catch (_) {} }
+  const subtotal = items.reduce((a, c) => a + Math.max(0, c.price_sum * c.qty), 0);
+  const total = (override != null) ? override : subtotal;
+  const st = window._lastState || {};
+  const s = {
+    isPrecheck: true,
+    receipt_no: '',
+    created_at: _localReceiptTime(),
+    cashier_name: (st.cashier && st.cashier.name) || '',
+    client_name: client ? client.name : '',
+    items: items.map((c) => ({
+      product_id: c.product_id, name: c.name, sku: c.sku, barcode: c.barcode,
+      qty: c.qty, price_sum: c.price_sum,
+    })),
+    subtotal_sum: subtotal,
+    total_sum: total,
+    discount_sum: Math.max(0, subtotal - total),
+    payment: null,
+  };
+  const res = await smartPrint(buildReceiptHtml(s), buildReceiptModel(s));
+  if (res && res.ok) toast('🧾 Prechek chiqdi (sotuv EMAS)');
+  else toast('Prechek chop etilmadi', true);
+}
+async function printPrecheckFor(i) {
+  syncActive();   // joriy savatni faol tabga saqlab qo'yamiz
+  const t = (i === activeTab)
+    ? { items: CART, client: selClient, override: overrideTotal }
+    : (TABS[i] || {});
+  await printPrecheck(t.items || [], t.client || null, (t.override != null ? t.override : null));
+}
+
 async function parkDraft() {
   if (!CART.length) { toast('Savat bo\'sh', true); return; }
   await window.kassa.saveDraft({ items: CART, client: selClient });
@@ -1391,12 +1456,29 @@ function renderTabs() {
   bar.innerHTML = TABS.map((t, i) => {
     const active = i === activeTab;
     const cnt = (t.items || []).length;
-    return `<button class="check-tab ${active ? 'active' : ''}" data-i="${i}">` +
+    return `<button class="check-tab ${active ? 'active' : ''}" data-i="${i}" title="Bosing — ochish · 2s bosib turing — prechek (namuna) chop etish">` +
            `${active ? '✓ ' : ''}Chek №${i + 1}${cnt ? ` <span class="ct-cnt">${cnt}</span>` : ''}</button>`;
   }).join('') + `<button class="check-tab new" id="newCheckBtn">+ Yangi chek</button>`;
   bar.querySelectorAll('.check-tab[data-i]').forEach((b) =>
-    b.addEventListener('click', () => activate(Number(b.dataset.i))));
+    attachPrecheckHold(b, Number(b.dataset.i)));
   $('newCheckBtn').addEventListener('click', newCheck);
+}
+// "Chek №N" yorlig'i: oddiy bosish — tabni ochadi; 2s bosib turish — precheck chop etadi.
+function attachPrecheckHold(btn, i) {
+  let timer = null, fired = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } btn.classList.remove('holding'); };
+  const start = () => {
+    fired = false;
+    btn.classList.add('holding');
+    timer = setTimeout(() => { fired = true; cancel(); printPrecheckFor(i); }, 2000);
+  };
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('touchstart', start, { passive: true });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((ev) => btn.addEventListener(ev, cancel));
+  btn.addEventListener('click', (e) => {
+    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); return; }
+    activate(i);
+  });
 }
 function activate(i) {
   if (i === activeTab) { focusScan(); return; }

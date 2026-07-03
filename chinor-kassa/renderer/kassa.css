@@ -150,7 +150,7 @@ input { font-family: inherit; }
 .cart-body { flex: 1; overflow-y: auto; }
 .cart-empty { text-align: center; color: var(--muted); padding: 36px 0; }
 .cart-row {
-  height: 52px; border-bottom: 1px solid var(--line); cursor: pointer;
+  min-height: 52px; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
 }
 .cart-row:hover { background: var(--panel-2); }
 .cart-row.selected { background: var(--sel); color: var(--sel-text); }
@@ -161,10 +161,11 @@ input { font-family: inherit; }
 .cart-row.selected .cr-sum { color: #fff; }
 
 .c-num, .cr-num { flex: 0 0 30px; font-weight: 700; }
-.c-name, .cr-name { flex: 1; min-width: 0; }
-.cr-name .cr-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cr-name .cr-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.c-price, .cr-price { flex: 0 0 96px; text-align: right; font-weight: 600; }
+.c-name, .cr-name { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+/* Uzun nom kesilmaydi — 2 qatorgacha tushadi (nom oxiri ko'rinsin), narx ustiga chiqmaydi. */
+.cr-name .cr-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-width: 100%; font-size: 14px; font-weight: 600; line-height: 1.15; overflow: hidden; word-break: break-word; }
+.cr-name .cr-sub { display: block; max-width: 100%; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-price, .cr-price { flex: 0 0 96px; text-align: right; font-weight: 600; overflow: hidden; }
 .cart-row .cr-price {
   display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
   line-height: 1.05; font-weight: 400;
@@ -187,6 +188,12 @@ input { font-family: inherit; }
 .check-tab:hover { border-color: var(--green-l); }
 .check-tab.active { background: var(--green); color: #fff; border-color: var(--green); }
 .check-tab.new { color: var(--green); border-style: dashed; }
+/* Uzoq bosib turilganda (2s) — prechek chop etilishini ko'rsatuvchi indikator */
+.check-tab.holding { animation: ct-hold 2s linear forwards; }
+@keyframes ct-hold {
+  from { box-shadow: inset 0 0 0 0 var(--green-l); }
+  to   { box-shadow: inset 220px 0 0 0 rgba(45,168,102,.35); }
+}
 .ct-cnt { background: rgba(0,0,0,.14); padding: 1px 6px; border-radius: 8px; font-size: 11px; margin-left: 5px; }
 .check-tab.active .ct-cnt { background: rgba(255,255,255,.28); }
 
