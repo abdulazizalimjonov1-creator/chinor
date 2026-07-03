@@ -21,8 +21,11 @@ class StatsMixin:
         «Chinor» ichki rasxod sotuvlari (is_internal) daromad/foyda hisobiga
         KIRMAYDI — ular alohida 'expense' (rasxod, tannarx bo'yicha) sifatida
         qaytariladi."""
+        # normal — daromadga kiruvchi yozuvlar (qaytarishlar HAM ichida: ular
+        # manfiy summali, shuning uchun pul jamlar avtomatik NETTO chiqadi).
         normal = [s for s in sales if not s.get("is_internal")]
         internal = [s for s in sales if s.get("is_internal")]
+        returns = [s for s in normal if s.get("is_return")]
         rev_sum = sum(s.get("total", 0) or 0 for s in normal)
         rev_usd = sum(s.get("total_usd", 0) or 0 for s in normal)
         cost_sum = 0.0
@@ -35,6 +38,9 @@ class StatsMixin:
         cash_usd = sum(s.get("paid_cash_usd", 0) or 0 for s in normal)
         card_sum = sum(s.get("paid_card", 0) or 0 for s in normal)
         card_usd = sum(s.get("paid_card_usd", 0) or 0 for s in normal)
+        # Click/Payme va boshqa elektron to'lovlar (paid_other)
+        other_sum = sum(s.get("paid_other", 0) or 0 for s in normal)
+        other_usd = sum(s.get("paid_other_usd", 0) or 0 for s in normal)
         nasiya_sum = sum(s.get("total", 0) or 0 for s in normal if s.get("is_nasiya"))
         nasiya_usd = sum(s.get("total_usd", 0) or 0 for s in normal if s.get("is_nasiya"))
         disc_sum = sum(s.get("discount", 0) or 0 for s in normal)
@@ -48,11 +54,17 @@ class StatsMixin:
             "profit": rev_sum - cost_sum, "profit_usd": rev_usd - cost_usd,
             "cash_total": cash_sum, "cash_total_usd": cash_usd,
             "card_total": card_sum, "card_total_usd": card_usd,
+            "other_total": other_sum, "other_total_usd": other_usd,
             "nasiya_total": nasiya_sum, "nasiya_total_usd": nasiya_usd,
             "discount_total": disc_sum, "discount_total_usd": disc_usd,
             "expense": expense_sum, "expense_usd": expense_usd,
             "expense_count": len(internal),
-            "sale_count": len(normal),
+            # sale_count — faqat haqiqiy sotuv cheklari (qaytarishsiz);
+            # qaytarishlar alohida hisoblanadi (summalar musbat ko'rsatiladi).
+            "sale_count": len(normal) - len(returns),
+            "return_count": len(returns),
+            "return_total": -sum(s.get("total", 0) or 0 for s in returns),
+            "return_total_usd": -sum(s.get("total_usd", 0) or 0 for s in returns),
         }
 
     async def stats_day(self, date: str) -> dict:

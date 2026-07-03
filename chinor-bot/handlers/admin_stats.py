@@ -53,15 +53,22 @@ def _stats_text(header: str, s: dict, prods: list, clients: list = None) -> str:
         pay_lines += f"  💵 Naqd: {_money_pair(s.get('cash_total',0), s.get('cash_total_usd',0))}\n"
     if s.get("card_total", 0) > 0 or s.get("card_total_usd", 0) > 0:
         pay_lines += f"  💳 Karta: {_money_pair(s.get('card_total',0), s.get('card_total_usd',0))}\n"
+    if s.get("other_total", 0) > 0 or s.get("other_total_usd", 0) > 0:
+        pay_lines += f"  📲 Click/boshqa: {_money_pair(s.get('other_total',0), s.get('other_total_usd',0))}\n"
     if s.get("nasiya_total", 0) > 0 or s.get("nasiya_total_usd", 0) > 0:
         pay_lines += f"  🤝 Nasiya: {_money_pair(s.get('nasiya_total',0), s.get('nasiya_total_usd',0))}\n"
     discount_line = ""
     if s.get("discount_total", 0) > 0 or s.get("discount_total_usd", 0) > 0:
         discount_line = (f"💸 Berilgan chegirma: "
                          f"{_money_pair(s.get('discount_total',0), s.get('discount_total_usd',0))}\n")
+    return_line = ""
+    if s.get("return_count", 0) > 0:
+        return_line = (f"↩️ Qaytarishlar: <b>{s.get('return_count', 0)} ta</b> — "
+                       f"{_money_pair(s.get('return_total',0), s.get('return_total_usd',0))}\n")
     text = (
         f"{header}\n\n"
         f"🧾 Kassa sotuvi: <b>{s.get('sale_count', 0)} ta</b>\n"
+        f"{return_line}"
         f"🚚 Buyurtmalar: <b>{s.get('order_count', 0)} ta</b>\n"
         f"─────────────────────\n"
         f"💰 Umumiy tushum: {_money_pair(s.get('revenue',0), s.get('revenue_usd',0))}\n"

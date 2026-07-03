@@ -1388,6 +1388,14 @@ async def api_stats(request: web.Request):
             "profit_sum": float(s.get("profit", 0) or 0),
             "profit_usd": float(s.get("profit_usd", 0) or 0),
             "cost_sum": float(s.get("cost", 0) or 0),
+            # To'lov turlari bo'yicha (netto — qaytarishlar ayirilgan)
+            "cash_sum": float(s.get("cash_total", 0) or 0),
+            "card_sum": float(s.get("card_total", 0) or 0),
+            "click_sum": float(s.get("other_total", 0) or 0),
+            "nasiya_sum": float(s.get("nasiya_total", 0) or 0),
+            # Qaytarishlar (musbat ko'rsatiladi)
+            "return_count": s.get("return_count", 0),
+            "return_sum": float(s.get("return_total", 0) or 0),
             # «Chinor» ichki rasxod (tannarx bo'yicha, foydaga kirmaydi)
             "expense_sum": float(s.get("expense", 0) or 0),
             "expense_usd": float(s.get("expense_usd", 0) or 0),
@@ -1407,6 +1415,49 @@ async def api_stats(request: web.Request):
         "month": block(st_month),
         "month_label": now_local().strftime("%Y-%m"),
         "top_products": top_list,
+    })
+
+
+# ─── Kassa naqd harakatlari (rasxod/kirim) — admin ─────────────────────────
+
+@ROUTES.get("/api/cash-movements")
+async def api_cash_movements(request: web.Request):
+    """Naqd kirim/chiqim jurnali (kassalardan sinxron bo'lgan + botdan yozilgan).
+    Filtr: from/to (YYYY-MM-DD), limit. Yig'indi bilan qaytaradi."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    dfrom = (request.query.get("from") or "").strip()
+    dto = (request.query.get("to") or "").strip()
+    try:
+        limit = max(1, min(500, int(request.query.get("limit") or 200)))
+    except (TypeError, ValueError):
+        limit = 200
+    rows = await _db.get_cash_movements(dfrom, dto, limit)
+    items, in_total, out_total = [], 0.0, 0.0
+    for r in rows:
+        amount = float(r.get("amount", 0) or 0)
+        direction = r.get("direction", "in")
+        if direction == "out":
+            out_total += amount
+        else:
+            in_total += amount
+        items.append({
+            "id": r.get("id"),
+            "direction": direction,
+            "amount": amount,
+            "category": r.get("category", "") or "",
+            "note": r.get("note", "") or "",
+            "recipient": r.get("recipient", "") or "",
+            "cashier_name": r.get("cashier_name", "") or "",
+            "source": r.get("source", "") or "",
+            "created_at": r.get("created_at", "") or "",
+        })
+    return web.json_response({
+        "ok": True, "items": items,
+        "summary": {"count": len(items), "in_total": in_total,
+                    "out_total": out_total, "net": in_total - out_total},
     })
 
 
@@ -1960,6 +2011,19 @@ async def api_sync_sales(request: web.Request):
             source = (s.get("source") or "").strip()[:80]
             receipt_no = (s.get("receipt_no") or "").strip()[:32]
             orig_receipt_no = (s.get("orig_receipt_no") or "").strip()[:32]
+
+            # Dublikat himoyasi: kassa yuborgan, lekin javob unga yetib
+            # bormagan bo'lsa, o'sha chekni qayta yuboradi — shu chek raqami
+            # (receipt_no) va qurilma (source) bilan yozuv allaqachon bo'lsa,
+            # QAYTA YOZMAY mavjud id qaytariladi (idempotent).
+            if receipt_no and source:
+                dup_id = await _db.find_sale_by_receipt(receipt_no, source)
+                if dup_id:
+                    logger.info(f"[sync/sales] dublikat o'tkazildi: "
+                                f"{source} {receipt_no} → id={dup_id}")
+                    results.append({"local_id": local_id, "ok": True,
+                                    "server_id": dup_id, "duplicate": True})
+                    continue
             try:
                 total_in = float(s.get("total_sum") or 0)
             except (TypeError, ValueError):
@@ -2183,15 +2247,27 @@ async def api_recent_sales(request: web.Request):
     sales = await _db.get_recent_sales(limit, since)
     out = []
     for s in sales:
+        p_cash = float(s.get("paid_cash", 0) or 0)
+        p_card = float(s.get("paid_card", 0) or 0)
+        p_other = float(s.get("paid_other", 0) or 0)
+        p_total = float(s.get("paid_total", 0) or 0)
+        s_total = float(s.get("total", 0) or 0)
+        # Aralash to'lovda qarzga yozilgan qism (to'liq nasiya emas)
+        p_debt = 0.0
+        if (not s.get("is_nasiya") and not s.get("is_internal")
+                and not s.get("is_return") and p_total > 0):
+            p_debt = max(0.0, round(s_total - p_total, 2))
         if s.get("is_return"):
             pay = "qaytarish"
         elif s.get("is_internal"):
             pay = "rasxod"
         elif s.get("is_nasiya"):
             pay = "qarz"
-        elif float(s.get("paid_card", 0) or 0) > 0:
+        elif sum(1 for v in (p_cash, p_card, p_other, p_debt) if v > 0) > 1:
+            pay = "split"   # aralash — qismlari paid_* maydonlarida
+        elif p_card > 0:
             pay = "card"
-        elif float(s.get("paid_other", 0) or 0) > 0:
+        elif p_other > 0:
             pay = "click"
         else:
             pay = "cash"
@@ -2226,6 +2302,11 @@ async def api_recent_sales(request: web.Request):
             "subtotal_sum": float(s.get("subtotal", 0) or 0),
             "discount_sum": float(s.get("discount", 0) or 0),
             "payment": pay,
+            # To'lov qismlari — split chekni hisobotda to'g'ri taqsimlash uchun
+            "paid_cash": p_cash,
+            "paid_card": p_card,
+            "paid_other": p_other,
+            "debt_part": p_debt,
             "client_name": s.get("client_name", "") or "",
             "client_id": int(s.get("client_id", 0) or 0),
             "is_internal": 1 if s.get("is_internal") else 0,

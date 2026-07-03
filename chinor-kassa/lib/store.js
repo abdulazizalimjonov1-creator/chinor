@@ -45,6 +45,8 @@ class Store {
       draftSeq: 0,
       openChecks: [],          // [{items,client,override}] — ochiq chek tab'lari
       shift: null,             // joriy ochiq smena {id,no,openedAt,openedBy,openCash,cashMoves,lockCount}
+      cashTxns: [],            // serverga yuboriladigan naqd kirim/chiqim navbati [{local_id,type,amount,note,by,created_at,synced,server_id}]
+      cashTxnSeq: 0,
       shiftSeq: 0,
       shiftHistory: [],        // yopilgan smenalar (Z-hisobotlar bilan, oxirgi ~50)
       cashiers: [],            // lokal kassirlar: [{id,name,pinHash}] — har biri o'z paroli
@@ -316,8 +318,36 @@ class Store {
     };
     if (mv.amount <= 0) return null;
     this.data.shift.cashMoves.push(mv);
+    // Serverga sinxron navbatiga ham qo'shamiz — shunda rasxod/kirim admin va
+    // Mini App hisobotlarida ko'rinadi (sotuvlar bilan bir xil naqsh: internet
+    // bo'lmasa navbatda qoladi, kelganda yuboriladi).
+    this.data.cashTxns = this.data.cashTxns || [];
+    this.data.cashTxnSeq = (this.data.cashTxnSeq || 0) + 1;
+    this.data.cashTxns.push({
+      local_id: `${(this.data.deviceId || 'kassa').slice(0, 8)}-c${this.data.cashTxnSeq}`,
+      type: mv.type === 'out' ? 'cash_out' : 'cash_in',
+      amount: mv.amount,
+      note: mv.note,
+      by: (this.data.cashier && this.data.cashier.name) || '',
+      created_at: mv.at,
+      synced: false,
+      server_id: null,
+    });
     this.save();
     return mv;
+  }
+  pendingCashTxns() {
+    return (this.data.cashTxns || []).filter((t) => !t.synced);
+  }
+  markCashTxnSynced(localId, serverId) {
+    const t = (this.data.cashTxns || []).find((x) => x.local_id === localId);
+    if (t) { t.synced = true; t.server_id = serverId || null; }
+    // Yuborilganlarning eskilarini tozalab boramiz (oxirgi 200 tasi yetadi)
+    if ((this.data.cashTxns || []).length > 400) {
+      const pending = this.data.cashTxns.filter((x) => !x.synced);
+      const synced = this.data.cashTxns.filter((x) => x.synced).slice(-200);
+      this.data.cashTxns = synced.concat(pending);
+    }
   }
   // Smena hisobotini (X yoki Z) lokal sotuvlardan hisoblaydi
   shiftSummary(shift) {

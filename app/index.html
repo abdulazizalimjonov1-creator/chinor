@@ -83,7 +83,9 @@
                 <button class="quick-card card-purple" onclick="openStats()"><span class="card-icon">📊</span><h4>Hisobotlar</h4><p>Moliyaviy tahlil</p></button>
                 <button class="quick-card card-blue" onclick="handleAction('Xodimlar')"><span class="card-icon">👔</span><h4>Xodimlar</h4><p>Xodimlar ro'yxati</p></button>
                 <button class="quick-card card-navy" onclick="handleAction('Sozlamalar')"><span class="card-icon">⚙️</span><h4>Sozlamalar</h4><p>Tizim sozlamalari</p></button>
-                <button class="quick-card card-teal full" onclick="openPOS()"><span class="card-icon">💸</span><h4>POS Sotuv tizimi</h4><p>Savdo operatsiyalarini boshqarish</p></button>
+                <button class="quick-card card-orange" onclick="openReceipts()"><span class="card-icon">🧾</span><h4>Cheklar</h4><p>Barcha kassa cheklari</p></button>
+                <button class="quick-card card-red" onclick="openCashMoves()"><span class="card-icon">💸</span><h4>Kassa harakati</h4><p>Naqd kirim / rasxod</p></button>
+                <button class="quick-card card-teal full" onclick="openPOS()"><span class="card-icon">🛒</span><h4>POS Sotuv tizimi</h4><p>Savdo operatsiyalarini boshqarish</p></button>
             </div>
         </div>
 
@@ -251,6 +253,34 @@
                 <h2>📊 Statistika</h2>
             </div>
             <div id="statsBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
+        <div class="screen" id="screenReceipts">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
+                <h2>🧾 Cheklar</h2>
+            </div>
+            <div class="rcpt-filters" id="rcptFilters">
+                <button class="rcpt-fbtn active" data-days="0" onclick="setRcptFilter(this)">Bugun</button>
+                <button class="rcpt-fbtn" data-days="7" onclick="setRcptFilter(this)">7 kun</button>
+                <button class="rcpt-fbtn" data-days="30" onclick="setRcptFilter(this)">30 kun</button>
+            </div>
+            <div id="receiptsSummary"></div>
+            <div id="receiptsBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
+        <div class="screen" id="screenCash">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
+                <h2>💸 Kassa harakati</h2>
+            </div>
+            <div class="rcpt-filters" id="cashFilters">
+                <button class="rcpt-fbtn active" data-days="0" onclick="setCashFilter(this)">Bugun</button>
+                <button class="rcpt-fbtn" data-days="7" onclick="setCashFilter(this)">7 kun</button>
+                <button class="rcpt-fbtn" data-days="30" onclick="setCashFilter(this)">30 kun</button>
+            </div>
+            <div id="cashSummary"></div>
+            <div id="cashBody"><div class="list-status">Yuklanmoqda...</div></div>
         </div>
 
         <div class="screen" id="screenAccount">

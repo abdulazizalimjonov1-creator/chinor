@@ -529,15 +529,24 @@ async function renderSalesReport(c) {
   const revVals = ordered.map((s) => Number(s.total_sum) || 0);
   const profVals = ordered.map((s) => Number(s.profit_sum) || 0);
 
-  // To'lov turlari
+  // To'lov turlari. Server endi paid_* qismlarni ham yuboradi — aralash (split)
+  // chekning har qismi o'z chelagiga tushadi. Qismlar bo'lmasa (eski server)
+  // payment label bo'yicha zaxira yo'l ishlaydi.
   const pay = { cash: 0, card: 0, click: 0, qarz: 0 };
   sales.forEach((s) => {
     const v = s.total_sum || 0;
-    if (s.is_return) return;
-    if (s.payment === 'cash') pay.cash += v;
+    if (s.is_return || s.is_internal) return;
+    if (s.payment === 'qarz' || s.is_nasiya) { pay.qarz += v; return; }
+    const hasParts = (Number(s.paid_cash) || 0) + (Number(s.paid_card) || 0) +
+                     (Number(s.paid_other) || 0) + (Number(s.debt_part) || 0) > 0;
+    if (hasParts) {
+      pay.cash += Number(s.paid_cash) || 0;
+      pay.card += Number(s.paid_card) || 0;
+      pay.click += Number(s.paid_other) || 0;
+      pay.qarz += Number(s.debt_part) || 0;
+    } else if (s.payment === 'cash') pay.cash += v;
     else if (s.payment === 'card') pay.card += v;
     else if (s.payment === 'click') pay.click += v;
-    else if (s.payment === 'qarz' || s.is_nasiya) pay.qarz += v;
   });
   const payRows = [
     { name: 'Naqd', v: pay.cash }, { name: 'Karta', v: pay.card },

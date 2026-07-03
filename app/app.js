@@ -866,11 +866,30 @@
                     `<span>${fmtQty(p.qty)} × · ${fmtSum(p.revenue_sum)} so'm</span></div>`;
             });
             if (!topHtml) topHtml = '<div class="list-status">Sotuv yo\'q</div>';
+            // To'lov turlari bo'yicha qatorlar (faqat nol bo'lmaganlari)
+            const payRows = (b) => {
+                let h = '';
+                if (b.cash_sum > 0)   h += row('&nbsp;&nbsp;💵 Naqd', fmtSum(b.cash_sum));
+                if (b.card_sum > 0)   h += row('&nbsp;&nbsp;💳 Karta', fmtSum(b.card_sum));
+                if (b.click_sum > 0)  h += row('&nbsp;&nbsp;📲 Click', fmtSum(b.click_sum));
+                if (b.nasiya_sum > 0) h += row('&nbsp;&nbsp;🤝 Nasiya', fmtSum(b.nasiya_sum));
+                return h;
+            };
+            const extraRows = (b) => {
+                let h = '';
+                if (b.return_count > 0)
+                    h += row('↩️ Qaytarishlar', b.return_count + ' ta · ' + fmtSum(b.return_sum), 'val-red');
+                if (b.expense_count > 0)
+                    h += row('🔻 Chinor rasxodi', b.expense_count + ' ta · ' + fmtSum(b.expense_sum), 'val-red');
+                return h;
+            };
             body.innerHTML = `
                 <div class="stat-block">
                     <h3>📅 Bugun</h3>
                     ${row('🧾 Sotuvlar', t.sale_count + ' ta')}
                     ${row('💰 Tushum', fmtSum(t.revenue_sum) + " so'm", 'val-green')}
+                    ${payRows(t)}
+                    ${extraRows(t)}
                     ${row('✅ Foyda', fmtSum(t.profit_sum) + " so'm", 'val-green')}
                 </div>
                 <div class="stat-block">
@@ -878,8 +897,9 @@
                     ${row('🧾 Sotuvlar', m.sale_count + ' ta')}
                     ${row('🚚 Buyurtmalar', m.order_count + ' ta')}
                     ${row('💰 Tushum', fmtSum(m.revenue_sum) + " so'm", 'val-green')}
+                    ${payRows(m)}
                     ${row('📦 Tannarx', fmtSum(m.cost_sum) + " so'm")}
-                    ${(m.expense_count>0) ? row('🔻 Chinor rasxodi', fmtSum(m.expense_sum) + " so'm", 'val-red') : ''}
+                    ${extraRows(m)}
                     ${row('✅ Sof foyda', fmtSum(m.profit_sum) + " so'm", 'val-green')}
                 </div>
                 <div class="stat-block">
@@ -887,6 +907,177 @@
                     ${topHtml}
                 </div>`;
         };
+
+        // ================================================================
+        // CHEKLAR (admin) — barcha manbalardan (kassa, bot, mini app)
+        // ================================================================
+        let _rcptDays = 0;   // 0 = bugun, 7/30 = oxirgi N kun
+
+        function _dateNDaysAgo(n) {
+            const d = new Date(Date.now() - n * 86400000 + 5 * 3600000);
+            return d.toISOString().slice(0, 10);
+        }
+        const PAY_LABELS = {
+            cash: '💵 Naqd', card: '💳 Karta', click: '📲 Click',
+            split: '🔀 Aralash', qarz: '🤝 Qarz', rasxod: '🔻 Rasxod',
+            qaytarish: '↩️ Qaytarish',
+        };
+
+        window.setRcptFilter = function (btn) {
+            document.querySelectorAll('#rcptFilters .rcpt-fbtn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _rcptDays = parseInt(btn.dataset.days, 10) || 0;
+            loadReceipts();
+        };
+
+        window.openReceipts = function () {
+            showScreen('screenReceipts');
+            loadReceipts();
+        };
+
+        let _rcptCache = [];
+        async function loadReceipts() {
+            const body = $('receiptsBody'), sum = $('receiptsSummary');
+            body.innerHTML = '<div class="list-status">Yuklanmoqda...</div>';
+            sum.innerHTML = '';
+            const since = _dateNDaysAgo(_rcptDays) + ' 00:00:00';
+            const { ok, status, data } = await apiFetch(
+                '/api/sync/recent-sales?since=' + encodeURIComponent(since) + '&limit=500');
+            if (!ok || !data.ok) {
+                body.innerHTML = '<div class="list-status">' +
+                    (status === 401 ? '🔒 Qaytadan kiring.' : ('Xato: ' + (data.error || status))) + '</div>';
+                return;
+            }
+            _rcptCache = data.sales || [];
+            if (!_rcptCache.length) {
+                body.innerHTML = '<div class="list-status">Bu davrda chek yo\'q</div>';
+                return;
+            }
+            // Yig'indi: sotuvlar (rasxod/qaytarishsiz netto emas — alohida ko'rsatamiz)
+            let saleTotal = 0, saleCount = 0, retTotal = 0, retCount = 0, expTotal = 0, expCount = 0;
+            _rcptCache.forEach(s => {
+                const v = Number(s.total_sum) || 0;
+                if (s.is_return) { retCount++; retTotal += Math.abs(v); }
+                else if (s.is_internal) { expCount++; expTotal += v; }
+                else { saleCount++; saleTotal += v; }
+            });
+            sum.innerHTML = `<div class="rcpt-sum">
+                <span>🧾 ${saleCount} ta — <b>${fmtSum(saleTotal)}</b> so'm</span>
+                ${retCount ? `<span class="rs-red">↩️ ${retCount} ta — ${fmtSum(retTotal)}</span>` : ''}
+                ${expCount ? `<span class="rs-red">🔻 ${expCount} ta — ${fmtSum(expTotal)}</span>` : ''}
+            </div>`;
+            let html = '';
+            let lastDay = '';
+            _rcptCache.forEach((s, i) => {
+                const day = (s.created_at || '').slice(0, 10);
+                if (day !== lastDay) {
+                    lastDay = day;
+                    html += `<div class="rcpt-day">${day.split('-').reverse().join('.')}</div>`;
+                }
+                const time = (s.created_at || '').slice(11, 16);
+                const v = Number(s.total_sum) || 0;
+                const neg = s.is_return || v < 0;
+                html += `<div class="rcpt-row" onclick="openReceiptDetail(${i})">
+                    <div class="rcpt-l">
+                        <div class="rcpt-no">№ ${escapeHtml(s.receipt_no || ('#' + s.id))} · ${time}</div>
+                        <div class="rcpt-meta">${PAY_LABELS[s.payment] || s.payment}${s.client_name ? ' · ' + escapeHtml(s.client_name) : ''}${s.cashier_name ? ' · ' + escapeHtml(s.cashier_name) : ''}</div>
+                    </div>
+                    <div class="rcpt-amt ${neg ? 'rs-red' : ''}">${fmtSum(v)}</div>
+                </div>`;
+            });
+            body.innerHTML = html;
+        }
+
+        window.openReceiptDetail = function (i) {
+            const s = _rcptCache[i];
+            if (!s) return;
+            const items = (s.items || []).map(it =>
+                `<div class="stat-row"><span class="lbl">${escapeHtml(it.name)} × ${fmtQty(it.qty)}</span>` +
+                `<span class="val">${fmtSum((Number(it.price_sum) || 0) * (Number(it.qty) || 0))}</span></div>`).join('');
+            const payParts = [];
+            if (Number(s.paid_cash) > 0) payParts.push(`💵 Naqd: ${fmtSum(s.paid_cash)}`);
+            if (Number(s.paid_card) > 0) payParts.push(`💳 Karta: ${fmtSum(s.paid_card)}`);
+            if (Number(s.paid_other) > 0) payParts.push(`📲 Click: ${fmtSum(s.paid_other)}`);
+            if (Number(s.debt_part) > 0) payParts.push(`🤝 Qarzga: ${fmtSum(s.debt_part)}`);
+            const ov = document.createElement('div');
+            ov.className = 'cl-modal-overlay';
+            ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+            ov.innerHTML = `<div class="cl-modal" style="max-height:80vh;overflow:auto">
+                <h3 style="margin:0 0 4px">Chek № ${escapeHtml(s.receipt_no || ('#' + s.id))}</h3>
+                <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+                    ${escapeHtml(s.created_at || '')}${s.cashier_name ? ' · ' + escapeHtml(s.cashier_name) : ''}${s.source ? ' · ' + escapeHtml(s.source) : ''}
+                </div>
+                <div class="stat-block" style="margin:0 0 10px">${items || '<div class="list-status">Tovar yo\'q</div>'}</div>
+                ${Number(s.discount_sum) > 0 ? `<div class="stat-row"><span class="lbl">💸 Chegirma</span><span class="val">${fmtSum(s.discount_sum)}</span></div>` : ''}
+                <div class="stat-row"><span class="lbl"><b>JAMI</b></span><span class="val"><b>${fmtSum(s.total_sum)} so'm</b></span></div>
+                <div style="font-size:13px;margin-top:8px">${PAY_LABELS[s.payment] || s.payment}${payParts.length ? ' — ' + payParts.join(' · ') : ''}</div>
+                ${s.orig_receipt_no ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Asl chek: № ${escapeHtml(s.orig_receipt_no)}</div>` : ''}
+                <button style="width:100%;padding:13px;margin-top:14px;background:var(--primary);color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" onclick="this.closest('.cl-modal-overlay').remove()">Yopish</button>
+            </div>`;
+            document.body.appendChild(ov);
+        };
+
+        // ================================================================
+        // KASSA HARAKATI (admin) — naqd kirim / rasxod (cash_movements)
+        // ================================================================
+        let _cashDays = 0;
+
+        window.setCashFilter = function (btn) {
+            document.querySelectorAll('#cashFilters .rcpt-fbtn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _cashDays = parseInt(btn.dataset.days, 10) || 0;
+            loadCashMoves();
+        };
+
+        window.openCashMoves = function () {
+            showScreen('screenCash');
+            loadCashMoves();
+        };
+
+        async function loadCashMoves() {
+            const body = $('cashBody'), sum = $('cashSummary');
+            body.innerHTML = '<div class="list-status">Yuklanmoqda...</div>';
+            sum.innerHTML = '';
+            const from = _dateNDaysAgo(_cashDays);
+            const { ok, status, data } = await apiFetch(
+                '/api/cash-movements?from=' + from + '&limit=300');
+            if (!ok || !data.ok) {
+                body.innerHTML = '<div class="list-status">' +
+                    (status === 401 ? '🔒 Qaytadan kiring.' : ('Xato: ' + (data.error || status))) + '</div>';
+                return;
+            }
+            const items = data.items || [];
+            const sm = data.summary || {};
+            sum.innerHTML = `<div class="rcpt-sum">
+                <span class="rs-green">＋ Kirim: <b>${fmtSum(sm.in_total || 0)}</b></span>
+                <span class="rs-red">－ Chiqim: <b>${fmtSum(sm.out_total || 0)}</b></span>
+            </div>`;
+            if (!items.length) {
+                body.innerHTML = '<div class="list-status">Bu davrda harakat yo\'q.<br>' +
+                    '<small>Kassadagi kirim/chiqim serverga kassa 1.7.5+ versiyasidan sinxron bo\'ladi.</small></div>';
+                return;
+            }
+            let html = '', lastDay = '';
+            items.forEach(m => {
+                const day = (m.created_at || '').slice(0, 10);
+                if (day !== lastDay) {
+                    lastDay = day;
+                    html += `<div class="rcpt-day">${day.split('-').reverse().join('.')}</div>`;
+                }
+                const time = (m.created_at || '').slice(11, 16);
+                const out = m.direction === 'out';
+                const meta = [m.category, m.note, m.recipient, m.cashier_name, m.source]
+                    .filter(Boolean).map(escapeHtml).join(' · ');
+                html += `<div class="rcpt-row">
+                    <div class="rcpt-l">
+                        <div class="rcpt-no">${out ? '－ Chiqim' : '＋ Kirim'} · ${time}</div>
+                        <div class="rcpt-meta">${meta || '—'}</div>
+                    </div>
+                    <div class="rcpt-amt ${out ? 'rs-red' : 'rs-green'}">${out ? '−' : '+'}${fmtSum(m.amount)}</div>
+                </div>`;
+            });
+            body.innerHTML = html;
+        }
 
         // ================================================================
         // MENING HISOBIM (mijoz)

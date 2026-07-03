@@ -40,6 +40,8 @@ module.exports = {
       { token, timeout: 30000 }),
   pushSales: (base, token, sales) =>
     req(base, '/api/sync/sales', { method: 'POST', token, body: { sales }, timeout: 30000 }),
+  pushCashTxns: (base, token, txns) =>
+    req(base, '/api/sync/cash-txns', { method: 'POST', token, body: { txns }, timeout: 30000 }),
   recentSales: (base, token, since = '', limit = 1000) => {
     const qs = since
       ? `since=${encodeURIComponent(since)}&limit=${limit}`

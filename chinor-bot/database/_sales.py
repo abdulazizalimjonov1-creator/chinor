@@ -328,6 +328,51 @@ class SalesMixin:
                     conn.close()
         return data
 
+    def _cash_movements(self, dfrom: str, dto: str, limit: int) -> List[dict]:
+        """Naqd kirim/chiqim ro'yxati (yangi birinchi). dfrom/dto — 'YYYY-MM-DD'."""
+        where, params = [], []
+        if dfrom:
+            where.append("created_at >= ?"); params.append(dfrom + " 00:00:00")
+        if dto:
+            where.append("created_at <= ?"); params.append(dto + " 23:59:59")
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    f"SELECT * FROM cash_movements{wsql} ORDER BY id DESC LIMIT ?",
+                    params + [limit]
+                ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def get_cash_movements(self, dfrom: str = "", dto: str = "",
+                                 limit: int = 200) -> List[dict]:
+        return await self._in_thread(self._cash_movements, dfrom, dto, limit)
+
+    def _find_sale_by_receipt(self, receipt_no: str, source: str) -> int:
+        """Shu chek raqami + manba (qurilma) bilan avval yozilgan sotuv id'si.
+        Kassa javobni olmay qayta yuborsa dublikat yozilmasligi uchun."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                # Qaytarishda source'ga " · qaytarish←..." qo'shiladi — prefiks
+                # bo'yicha ham tekshiramiz.
+                r = conn.execute(
+                    "SELECT id FROM sales WHERE receipt_no=? "
+                    "AND (source=? OR source LIKE ?) ORDER BY id LIMIT 1",
+                    (receipt_no, source, source + " ·%")
+                ).fetchone()
+                return int(r[0]) if r else 0
+            finally:
+                conn.close()
+
+    async def find_sale_by_receipt(self, receipt_no: str, source: str) -> int:
+        if not receipt_no or not source:
+            return 0
+        return await self._in_thread(self._find_sale_by_receipt, receipt_no, source)
+
     async def create_return(self, cashier_id: int, cashier_name: str,
                             items: list, *,
                             payment: str = "cash",

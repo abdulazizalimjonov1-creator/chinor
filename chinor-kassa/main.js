@@ -131,6 +131,30 @@ async function pushPendingSales() {
   return { pushed };
 }
 
+// Yuborilmagan naqd kirim/chiqim (rasxod) yozuvlarini serverga jo'natadi —
+// shunda ular admin panel va Mini App hisobotlarida ko'rinadi.
+async function pushPendingCashTxns() {
+  const pending = store.pendingCashTxns();
+  if (!pending.length) return { pushed: 0 };
+  const payload = pending.map((t) => ({
+    local_id: t.local_id,
+    type: t.type,                    // cash_in | cash_out
+    amount: t.amount,
+    note: t.note || '',
+    by: t.by || '',
+    created_at: t.created_at,
+    source: DEVICE,
+  }));
+  const { ok, data } = await api.pushCashTxns(store.data.serverUrl, store.data.token, payload);
+  if (!ok || !data.ok) return { pushed: 0, error: (data && data.error) || '' };
+  let pushed = 0;
+  for (const r of data.results || []) {
+    if (r.ok) { store.markCashTxnSynced(r.local_id, r.server_id); pushed++; }
+  }
+  if (pushed) store.save();
+  return { pushed };
+}
+
 async function pullCatalog() {
   const { ok, data } = await api.catalog(store.data.serverUrl, store.data.token, store.data.deviceId);
   if (!ok || !data.ok) {
@@ -177,6 +201,8 @@ async function doSync({ force = false } = {}) {
     status.lastError = '';
     // 1) Avval yubormagan sotuvlarni serverga jo'natamiz
     await pushPendingSales();
+    // 1.5) Yubormagan naqd kirim/chiqim (rasxod) yozuvlari
+    try { await pushPendingCashTxns(); } catch (_) {}
     // 2) Katalogni yangilaymiz (eskirgan bo'lsa yoki majburiy)
     if (force || store.catalogStaleMinutes() > 5 || store.data.catalog.length === 0) {
       await pullCatalog();
@@ -890,6 +916,9 @@ function wireIpc() {
   ipcMain.handle('shift:cashmove', (_e, mv) => {
     const m = store.addCashMove(mv || {});
     pushState();
+    // Darhol serverga yuborishga urinamiz (offline bo'lsa navbatda qoladi,
+    // keyingi sinxronda ketadi) — kutmaymiz, fon rejimida.
+    if (m) pushPendingCashTxns().catch(() => {});
     return { ok: !!m, move: m, summary: store.shiftSummary(), state: snapshot() };
   });
   ipcMain.handle('shift:close', () => {
