@@ -52,9 +52,10 @@ desktop/node_modules/
 desktop/dist/
 desktop-admin/node_modules/
 desktop-admin/dist/
-chinor-kassa/node_modules/
+# (node_modules symlink bo'lishi ham mumkin — trailing slashsiz)
+chinor-kassa/node_modules
 chinor-kassa/dist/
-chinor-admin/node_modules/
+chinor-admin/node_modules
 chinor-admin/dist/
 
 # Build artefaktlar (qayta yasaladi — git'da saqlanmaydi)
