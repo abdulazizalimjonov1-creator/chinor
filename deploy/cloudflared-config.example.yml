@@ -1,0 +1,23 @@
+# Cloudflare Tunnel konfiguratsiyasi (server, Linux)
+# Manzil:  /etc/cloudflared/config.yml
+#
+# Oldindan (bir martalik):
+#   cloudflared tunnel login
+#   cloudflared tunnel create chinor-pos
+#   cloudflared tunnel route dns chinor-pos kassa.SIZNING-DOMEN.uz
+#   # 'create' chiqargan <UUID>.json ni /etc/cloudflared/ ga ko'chiring
+#
+# So'ng xizmat qilib o'rnatish (qayta yoqilganda o'zi ishga tushadi):
+#   sudo cloudflared service install
+#   sudo systemctl enable --now cloudflared
+#
+# Tekshirish:  curl -s https://kassa.SIZNING-DOMEN.uz/api/health  ->  {"ok": true}
+
+tunnel: chinor-pos
+credentials-file: /etc/cloudflared/REPLACE-WITH-UUID.json
+
+ingress:
+  # Bitta tunnel hammasini ochadi: Mini App API, sync, /updates/ feed
+  - hostname: kassa.SIZNING-DOMEN.uz
+    service: http://localhost:8765
+  - service: http_status:404

@@ -44,48 +44,120 @@ function parseSaleTs(s) {
 }
 
 // ── SVG grafiklar (tashqi kutubxonasiz) ──────────────────────────────────────
-function lineChart(points, opts = {}) {
-  // points: [{label, value}]
-  const W = opts.width || 920, H = opts.height || 300;
-  const padL = 64, padR = 16, padT = 16, padB = 46;
-  if (!points.length) return `<div class="chart-empty">Ma'lumot yo'q</div>`;
-  const vals = points.map((p) => p.value);
-  let max = Math.max(0, ...vals), min = Math.min(0, ...vals);
+// Interaktiv ko'p-chiziqli grafik (sichqoncha ostida qiymatni ko'rsatadi).
+// series: [{ name, color, values:[Number], fill? }] — barchasi bir xil uzunlik.
+let _chartSeq = 0;
+const _chartData = {};
+function multiLineChart(labels, series, opts = {}) {
+  const W = opts.width || 920, H = opts.height || 320;
+  const padL = 66, padR = 18, padT = 18, padB = 52;
+  const n = labels.length;
+  if (!n || !series.length) return `<div class="chart-empty">Ma'lumot yo'q</div>`;
+  const allVals = [];
+  series.forEach((s) => s.values.forEach((v) => allVals.push(v)));
+  let max = Math.max(0, ...allVals), min = Math.min(0, ...allVals);
   if (max === min) max = min + 1;
   const ph = H - padT - padB, pw = W - padL - padR;
-  const x = (i) => padL + (points.length === 1 ? pw / 2 : (i / (points.length - 1)) * pw);
-  const y = (v) => padT + ph - ((v - min) / (max - min)) * ph;
+  const X = (i) => padL + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+  const Y = (v) => padT + ph - ((v - min) / (max - min)) * ph;
 
-  // Y gridlines (5)
   let grid = '', ylab = '';
   for (let i = 0; i <= 4; i++) {
-    const v = min + (i / 4) * (max - min);
-    const yy = y(v);
+    const v = min + (i / 4) * (max - min), yy = Y(v);
     grid += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#eef1f7" stroke-width="1"/>`;
     ylab += `<text x="${padL - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="#9aa3bd">${int(v)}</text>`;
   }
-  const zeroY = y(0);
+  const zeroY = Y(0);
   grid += `<line x1="${padL}" y1="${zeroY}" x2="${W - padR}" y2="${zeroY}" stroke="#d7ddee" stroke-width="1"/>`;
 
-  const pts = points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ');
-  const area = `${padL},${zeroY} ${pts} ${x(points.length - 1)},${zeroY}`;
-  let dots = points.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.value)}" r="2.6" fill="#2d9142"/>`).join('');
+  let paths = '';
+  series.forEach((s) => {
+    const pts = s.values.map((v, i) => `${X(i)},${Y(v)}`).join(' ');
+    if (s.fill) {
+      const area = `${X(0)},${zeroY} ${pts} ${X(n - 1)},${zeroY}`;
+      paths += `<polygon points="${area}" fill="${s.fill}"/>`;
+    }
+    paths += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>`;
+    if (n <= 70) s.values.forEach((v, i) => { paths += `<circle cx="${X(i)}" cy="${Y(v)}" r="2.2" fill="${s.color}"/>`; });
+  });
 
-  // X labels (max ~10)
   let xlab = '';
-  const step = Math.max(1, Math.ceil(points.length / 10));
-  points.forEach((p, i) => {
-    if (i % step === 0 || i === points.length - 1) {
-      xlab += `<text x="${x(i)}" y="${H - 22}" text-anchor="middle" font-size="10" fill="#9aa3bd" transform="rotate(35 ${x(i)} ${H - 22})">${esc(p.label)}</text>`;
+  const step = Math.max(1, Math.ceil(n / 10));
+  labels.forEach((lb, i) => {
+    if (i % step === 0 || i === n - 1) {
+      xlab += `<text x="${X(i)}" y="${H - 24}" text-anchor="middle" font-size="10" fill="#9aa3bd" transform="rotate(35 ${X(i)} ${H - 24})">${esc(lb)}</text>`;
     }
   });
 
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
-    ${grid}
-    <polygon points="${area}" fill="rgba(45,145,66,.12)"/>
-    <polyline points="${pts}" fill="none" stroke="#2d9142" stroke-width="2"/>
-    ${dots}${ylab}${xlab}
-  </svg>`;
+  // Hover uchun: vertikal chiziq + har seriya bo'yicha belgilangan nuqta (boshda yashirin)
+  const cross = `<line class="chart-cross" x1="0" y1="${padT}" x2="0" y2="${padT + ph}" stroke="#9aa3bd" stroke-width="1" stroke-dasharray="4 3" style="display:none"/>`;
+  let hdots = '';
+  series.forEach((s) => {
+    hdots += `<circle class="chart-hdot" cx="0" cy="0" r="4.6" fill="${s.color}" stroke="#fff" stroke-width="1.6" style="display:none"/>`;
+  });
+
+  const id = 'ch' + (++_chartSeq);
+  _chartData[id] = {
+    W, padL, pw, n,
+    xs: labels.map((_, i) => X(i)),
+    ys: series.map((s) => s.values.map((v) => Y(v))),
+    labels,
+    series: series.map((s) => ({ name: s.name, color: s.color, values: s.values })),
+  };
+
+  return `<div class="chart-wrap" data-chart="${id}">
+    <svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${grid}${paths}${ylab}${xlab}${cross}${hdots}
+    </svg>
+    <div class="chart-legend">${series.map((s) => `<span class="cl-item"><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>
+    <div class="chart-tip hidden"></div>
+  </div>`;
+}
+
+// multiLineChart bilan chizilgan grafiklarga hover hodisalarini ulaydi.
+function bindCharts(root) {
+  root.querySelectorAll('.chart-wrap[data-chart]').forEach((wrap) => {
+    const d = _chartData[wrap.dataset.chart];
+    if (!d) return;
+    delete _chartData[wrap.dataset.chart];   // xotirani bo'shatamiz (d closure'da qoladi)
+    const svg = wrap.querySelector('svg');
+    const tip = wrap.querySelector('.chart-tip');
+    const cross = svg.querySelector('.chart-cross');
+    const hdots = Array.from(svg.querySelectorAll('.chart-hdot'));
+
+    function locate(clientX) {
+      const r = svg.getBoundingClientRect();
+      const vx = (clientX - r.left) / r.width * d.W;
+      let i = d.n === 1 ? 0 : Math.round((vx - d.padL) / d.pw * (d.n - 1));
+      return Math.max(0, Math.min(d.n - 1, i));
+    }
+    function show(i, clientX, clientY) {
+      const cx = d.xs[i];
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.display = '';
+      hdots.forEach((dot, si) => {
+        dot.setAttribute('cx', cx); dot.setAttribute('cy', d.ys[si][i]); dot.style.display = '';
+      });
+      tip.innerHTML = `<div class="ct-h">${esc(d.labels[i])}</div>` + d.series.map((s) =>
+        `<div class="ct-row"><i style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${money(s.values[i])}</b></div>`).join('');
+      tip.classList.remove('hidden');
+      const wr = wrap.getBoundingClientRect();
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = clientX - wr.left + 14, top = clientY - wr.top + 14;
+      if (left + tw > wr.width) left = clientX - wr.left - tw - 14;
+      if (left < 0) left = 6;
+      if (top + th > wr.height) top = wr.height - th - 6;
+      if (top < 0) top = 6;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+    function hide() {
+      cross.style.display = 'none';
+      hdots.forEach((dot) => { dot.style.display = 'none'; });
+      tip.classList.add('hidden');
+    }
+    svg.addEventListener('mousemove', (e) => show(locate(e.clientX), e.clientX, e.clientY));
+    svg.addEventListener('mouseleave', hide);
+  });
 }
 
 function barChart(bars, opts = {}) {
@@ -120,6 +192,7 @@ async function boot() {
   const st = await api.getState();
   S.serverUrl = st.serverUrl || '';
   $('serverInput').value = S.serverUrl;
+  if (st.version) { const v = $('appVer'); if (v) v.textContent = 'v ' + st.version; }
   if (st.token && !st.loggedOut) {
     // Tokenni tekshiramiz
     S.admin = st.admin; S.usdRate = st.usdRate || 12500;
@@ -446,14 +519,15 @@ async function renderSalesReport(c) {
   const checks = blk.sale_count || 0;
   const avg = checks ? revenue / checks : 0;
 
-  // Grafiklar uchun real sotuvlarni filtrlash (eng eski → eng yangi)
+  // Grafiklar uchun real sotuvlarni filtrlash (eng eski → eng yangi).
+  // total_sum/profit_sum qaytarishda allaqachon manfiy — belgi qo'shilmaydi.
   const ordered = sales.slice().reverse();
-  const linePts = ordered.map((s) => {
+  const labels = ordered.map((s) => {
     const t = parseSaleTs(s.created_at);
-    const hh = t ? `${String((t.getUTCHours()) % 24).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : '';
-    const sign = s.is_return ? -1 : 1;
-    return { label: hh, value: sign * (s.total_sum || 0) };
+    return t ? `${String(t.getUTCHours() % 24).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : '';
   });
+  const revVals = ordered.map((s) => Number(s.total_sum) || 0);
+  const profVals = ordered.map((s) => Number(s.profit_sum) || 0);
 
   // To'lov turlari
   const pay = { cash: 0, card: 0, click: 0, qarz: 0 };
@@ -510,7 +584,10 @@ async function renderSalesReport(c) {
 
     <div class="card">
       <div class="card-title">Sotuvlar</div>
-      ${lineChart(linePts)}
+      ${multiLineChart(labels, [
+        { name: 'Tushum', color: '#2f6bff', values: revVals, fill: 'rgba(47,107,255,.10)' },
+        { name: 'Foyda', color: '#1faa53', values: profVals },
+      ])}
     </div>
 
     <div class="card">
@@ -531,6 +608,7 @@ async function renderSalesReport(c) {
       <div class="card"><div class="card-title">Hafta kunlari bo'yicha to'lovlar</div>${barChart(wdBars, { width: 560 })}</div>
     </div>`;
 
+  bindCharts(c);
   c.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => {
     renderSalesReport._range = b.dataset.range;
     renderSalesReport(c);
@@ -1185,6 +1263,8 @@ function drawPrixod(c) {
         <button class="btn-soft px-cur${usd ? ' usd' : ''}" id="pxCur" title="So'm ⇄ Dollar — bossangiz almashadi">${usd ? '💲 Dollar' : "💵 So'm"}</button></div>
       ${usd ? `<div class="filter" style="width:140px"><label>Kurs (1$ = so'm)</label>
         <input id="pxRate" type="number" min="1" step="any" value="${esc(st._rate)}"></div>` : ''}
+      <div class="filter" style="min-width:210px"><label>Yetkazib beruvchi *</label>
+        <select id="pxSupplier" class="px-sup-sel"><option value="0">— tanlang —</option></select></div>
       <div class="filter" style="flex:1; min-width:260px; position:relative">
         <label>Tovar qidirib qo'shish</label>
         <input id="pxSearch" type="text" placeholder="Nomi · SKU · barcode bo'yicha qidiring" autocomplete="off">
@@ -1222,6 +1302,19 @@ function drawPrixod(c) {
     <div id="pxMsg" class="px-msg" style="margin-top:12px"></div>`;
 
   const re = (id) => document.getElementById(id);
+
+  // Yetkazib beruvchi (majburiy) — saqlashda qabul qilingan tovarlarga biriktiriladi
+  const pxSup = re('pxSupplier');
+  if (pxSup) {
+    loadSuppliers().then(() => {
+      pxSup.innerHTML = '<option value="0">— tanlang —</option>' + supOptions(st._supplierId || 0);
+      pxSup.value = String(st._supplierId || 0);
+    });
+    pxSup.addEventListener('change', () => {
+      st._supplierId = Number(pxSup.value) || 0;
+      pxSup.classList.remove('need');
+    });
+  }
 
   // Qidiruv → natijalar ro'yxati
   const search = re('pxSearch');
@@ -1484,6 +1577,12 @@ function pxConfirmSave(c) {
   const st = renderPrixod;
   const lines = st._lines.filter((l) => (Number(l.miqdori) || 0) > 0);
   if (!lines.length) { toast('Kamida bitta tovarga miqdor kiriting'); return; }
+  if (!st._supplierId) {
+    toast('Avval yetkazib beruvchini tanlang');
+    const sel = document.getElementById('pxSupplier');
+    if (sel) { sel.classList.add('need'); sel.focus(); }
+    return;
+  }
   const totalQty = lines.reduce((a, l) => a + (Number(l.miqdori) || 0), 0);
   const totalCost = lines.reduce((a, l) => a + (Number(l.miqdori) || 0) * (Number(l.tannarx) || 0), 0);
   const totalSell = lines.reduce((a, l) => a + (Number(l.miqdori) || 0) * (Number(l.narx) || 0), 0);
@@ -1498,6 +1597,7 @@ function pxConfirmSave(c) {
       <div class="np-head"><span>📦 Prixodni saqlash</span><button class="np-x" id="pcClose">✕</button></div>
       <div class="np-body">
         <div class="pc-sum">
+          <div><span>Yetkazib beruvchi</span><b>${esc(supName(st._supplierId))}</b></div>
           <div><span>Tovar turlari</span><b>${int(lines.length)} xil</b></div>
           <div><span>Umumiy miqdor</span><b>${money(totalQty)}</b></div>
           <div><span>Umumiy tannarx</span><b>${money(totalCost)} so'm</b></div>
@@ -1535,6 +1635,7 @@ async function pxSave(c) {
   const payload = {
     note: (st._note || ''),
     source: 'desktop-admin',
+    supplier_id: st._supplierId || 0,
     lines: lines.map((l) => ({
       id: l.id, name: l.name, unit: l.unit,
       qty: Number(l.miqdori) || 0, cost: Number(l.tannarx) || 0,
@@ -1651,6 +1752,44 @@ $('loginBtn').addEventListener('click', doLogin);
 $('passInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('loginInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('passInput').focus(); });
 $('logoutBtn').addEventListener('click', doLogout);
+
+// ⌘R / Ctrl+R — ochiq bo'limni serverdan qayta yuklaydi (to'liq reload emas).
+api.onRefresh(() => {
+  if (!S.admin || !S.activeTab) return;
+  renderActive();
+  toast('Yangilandi');
+});
+
+// ── Avtomatik yangilanish banneri (sidebar) ──────────────────────────────────
+function renderUpdateBox(u) {
+  const box = $('updateBox');
+  if (!box) return;
+  if (!u || (!u.available && !u.downloaded && !u.downloading)) {
+    box.classList.add('hidden'); box.innerHTML = ''; return;
+  }
+  let inner = `<div class="ub-title">⬆️ Yangilanish bor${u.version ? ' — v' + esc(u.version) : ''}</div>`;
+  if (u.downloaded) {
+    inner += `<div class="ub-sub">Tayyor — eskisini almashtirib qayta ochadi.</div>
+      <button class="ub-btn" data-uact="install">Qayta ishga tushirish</button>`;
+  } else if (u.downloading) {
+    inner += `<div class="ub-sub">Yuklanmoqda… ${int(u.progress || 0)}%</div>
+      <div class="ub-bar"><i style="width:${int(u.progress || 0)}%"></i></div>`;
+  } else {
+    inner += `<div class="ub-sub">Yangi versiyani yuklab oling.</div>
+      <button class="ub-btn" data-uact="download">Yuklab olish</button>`;
+  }
+  box.innerHTML = inner;
+  box.classList.remove('hidden');
+  const btn = box.querySelector('[data-uact]');
+  if (btn) btn.addEventListener('click', () => {
+    if (btn.dataset.uact === 'download') { api.downloadUpdate(); btn.disabled = true; btn.textContent = 'Yuklanmoqda…'; }
+    else { api.installUpdate(); btn.disabled = true; btn.textContent = 'Ishga tushmoqda…'; }
+  });
+}
+
+if (api.onUpdateState) api.onUpdateState(renderUpdateBox);
+if (api.getUpdate) api.getUpdate().then(renderUpdateBox).catch(() => {});
+if (api.checkUpdate) setTimeout(() => { api.checkUpdate(); }, 2500);
 
 // Logo'ni asset bridge orqali ham yuklaymiz (build'da yo'l o'zgarsa)
 api.getLogo().then((d) => {

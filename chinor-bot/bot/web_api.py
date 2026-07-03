@@ -2201,6 +2201,17 @@ async def api_recent_sales(request: web.Request):
             "price_sum": float(it.get("price", 0) or 0),
             "product_id": it.get("product_id", 0),
         } for it in (s.get("items") or [])]
+        # Chek foydasi — admin «Foyda» grafigi uchun. Ichki rasxod foyda emas.
+        # Qaytarishda qty manfiy → foyda ham manfiy chiqadi (netto to'g'ri).
+        total_sum = float(s.get("total", 0) or 0)
+        if s.get("is_internal"):
+            profit_sum = 0.0
+        else:
+            cost_sum = sum(
+                float(it.get("cost_price", 0) or 0) * float(it.get("qty", 0) or 0)
+                for it in (s.get("items") or [])
+            )
+            profit_sum = total_sum - cost_sum
         # Qaytarish bo'lsa — asl chek raqamini source ichidan ajratamiz
         src = s.get("source", "") or ""
         orig_rno = src.split("qaytarish←")[1].split(" ")[0] if "qaytarish←" in src else ""
@@ -2210,7 +2221,8 @@ async def api_recent_sales(request: web.Request):
             "created_at": s.get("created_at", ""),
             "cashier_name": s.get("cashier_name", "") or "",
             "source": s.get("source", "") or "",
-            "total_sum": float(s.get("total", 0) or 0),
+            "total_sum": total_sum,
+            "profit_sum": profit_sum,
             "subtotal_sum": float(s.get("subtotal", 0) or 0),
             "discount_sum": float(s.get("discount", 0) or 0),
             "payment": pay,
@@ -2424,6 +2436,27 @@ async def updates_static(request: web.Request):
     return web.FileResponse(fpath)
 
 
+# Admin ilova yangilanishlari — kassa feed'i bilan to'qnashmasligi uchun
+# ALOHIDA papka (updates/admin/). Admin main.js macOS'da shu manzilni
+# tekshiradi: <serverUrl>/updates/admin/latest-mac.yml
+ADMIN_UPDATES_DIR = os.path.join(UPDATES_DIR, "admin")
+os.makedirs(ADMIN_UPDATES_DIR, exist_ok=True)
+
+
+async def admin_updates_static(request: web.Request):
+    """Chinor admin ilovasi uchun yangilanish fayllari (updates/admin/)."""
+    name = request.match_info.get("name", "")
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise web.HTTPNotFound()
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in (".yml", ".exe", ".blockmap", ".zip"):
+        raise web.HTTPNotFound()
+    fpath = os.path.realpath(os.path.join(ADMIN_UPDATES_DIR, name))
+    if not fpath.startswith(ADMIN_UPDATES_DIR) or not os.path.isfile(fpath):
+        raise web.HTTPNotFound()
+    return web.FileResponse(fpath)
+
+
 async def frontend_index(request: web.Request):
     """Frontend index.html ni qaytaradi — Mini App shu yerda ishlaydi."""
     idx = os.path.join(FRONTEND_DIR, "index.html")
@@ -2467,7 +2500,8 @@ def create_app() -> web.Application:
     # kattalashtirmaslik uchun). Lazy import — circular importdan qochish.
     from bot import api_suppliers
     api_suppliers.setup(app)
-    # Desktop yangilanish fayllari
+    # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
+    app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)
     # Frontend statik fayllar
     app.router.add_get("/", frontend_index)

@@ -34,4 +34,12 @@ contextBridge.exposeInMainWorld('chinor', {
   supplierDelete: (id) => ipcRenderer.invoke('data:supplierDelete', { id }),
   productSetSupplier: (product_id, supplier_id) => ipcRenderer.invoke('data:productSetSupplier', { product_id, supplier_id }),
   getLogo: () => ipcRenderer.invoke('assets:logo'),
+  // ⌘R bosilganda main process shu hodisani yuboradi — sahifa yangilanadi.
+  onRefresh: (cb) => ipcRenderer.on('app:refresh', () => cb()),
+  // Avtomatik yangilanish (tugma orqali)
+  getUpdate: () => ipcRenderer.invoke('update:get'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (cb) => ipcRenderer.on('update:state', (_e, st) => cb(st)),
 });

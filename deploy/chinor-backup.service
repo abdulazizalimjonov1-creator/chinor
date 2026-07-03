@@ -1,0 +1,16 @@
+# Chinor POS — kunlik baza backup (chinor-backup.timer ishga tushiradi).
+# O'rnatish:
+#   sudo cp deploy/chinor-backup.service deploy/chinor-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now chinor-backup.timer
+# Qo'lda sinash:  sudo systemctl start chinor-backup.service
+
+[Unit]
+Description=Chinor POS — kunlik baza backup
+
+[Service]
+Type=oneshot
+User=chinor
+Group=chinor
+Environment=DATA_DIR=/var/lib/chinor
+ExecStart=/opt/chinor/deploy/backup.sh

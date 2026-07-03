@@ -12,6 +12,7 @@ from bot.config import (
 )
 from bot.notifier import make_low_stock_handler
 from bot.web_api import create_app as create_api_app
+from bot import payment_relay
 from database.channel_db import db, DB_PATH
 from database._helpers import now_local
 from handlers import (
@@ -160,6 +161,9 @@ async def main():
     # ── Cheklar retention (3 oy) — fonda ishlaydi ───────────────────────
     retention_task = asyncio.create_task(_retention_loop(days=90))
 
+    # ── To'lov-link relay (kassa QR to'lovi) — fonda to'lov botini kuzatadi ──
+    payment_task = asyncio.create_task(payment_relay.poll_loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -168,6 +172,7 @@ async def main():
         )
     finally:
         retention_task.cancel()
+        payment_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

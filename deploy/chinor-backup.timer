@@ -1,0 +1,13 @@
+# Chinor POS — backup'ni har kuni 03:00 da ishga tushiradi.
+# (Persistent=true: server o'chiq bo'lsa, yoqilganda o'tkazib yuborilgan
+#  ishni bajaradi.)
+
+[Unit]
+Description=Chinor POS backup — har kuni 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

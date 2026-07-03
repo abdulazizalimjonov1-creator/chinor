@@ -91,6 +91,17 @@ body {
 .nav-item .ico { stroke: currentColor; }
 .side-foot { margin-top: 12px; }
 .ver { font-size: 12px; color: var(--side-muted); text-align: center; padding: 6px 0 10px; }
+
+/* Yangilanish banneri (sidebar) */
+.update-box { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+.update-box.hidden { display: none; }
+.update-box .ub-title { font-size: 13px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 7px; }
+.update-box .ub-sub { font-size: 11.5px; color: var(--side-muted); margin: 3px 0 9px; }
+.update-box .ub-btn { width: 100%; background: #fff; color: var(--brand-d); border: none; border-radius: 9px; padding: 8px 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.update-box .ub-btn:hover { background: #eafbef; }
+.update-box .ub-btn[disabled] { opacity: .7; cursor: default; }
+.update-box .ub-bar { height: 6px; border-radius: 4px; background: rgba(255,255,255,.25); overflow: hidden; margin-top: 4px; }
+.update-box .ub-bar > i { display: block; height: 100%; background: #fff; transition: width .2s; }
 .admin-row { display: flex; align-items: center; gap: 11px; background: rgba(255,255,255,.12); border-radius: 12px; padding: 10px 12px; }
 .admin-ava { width: 38px; height: 38px; border-radius: 50%; background: #fff; color: var(--brand-d); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; }
 .admin-meta { flex: 1; min-width: 0; }
@@ -150,6 +161,24 @@ body {
 @media (max-width: 1180px) { .card-row { grid-template-columns: 1fr; } }
 .chart-svg { width: 100%; display: block; }
 .chart-empty { color: var(--muted); text-align: center; padding: 40px 0; font-size: 14px; }
+
+/* Interaktiv grafik (hover qiymati) */
+.chart-wrap { position: relative; }
+.chart-wrap .chart-svg { cursor: crosshair; }
+.chart-legend { display: flex; gap: 18px; justify-content: flex-end; margin-top: 6px; }
+.chart-legend .cl-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.chart-legend .cl-item i { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+.chart-tip {
+  position: absolute; pointer-events: none; z-index: 5; min-width: 132px;
+  background: #1f2a37; color: #fff; padding: 8px 11px; border-radius: 9px;
+  font-size: 12px; box-shadow: 0 6px 18px rgba(10,20,15,.22);
+}
+.chart-tip.hidden { display: none; }
+.chart-tip .ct-h { font-weight: 700; margin-bottom: 6px; opacity: .92; }
+.chart-tip .ct-row { display: flex; align-items: center; gap: 7px; line-height: 1.85; }
+.chart-tip .ct-row i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.chart-tip .ct-row span { flex: 1; opacity: .82; }
+.chart-tip .ct-row b { font-variant-numeric: tabular-nums; }
 
 /* To'lov turlari (gorizontal bar) */
 .paybars { display: flex; flex-direction: column; gap: 12px; }
@@ -333,3 +362,6 @@ table.tbl tr:hover td { background: #f7faf6; }
 .sup-sel { max-width: 210px; padding: 5px 8px; border: 1.5px solid var(--line); border-radius: 8px; background: #fafdf9; font-size: 13px; outline: none; cursor: pointer; }
 .sup-sel:focus { border-color: var(--brand); background: #fff; }
 .sup-sel:disabled { opacity: .55; cursor: default; }
+.px-sup-sel { padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 10px; background: #fafdf9; font-size: 14px; outline: none; cursor: pointer; }
+.px-sup-sel:focus { border-color: var(--brand); background: #fff; }
+.px-sup-sel.need { border-color: #e74c3c; background: #fff5f5; }

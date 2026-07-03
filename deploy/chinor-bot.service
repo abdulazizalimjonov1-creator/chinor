@@ -1,0 +1,31 @@
+# Chinor POS — Telegram bot + Mini App API (port 8765)
+# O'rnatish:
+#   sudo cp deploy/chinor-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now chinor-bot
+# Loglar:
+#   journalctl -u chinor-bot -f
+#
+# Faraz: repo /opt/chinor da, venv /opt/chinor/.venv da, .env esa
+# /opt/chinor/chinor-bot/.env da (DATA_DIR shu .env dan o'qiladi).
+
+[Unit]
+Description=Chinor POS — Telegram bot + Mini App API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chinor
+Group=chinor
+WorkingDirectory=/opt/chinor/chinor-bot
+ExecStart=/opt/chinor/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+# Yiqilsa cheksiz qayta urinaversin
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
