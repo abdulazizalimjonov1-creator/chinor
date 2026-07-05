@@ -1642,8 +1642,20 @@ async def api_sale(request: web.Request):
     body = await _read_json(request)
     items_in = body.get("items") or []
     payment = (body.get("payment") or "cash").lower()
-    if payment not in ("cash", "card"):
+    if payment not in ("cash", "card", "click", "split"):
         payment = "cash"
+    # Aralash (split) to'lov qismlari — kassa sync bilan bir xil maydonlar
+    def _num(v):
+        try:
+            return max(0.0, float(v or 0))
+        except (TypeError, ValueError):
+            return 0.0
+    split_cash = _num(body.get("paid_cash"))
+    split_card = _num(body.get("paid_card"))
+    split_other = _num(body.get("paid_other"))
+    split_debt = _num(body.get("debt_sum"))
+    is_split = (payment == "split") or \
+        (split_cash + split_card + split_other + split_debt) > 0
     try:
         discount_sum = float(body.get("discount_sum") or 0)
     except (TypeError, ValueError):
@@ -1720,6 +1732,23 @@ async def api_sale(request: web.Request):
 
     eff_sum = override_sum if override_sum > 0 else subtotal_sum
 
+    # Aralash to'lovda qismlar jami chek summasiga teng bo'lishi kerak
+    if is_split and not is_internal and not is_nasiya:
+        parts_total = split_cash + split_card + split_other + split_debt
+        if abs(parts_total - eff_sum) > 1:
+            return _err(f"Aralash to'lov qismlari ({parts_total:,.0f}) chek "
+                        f"jamiga ({eff_sum:,.0f}) teng emas")
+        if split_debt > 0:
+            if not client:
+                return _err("Qarz qismi uchun mijoz tanlang")
+            if not client.get("allow_credit"):
+                return _err("Bu mijozga qarzga savdo ruxsat etilmagan")
+
+    # Chek raqami — kassa terminallari "<kassa_no>-<seq>" ishlatadi; Mini App
+    # sotuvlariga "M-<seq>" beramiz (atomik hisoblagich — bir soniyada ikki
+    # sotuv bo'lsa ham to'qnashmaydi).
+    receipt_no = f"M-{_db.next_receipt_seq('miniapp')}"
+
     try:
         kw = {}
         if is_internal:
@@ -1728,11 +1757,21 @@ async def api_sale(request: web.Request):
         elif is_nasiya:
             # Qarzga — to'liq summa mijoz qarziga yoziladi
             kw = {"is_nasiya": True, "client_id": client_id}
+        elif is_split:
+            # Aralash to'lov: har qism o'z paid_* ustuniga, qarz qismi mijozga
+            kw = {"paid_cash": split_cash, "paid_card": split_card,
+                  "paid_other": split_other}
+            if split_debt > 0 and client_id:
+                kw["debt_sum"] = split_debt
+            if client_id:
+                kw["client_id"] = client_id
         else:
             if payment == "cash":
                 kw["paid_cash"] = eff_sum
-            else:
+            elif payment == "card":
                 kw["paid_card"] = eff_sum
+            else:  # click
+                kw["paid_other"] = eff_sum
             if client_id:
                 kw["client_id"] = client_id  # chek mijozga Telegram orqali ketadi
         sale = await _db.create_sale(
@@ -1742,6 +1781,7 @@ async def api_sale(request: web.Request):
             paid_currency="sum",
             override_total_sum=(0 if is_internal else override_sum),
             source="miniapp",
+            receipt_no=receipt_no,
             **kw,
         )
     except Exception as e:
@@ -1750,6 +1790,7 @@ async def api_sale(request: web.Request):
     return web.json_response({
         "ok": True,
         "sale_id": sale["id"],
+        "receipt_no": sale.get("receipt_no", "") or "",
         "total_sum": float(sale.get("total", 0) or 0),
         "items_count": len(sale_items),
         "change_sum": float(sale.get("change", 0) or 0),

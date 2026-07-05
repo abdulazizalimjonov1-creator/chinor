@@ -329,10 +329,12 @@
                     <span class="val" id="cartClientName" style="cursor:pointer;color:#2563eb;font-weight:700;" onclick="openClientPick()">Tanlash ›</span>
                 </div>
                 <div class="stat-row"><span class="lbl">To'lash kerak</span><span class="val val-green" id="cartTotal">0 so'm</span></div>
-                <div style="display:flex;gap:10px;margin-top:14px;" id="cartPayRow">
+                <div style="display:flex;gap:8px;margin-top:14px;" id="cartPayRow">
                     <button class="pay-btn" id="payCashBtn" onclick="finishSale('cash')">💵 Naqd</button>
                     <button class="pay-btn pay-card" id="payCardBtn" onclick="finishSale('card')">💳 Karta</button>
+                    <button class="pay-btn" id="payClickBtn" style="background:#0ea5e9;color:#fff;" onclick="finishSale('click')">📲 Click</button>
                 </div>
+                <button class="pay-btn" id="paySplitBtn" style="width:100%;margin-top:10px;background:#475569;color:#fff;" onclick="openSplitPay()">🔀 Aralash to'lov</button>
                 <button class="pay-btn" id="payNasiyaBtn" style="display:none;width:100%;margin-top:10px;background:#f59e0b;color:#fff;" onclick="finishSale('nasiya')">🤝 Qarzga (nasiya)</button>
                 <button class="pay-btn" id="payInternalBtn" style="display:none;width:100%;margin-top:10px;background:#7c3aed;color:#fff;" onclick="finishSale('internal')">🔻 Chinor rasxodi (tannarxda)</button>
                 <button class="more-btn" style="margin-top:10px;background:#fee2e2;color:#b91c1c;" onclick="clearCart()">🗑 Savatni tozalash</button>

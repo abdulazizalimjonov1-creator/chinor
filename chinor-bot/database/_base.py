@@ -526,6 +526,30 @@ class BaseDB:
             finally:
                 conn.close()
 
+    def next_receipt_seq(self, prefix: str = "miniapp") -> int:
+        """Chek raqami uchun atomik ketma-ket hisoblagich (settings jadvalida).
+        Mini App sotuvlariga noyob "M-<seq>" raqam berishda ishlatiladi —
+        vaqt-asosli raqam bir soniya ichida to'qnashishi mumkin."""
+        key = f"receipt_seq_{prefix}"
+        with self._lock:
+            conn = self._conn()
+            try:
+                conn.execute(
+                    "INSERT INTO settings(key, value) VALUES(?, '0') "
+                    "ON CONFLICT(key) DO NOTHING", (key,)
+                )
+                conn.execute(
+                    "UPDATE settings SET value = CAST(value AS INTEGER) + 1 "
+                    "WHERE key=?", (key,)
+                )
+                r = conn.execute(
+                    "SELECT value FROM settings WHERE key=?", (key,)
+                ).fetchone()
+                conn.commit()
+                return int(r["value"]) if r else 1
+            finally:
+                conn.close()
+
     def get_usd_rate(self) -> float:
         try:
             return float(self.get_setting("usd_rate", str(USD_RATE_DEFAULT)))

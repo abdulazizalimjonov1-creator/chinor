@@ -1528,15 +1528,65 @@
 
         let _saleInProgress = false;
         function _setPayBtnsDisabled(v) {
-            ['payCashBtn','payCardBtn','payNasiyaBtn','payInternalBtn']
+            ['payCashBtn','payCardBtn','payClickBtn','paySplitBtn','payNasiyaBtn','payInternalBtn']
                 .forEach(id => { const b = $(id); if (b) b.disabled = v; });
         }
-        // mode: 'cash' | 'card' | 'nasiya' | 'internal'
-        window.finishSale = async function (mode) {
+
+        // Aralash to'lov modali: jami summani naqd/karta/click/qarz ga bo'lish
+        window.openSplitPay = function () {
+            if (!Object.keys(cart).length) { toast('Savat bo\'sh'); return; }
+            const subtotal = Object.values(cart).reduce((a,c)=>a + c.price*c.qty, 0);
+            const disc = parseFloat($('cartDiscount').value) || 0;
+            const total = Math.max(0, subtotal - disc);
+            const canDebt = posClient && posClient.allow_credit && !posClient.is_internal;
+            const ov = document.createElement('div');
+            ov.className = 'cl-modal-overlay';
+            ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+            const inp = (id, lbl) => `<div class="stat-row"><span class="lbl">${lbl}</span>` +
+                `<input type="number" id="${id}" placeholder="0" inputmode="numeric" ` +
+                `style="width:130px;text-align:right;border:1px solid #e5e7eb;border-radius:10px;padding:8px 9px;font-size:15px;"></div>`;
+            ov.innerHTML = `<div class="cl-modal">
+                <h3 style="margin:0 0 4px">🔀 Aralash to'lov</h3>
+                <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+                    Jami: <b>${fmtSum(total)} so'm</b> — qismlarga bo'ling</div>
+                ${inp('spCash','💵 Naqd')}
+                ${inp('spCard','💳 Karta')}
+                ${inp('spClick','📲 Click')}
+                ${canDebt ? inp('spDebt','🤝 Qarzga') :
+                    '<div style="font-size:12px;color:var(--muted);margin:6px 0">Qarz qismi uchun nasiya ruxsatli mijoz tanlang</div>'}
+                <div class="stat-row"><span class="lbl">Kiritildi</span><span class="val" id="spSum">0 so'm</span></div>
+                <div class="stat-row"><span class="lbl">Qoldi</span><span class="val" id="spLeft">${fmtSum(total)} so'm</span></div>
+                <button id="spOk" disabled style="width:100%;padding:13px;margin-top:12px;background:var(--primary);color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;opacity:.5">To'lash</button>
+            </div>`;
+            document.body.appendChild(ov);
+            const val = (id) => { const e = ov.querySelector('#'+id); return e ? (parseFloat(e.value)||0) : 0; };
+            const recalc = () => {
+                const s = val('spCash')+val('spCard')+val('spClick')+val('spDebt');
+                ov.querySelector('#spSum').textContent = fmtSum(s) + " so'm";
+                const left = total - s;
+                const leftEl = ov.querySelector('#spLeft');
+                leftEl.textContent = fmtSum(left) + " so'm";
+                leftEl.style.color = Math.abs(left) < 1 ? '#16a34a' : '#dc2626';
+                const ok = ov.querySelector('#spOk');
+                ok.disabled = Math.abs(left) >= 1;
+                ok.style.opacity = ok.disabled ? '.5' : '1';
+            };
+            ov.querySelectorAll('input').forEach(e => e.addEventListener('input', recalc));
+            ov.querySelector('#spOk').addEventListener('click', () => {
+                const split = { cash: val('spCash'), card: val('spCard'),
+                                click: val('spClick'), debt: val('spDebt') };
+                ov.remove();
+                finishSale('split', split);
+            });
+        };
+
+        // mode: 'cash' | 'card' | 'click' | 'split' | 'nasiya' | 'internal'
+        window.finishSale = async function (mode, split) {
             if (_saleInProgress) return;
             const ids = Object.keys(cart);
             if (!ids.length) { toast('Savat bo\'sh'); return; }
             if (mode === 'nasiya' && !posClient) { toast('Avval mijoz tanlang'); return; }
+            if (mode === 'split' && split && split.debt > 0 && !posClient) { toast('Qarz qismi uchun mijoz tanlang'); return; }
             _saleInProgress = true;
             _setPayBtnsDisabled(true);
             $('cartStatus').textContent = '⏳ Sotuv saqlanmoqda...';
@@ -1552,6 +1602,11 @@
             } else if (mode === 'nasiya') {
                 body.is_nasiya = true;
                 body.client_id = posClient.id;
+            } else if (mode === 'split' && split) {
+                body.payment = 'split';
+                body.paid_cash = split.cash; body.paid_card = split.card;
+                body.paid_other = split.click; body.debt_sum = split.debt;
+                if (posClient) body.client_id = posClient.id;
             } else {
                 body.payment = mode;
                 if (posClient) body.client_id = posClient.id;
@@ -1569,11 +1624,12 @@
                     posClient = null; updateCartClientUI();
                     renderCart(); updateCartBar();
                     const kind = data.is_internal ? 'Rasxod' : (data.is_nasiya ? 'Nasiya' : 'Sotuv');
+                    const rno = data.receipt_no || ('#' + data.sale_id);
                     $('cartStatus').textContent =
-                        `✅ ${kind} #${data.sale_id} yakunlandi! Jami: ${fmtSum(data.total_sum)} so'm`;
+                        `✅ ${kind} ${rno} yakunlandi! Jami: ${fmtSum(data.total_sum)} so'm`;
                     if (tg && tg.showPopup) {
                         tg.showPopup({ title:`✅ ${kind} yakunlandi`,
-                            message:`Chek #${data.sale_id}\nJami: ${fmtSum(data.total_sum)} so'm` +
+                            message:`Chek № ${rno}\nJami: ${fmtSum(data.total_sum)} so'm` +
                                     (data.is_nasiya?`\n🤝 Qarzga yozildi`:'') +
                                     (data.is_internal?`\n🔻 Ichki rasxod (tannarxda)`:'') +
                                     (data.change_sum>0?`\nQaytim: ${fmtSum(data.change_sum)} so'm`:''),
