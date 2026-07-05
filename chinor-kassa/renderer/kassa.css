@@ -799,3 +799,40 @@ input { font-family: inherit; }
   .btn-sell, .btn-sell-sm { padding: 9px; font-size: 15px; }
   .summa-val { font-size: 21px; }
 }
+
+/* ── Klient: yangi klient yaratish + qarz ruxsati tugmasi ─────────────── */
+.cl-actions { display: flex; gap: 8px; margin-top: 8px; }
+.cl-actions .modal-btn { flex: 0 0 auto; }
+.cl-actions .modal-btn-wide { flex: 1; margin-top: 0; }
+.cl-credit {
+  margin-left: 8px; padding: 3px 8px; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid #cbd5e1; background: #f8fafc; font-size: 13px;
+  filter: grayscale(1); opacity: .6;
+}
+.cl-credit.on { border-color: #16a34a; background: #ecfdf5; filter: none; opacity: 1; }
+.cl-credit:hover { opacity: 1; }
+.cl-type {
+  font-size: 11px; font-weight: 800; color: #7c3aed; background: #f3e8ff;
+  border-radius: 6px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px;
+}
+.cn-row { display: flex; gap: 14px; margin: 8px 2px 2px; }
+.cn-opt { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.cn-credit { margin: 8px 2px 2px; }
+.cn-msg { min-height: 18px; color: #dc2626; font-size: 13px; margin: 6px 2px 0; }
+
+/* ── Optom (ulgurji) rejim belgilari ──────────────────────────────────── */
+/* Optom narx qo'llangan — narx yashil */
+.cart-row.wh-ok .new-price, .cart-row.wh-ok .cr-sum { color: #16a34a; }
+/* Optom narx YO'Q (dona narx qoldi) — nom va narx qizil */
+.cart-row.wh-missing .cr-title,
+.cart-row.wh-missing .new-price,
+.cart-row.wh-missing .cr-sum { color: #dc2626; }
+.wh-tag {
+  font-size: 10px; font-weight: 800; border-radius: 6px; padding: 1px 6px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap;
+}
+.wh-tag.ok { color: #16a34a; background: #ecfdf5; }
+.wh-tag.no { color: #dc2626; background: #fef2f2; }
+/* Chap mahsulot ro'yxatida optom ustuni (optom mijoz tanlanganda) */
+.pr-whole.wh-ok-txt { color: #16a34a; font-weight: 800; }
+.pr-whole.wh-no-txt { color: #dc2626; font-weight: 800; }

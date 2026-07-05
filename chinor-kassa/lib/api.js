@@ -42,6 +42,10 @@ module.exports = {
     req(base, '/api/sync/sales', { method: 'POST', token, body: { sales }, timeout: 30000 }),
   pushCashTxns: (base, token, txns) =>
     req(base, '/api/sync/cash-txns', { method: 'POST', token, body: { txns }, timeout: 30000 }),
+  clientSave: (base, token, payload) =>
+    req(base, '/api/client/save', { method: 'POST', token, body: payload, timeout: 15000 }),
+  clientCredit: (base, token, clientId, allow) =>
+    req(base, '/api/client/credit', { method: 'POST', token, body: { client_id: clientId, allow: !!allow }, timeout: 15000 }),
   recentSales: (base, token, since = '', limit = 1000) => {
     const qs = since
       ? `since=${encodeURIComponent(since)}&limit=${limit}`

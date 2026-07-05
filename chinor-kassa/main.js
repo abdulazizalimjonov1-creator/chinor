@@ -660,6 +660,29 @@ function wireIpc() {
   ipcMain.handle('product:setBarcode', (_e, { productId, barcode }) =>
     store.setProductBarcode(productId, barcode));
   ipcMain.handle('clients:get', () => store.data.clients || []);
+  // Yangi mijoz yaratish — serverda saqlanadi, so'ng klientlar keshi yangilanadi.
+  // Offlayn ishlamaydi (mijozlar ro'yxati server manbai).
+  ipcMain.handle('clients:create', async (_e, payload) => {
+    if (!store.data.token) return { ok: false, error: 'Avval tizimga kiring' };
+    const { data } = await api.clientSave(store.data.serverUrl, store.data.token, payload || {});
+    if (!data || !data.ok) {
+      return { ok: false, error: (data && data.error) || 'Internet/server bilan aloqa yo\'q' };
+    }
+    try { await pullCatalog(); } catch (_) {}
+    pushState();
+    return { ok: true, client: data.client, clients: store.data.clients || [] };
+  });
+  // Mijozga qarzga (nasiya) ruxsatini yoqish/o'chirish
+  ipcMain.handle('clients:credit', async (_e, { clientId, allow }) => {
+    if (!store.data.token) return { ok: false, error: 'Avval tizimga kiring' };
+    const { data } = await api.clientCredit(store.data.serverUrl, store.data.token, clientId, allow);
+    if (!data || !data.ok) {
+      return { ok: false, error: (data && data.error) || 'Internet/server bilan aloqa yo\'q' };
+    }
+    try { await pullCatalog(); } catch (_) {}
+    pushState();
+    return { ok: true, clients: store.data.clients || [] };
+  });
 
   ipcMain.handle('drafts:get', () => store.listDrafts());
   ipcMain.handle('drafts:save', (_e, draft) => {

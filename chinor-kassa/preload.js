@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('kassa', {
   getCatalog: () => ipcRenderer.invoke('catalog:get'),
   setProductBarcode: (productId, barcode) => ipcRenderer.invoke('product:setBarcode', { productId, barcode }),
   getClients: () => ipcRenderer.invoke('clients:get'),
+  createClient: (payload) => ipcRenderer.invoke('clients:create', payload),
+  setClientCredit: (clientId, allow) => ipcRenderer.invoke('clients:credit', { clientId, allow }),
   recordSale: (sale) => ipcRenderer.invoke('sale:record', sale),
   recordReturn: (ret) => ipcRenderer.invoke('sale:return', ret),
   // Smena (shift)

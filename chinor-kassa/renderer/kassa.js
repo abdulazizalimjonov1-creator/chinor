@@ -48,6 +48,41 @@ function costSum(p) {
   if (s <= 0) s = wholesaleSum(p);
   return s;
 }
+// Tanlangan klient optom (ulgurji) mijozmi? Ichki (rasxod) mijoz bundan mustasno.
+function isOptomClient() {
+  return !!(selClient && !selClient.is_internal &&
+    String(selClient.type || '').toLowerCase().startsWith('opt'));
+}
+// Savatga qo'shishda qo'llanadigan birlik narx:
+//   optom klient + optom narx bor  → optom narx  (wh=1, yashil)
+//   optom klient + optom narx YO'Q → dona narx   (wh=-1, qizil ogohlantirish)
+//   oddiy holat                    → dona narx   (wh=0)
+function unitPriceFor(p) {
+  if (isOptomClient()) {
+    const w = wholesaleSum(p);
+    if (w > 0) return { price: w, wh: 1 };
+    return { price: priceSum(p), wh: -1 };
+  }
+  return { price: priceSum(p), wh: 0 };
+}
+// Klient almashganda savatdagi narxlarni qayta hisoblaydi (dona ⇄ optom).
+// Kassir qo'lda o'zgartirgan narx (price_sum ≠ orig) TEGILMAYDI.
+function repriceCart() {
+  for (const c of CART) {
+    const p = CATALOG.find((x) => x.id === c.product_id);
+    if (!p) continue;
+    const manual = Math.round(Number(c.price_sum)) !== Math.round(Number(c.orig));
+    const u = unitPriceFor(p);
+    c.wh = u.wh;
+    if (!manual) { c.price_sum = u.price; c.orig = u.price; }
+  }
+  clearOverride();
+  renderCart();
+  // Chap ro'yxatdagi optom ustuni ranglari ham yangilansin
+  const si = $('scanInput');
+  renderList(si ? si.value : '');
+}
+
 function matchProducts(q) {
   q = (q || '').trim().toLowerCase();
   if (!q) return CATALOG;
@@ -157,12 +192,16 @@ function renderClientList(q) {
   const box = $('clientList');
   if (!list.length) { box.innerHTML = `<div class="modal-empty">Klient topilmadi</div>`; return; }
   box.innerHTML = list.map((c) => {
+    const optom = String(c.type || '').toLowerCase().startsWith('opt');
     const badge = c.is_internal ? '🏠 rasxod'
-      : (c.allow_credit ? '🤝 qarzga'
-      : (c.debt_sum > 0 ? ('Qarz: ' + nf(c.debt_sum)) : ''));
+      : (c.debt_sum > 0 ? ('Qarz: ' + nf(c.debt_sum)) : (optom ? '📦 optom' : ''));
+    // Qarz ruxsati tugmasi — bosilsa yoqiladi/o'chiriladi (ichki mijozga chiqmaydi)
+    const credit = c.is_internal ? ''
+      : `<button class="cl-credit ${c.allow_credit ? 'on' : ''}" data-cid="${c.id}"
+           title="${c.allow_credit ? "Qarzga ruxsat YOQIQ — o'chirish" : "Qarzga ruxsat berish"}">🤝</button>`;
     return `<div class="modal-row" data-id="${c.id}">
-    <span>${escapeHtml(c.name)}</span>
-    <span class="mr-sub">${badge}</span>
+    <span>${escapeHtml(c.name)}${optom ? ' <span class="cl-type">optom</span>' : ''}</span>
+    <span class="mr-sub">${badge}${credit}</span>
   </div>`;
   }).join('');
   box.querySelectorAll('.modal-row').forEach((el) =>
@@ -170,13 +209,80 @@ function renderClientList(q) {
       const c = CLIENTS.find((x) => x.id === Number(el.dataset.id));
       if (c) pickClient(c);
     }));
+  box.querySelectorAll('.cl-credit').forEach((btn) =>
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const cid = Number(btn.dataset.cid);
+      const c = CLIENTS.find((x) => x.id === cid);
+      if (!c) return;
+      const allow = !c.allow_credit;
+      btn.disabled = true;
+      const res = await window.kassa.setClientCredit(cid, allow);
+      btn.disabled = false;
+      if (res && res.ok) {
+        CLIENTS = res.clients || CLIENTS;
+        renderClientList($('clientSearch').value);
+        toast(allow ? `🤝 ${c.name} — qarzga ruxsat berildi` : `${c.name} — qarz yopildi`);
+      } else {
+        toast('❌ ' + ((res && res.error) || 'Xato'), true);
+      }
+    }));
 }
 function pickClient(c) {
-  selClient = { id: c.id, name: c.name, allow_credit: !!c.allow_credit, is_internal: !!c.is_internal };
+  selClient = {
+    id: c.id, name: c.name, allow_credit: !!c.allow_credit,
+    is_internal: !!c.is_internal, type: c.type || 'dona',
+  };
   updateClientChip(); closeModal('clientModal');
-  toast((selClient.is_internal ? '🏠 ' : '👤 ') + c.name); focusScan();
+  // Optom mijoz — savatdagi narxlar optomga o'tadi (bor bo'lsa)
+  repriceCart();
+  toast((selClient.is_internal ? '🏠 ' : (isOptomClient() ? '📦 ' : '👤 ')) + c.name
+    + (isOptomClient() ? ' · optom narxlar' : ''));
+  focusScan();
 }
-function clearClient() { selClient = null; updateClientChip(); closeModal('clientModal'); focusScan(); }
+function clearClient() {
+  selClient = null; updateClientChip(); closeModal('clientModal');
+  repriceCart();   // dona narxlarga qaytamiz
+  focusScan();
+}
+
+// ── Yangi klient yaratish (kassadan) ─────────────────────────────────
+function openClientNewModal() {
+  $('cnName').value = ''; $('cnPhone').value = '';
+  $('cnCredit').checked = false;
+  const d = document.querySelector('input[name="cnType"][value="dona"]');
+  if (d) d.checked = true;
+  $('cnMsg').textContent = '';
+  closeModal('clientModal');
+  openModal('clientNewModal');
+  setTimeout(() => $('cnName').focus(), 60);
+}
+async function saveNewClient() {
+  const name = $('cnName').value.trim();
+  const phone = $('cnPhone').value.trim();
+  const typeEl = document.querySelector('input[name="cnType"]:checked');
+  const msg = $('cnMsg');
+  if (!name) { msg.textContent = 'Mijoz nomini kiriting'; $('cnName').focus(); return; }
+  if (phone.replace(/\D+/g, '').length < 7) { msg.textContent = 'Telefon raqami noto\'g\'ri'; $('cnPhone').focus(); return; }
+  const btn = $('cnSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saqlanmoqda…'; msg.textContent = '';
+  const res = await window.kassa.createClient({
+    shop_name: name, phone,
+    client_type: typeEl ? typeEl.value : 'dona',
+    allow_credit: $('cnCredit').checked,
+  });
+  btn.disabled = false; btn.textContent = 'Saqlash';
+  if (res && res.ok) {
+    CLIENTS = res.clients || CLIENTS;
+    closeModal('clientNewModal');
+    toast('✅ Yangi klient: ' + name);
+    // Yangi klientni darhol tanlab qo'yamiz
+    const c = res.client || CLIENTS.find((x) => x.name === name);
+    if (c) pickClient(c);
+  } else {
+    msg.textContent = (res && res.error) || 'Saqlanmadi — internetni tekshiring';
+  }
+}
 
 // To'lov turini standart holatga (Naqd) qaytaradi — har sotuvdan keyin
 function resetPayMethod() {
@@ -524,12 +630,12 @@ function buildReceiptHtml(s) {
   const date = (s.created_at || '').slice(0, 10).split('-').reverse().join('.');
   const time = (s.created_at || '').slice(11, 16);
   const kassaNo = s.receipt_no ? String(s.receipt_no).split('-')[0] : ((window._lastState && window._lastState.kassaNo) || 1);
-  const rows = (s.items || []).map((it) => {
+  const rows = (s.items || []).map((it, _i) => {
     const line = `${it.qty} × ${nf(it.price_sum)} = ${nf(it.price_sum * it.qty)}`;
     const bc = String(it.barcode || '').trim();
     const sk = it.sku || it.product_id || '';
     const skuLine = (bc || sk) ? `<div class="sub">${escapeHtml(bc)}${bc && sk ? ' · ' : ''}${sk}</div>` : '';
-    return `<div class="it"><div class="it-name">${escapeHtml(it.name || '')}</div><div class="it-line">${line}</div>${skuLine}</div>`;
+    return `<div class="it"><div class="it-name">${_i + 1}) ${escapeHtml(it.name || '')}</div><div class="it-line">${line}</div>${skuLine}</div>`;
   }).join('');
   // To'lov ko'rinishi — aralash (split) bo'lsa har turdagi summa alohida qator
   const splitObj = s.split;
@@ -576,8 +682,9 @@ function buildReceiptHtml(s) {
     hr{border:0;border-top:2px solid #000;margin:5px 0}
     .dash{border:0;border-top:2px dashed #000;margin:5px 0}
     .hrow{display:flex;justify-content:space-between;gap:10px;font-size:16px;margin:1px 0}
-    .it{margin:4px 0}
-    .it-name{font-weight:800;font-size:18px}
+    .it{margin:0;padding:6px 0;border-bottom:1px dotted #777}
+    .it:last-child{border-bottom:0}
+    .it-name{font-weight:900;font-size:19px;letter-spacing:.2px}
     .it-line{text-align:right;font-size:17px}
     .sub{font-size:13px;font-weight:600}
     .tot{display:flex;justify-content:space-between;font-size:17px;margin:1px 0}
@@ -656,16 +763,19 @@ function buildReceiptModel(s) {
   L.push({ t: 'sep', ch: '-' });
   let _idx = 0;
   for (const it of (s.items || [])) {
+    // Har mahsulot orasida bo'sh qator — yozuvlar bir-biriga qo'shilib
+    // ketmasin (1-mahsulot SKU/barcodi bilan 2-mahsulot nomi ajralib tursin)
+    if (_idx > 0) L.push({ t: 'text', s: '' });
     _idx++;
     const qp = `${it.qty} x ${nf(it.price_sum)} = ${nf(it.price_sum * it.qty)}`;
     const nm = `${_idx}) ${it.name || ''}`;
     // Narx HAR DOIM nomning 1-qatori to'g'risida (o'ngda). Uzun nom o'ngdagi narx joyini
-    // egallamasdan, pastki qatorlarga o'raladi (kesilmaydi).
+    // egallamasdan, pastki qatorlarga o'raladi (kesilmaydi). Nom QALIN — o'qish oson.
     const leftW = Math.max(8, ESC_COLS_R - qp.length - 1);
     const nameLines = wrapText(nm, leftW);
-    L.push({ t: 'row', l: nameLines[0], r: qp });
-    for (let i = 1; i < nameLines.length; i++) L.push({ t: 'text', s: '   ' + nameLines[i] });
-    // SKU / barcode — nom ostida ozgina chekinish bilan
+    L.push({ t: 'row', l: nameLines[0], r: qp, bold: true });
+    for (let i = 1; i < nameLines.length; i++) L.push({ t: 'text', s: '   ' + nameLines[i], bold: true });
+    // SKU / barcode — nom ostida ozgina chekinish bilan (odatiy, qalin emas)
     const bc = String(it.barcode || '').trim();
     const sk = String(it.sku || it.product_id || '').trim();
     const sub = bc ? (sk ? `${bc} / ${sk}` : bc) : (sk ? `SKU: ${sk}` : '');
@@ -1059,12 +1169,12 @@ function buildReturnReceiptHtml(s) {
   const date = (s.created_at || '').slice(0, 10).split('-').reverse().join('.');
   const time = (s.created_at || '').slice(11, 16);
   const kassaNo = s.receipt_no ? String(s.receipt_no).split('-')[0] : ((window._lastState && window._lastState.kassaNo) || 1);
-  const rows = (s.items || []).map((it) => {
+  const rows = (s.items || []).map((it, _i) => {
     const line = `${it.qty} × ${nf(it.price_sum)} = ${nf(it.price_sum * it.qty)}`;
     const bc = String(it.barcode || '').trim();
     const sk = it.sku || it.product_id || '';
     const skuLine = (bc || sk) ? `<div class="sub">${escapeHtml(bc)}${bc && sk ? ' · ' : ''}${sk}</div>` : '';
-    return `<div class="it"><div class="it-name">${escapeHtml(it.name || '')}</div><div class="it-line">${line}</div>${skuLine}</div>`;
+    return `<div class="it"><div class="it-name">${_i + 1}) ${escapeHtml(it.name || '')}</div><div class="it-line">${line}</div>${skuLine}</div>`;
   }).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{margin:0}
@@ -1081,8 +1191,9 @@ function buildReturnReceiptHtml(s) {
     hr{border:0;border-top:2px solid #000;margin:5px 0}
     .dash{border:0;border-top:2px dashed #000;margin:5px 0}
     .hrow{display:flex;justify-content:space-between;gap:10px;font-size:16px;margin:1px 0}
-    .it{margin:4px 0}
-    .it-name{font-weight:800;font-size:18px}
+    .it{margin:0;padding:6px 0;border-bottom:1px dotted #777}
+    .it:last-child{border-bottom:0}
+    .it-name{font-weight:900;font-size:19px;letter-spacing:.2px}
     .it-line{text-align:right;font-size:17px}
     .sub{font-size:13px;font-weight:600}
     .jami{display:flex;justify-content:space-between;font-size:27px;font-weight:900;margin-top:5px}
@@ -1294,7 +1405,7 @@ function renderList(filter = '') {
       <span class="pr-name">${escapeHtml(p.name)}${bc ? `<span class="pr-barcode">${bc}</span>` : ''}</span>
       <span class="${qty <= 0 ? 'pr-qty out' : 'pr-qty'}">${nf(qty)}</span>
       <span class="pr-price">${nf(priceSum(p))}</span>
-      <span class="pr-whole">${whole ? nf(whole) : '—'}</span>
+      <span class="pr-whole${isOptomClient() ? (whole ? ' wh-ok-txt' : ' wh-no-txt') : ''}">${whole ? nf(whole) : '—'}</span>
     </div>`;
   }).join('');
   box.querySelectorAll('.product-row').forEach((el) =>
@@ -1379,10 +1490,13 @@ function addToCart(pid) {
   const idx = CART.findIndex((c) => c.product_id === pid);
   if (idx >= 0) { CART[idx].qty += 1; selIndex = idx; }
   else {
+    // Optom mijoz tanlangan bo'lsa — optom narx (bo'lmasa dona narx + qizil belgi)
+    const u = unitPriceFor(p);
+    if (u.wh === -1) toast(`⚠ «${p.name}» da optom narx yo'q — dona narx qo'llandi`, true);
     CART.unshift({
       product_id: pid, name: p.name, sku: p.id, barcode: String(p.barcode || ''),
-      qty: 1, price_sum: priceSum(p), orig: priceSum(p), cost: costSum(p),
-      unit: p.unit || 'dona', qoldiq: Number(p.qty) || 0,
+      qty: 1, price_sum: u.price, orig: u.price, cost: costSum(p),
+      unit: p.unit || 'dona', qoldiq: Number(p.qty) || 0, wh: u.wh,
     });
     selIndex = 0;
   }
@@ -1544,10 +1658,15 @@ function renderCart() {
         : `<span class="new-price">${nf(effUnit)}</span>`;
       const pct = origLine > 0 ? Math.round((origLine - eff) / origLine * 100) : 0;
       const discTxt = pct === 0 ? '—' : pct + '%';
-      return `<div class="cart-row ${i === selIndex ? 'selected' : ''}" data-i="${i}">
+      // Optom rejim belgilari: wh=1 → optom narx qo'llangan (yashil),
+      // wh=-1 → optom narx YO'Q, dona narx (nom+narx qizil)
+      const whClass = c.wh === 1 ? ' wh-ok' : (c.wh === -1 ? ' wh-missing' : '');
+      const whTag = c.wh === 1 ? '<span class="wh-tag ok">optom</span>'
+        : (c.wh === -1 ? '<span class="wh-tag no">optom narx yo\'q</span>' : '');
+      return `<div class="cart-row ${i === selIndex ? 'selected' : ''}${whClass}" data-i="${i}">
         <span class="cr-num">${no}</span>
         <span class="c-name cr-name">
-          <span class="cr-title">${escapeHtml(c.name)}</span>
+          <span class="cr-title">${escapeHtml(c.name)}${whTag}</span>
           <span class="cr-sub">${escapeHtml(sub)}</span>
         </span>
         <span class="cr-price">${priceCell}</span>
@@ -2354,6 +2473,9 @@ function wireEvents() {
   $('clientBtn').addEventListener('click', openClientModal);
   $('clientSearch').addEventListener('input', (e) => renderClientList(e.target.value));
   $('clientClear').addEventListener('click', clearClient);
+  $('clientNewBtn').addEventListener('click', openClientNewModal);
+  $('cnSaveBtn').addEventListener('click', saveNewClient);
+  $('cnPhone').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveNewClient(); });
 
   // Cheklar / qoralama
   $('checksBtn').addEventListener('click', openReceipts);

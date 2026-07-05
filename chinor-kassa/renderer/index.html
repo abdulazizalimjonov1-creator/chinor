@@ -170,7 +170,26 @@
       <div class="modal-head"><span>👤 Klient tanlash</span><button class="modal-x" data-close>✕</button></div>
       <input id="clientSearch" class="modal-search" type="text" placeholder="Klient nomini qidiring...">
       <div id="clientList" class="modal-list"></div>
-      <button id="clientClear" class="modal-btn-wide">Oddiy mijoz (klientsiz)</button>
+      <div class="cl-actions">
+        <button id="clientNewBtn" class="modal-btn">➕ Yangi klient</button>
+        <button id="clientClear" class="modal-btn-wide">Oddiy mijoz (klientsiz)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Yangi klient yaratish -->
+  <div id="clientNewModal" class="modal-overlay hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head"><span>➕ Yangi klient</span><button class="modal-x" data-close>✕</button></div>
+      <input id="cnName" class="modal-search" type="text" placeholder="Mijoz / do'kon nomi *">
+      <input id="cnPhone" class="modal-search" type="text" inputmode="tel" placeholder="Telefon raqami * (masalan 998901234567)">
+      <div class="cn-row">
+        <label class="cn-opt"><input type="radio" name="cnType" value="dona" checked> 🛍️ Dona</label>
+        <label class="cn-opt"><input type="radio" name="cnType" value="optom"> 📦 Optom</label>
+      </div>
+      <label class="cn-opt cn-credit"><input type="checkbox" id="cnCredit"> 🤝 Qarzga (nasiya) savdoga ruxsat</label>
+      <div id="cnMsg" class="cn-msg"></div>
+      <button id="cnSaveBtn" class="modal-btn-wide">Saqlash</button>
     </div>
   </div>
 

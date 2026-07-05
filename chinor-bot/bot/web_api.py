@@ -2387,6 +2387,42 @@ async def api_clients(request: web.Request):
     return web.json_response({"ok": True, "items": items, "total": len(items)})
 
 
+@ROUTES.post("/api/client/save")
+async def api_client_save(request: web.Request):
+    """Yangi mijoz yaratish (kassa/Mini App'dan). Body: {shop_name, phone,
+    client_type: dona|optom, allow_credit: bool}. Faqat admin."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    shop_name = (body.get("shop_name") or body.get("name") or "").strip()[:80]
+    phone = (body.get("phone") or "").strip()[:32]
+    client_type = (body.get("client_type") or "dona").strip().lower()
+    allow_credit = bool(body.get("allow_credit"))
+    if not shop_name:
+        return _err("Mijoz nomi bo'sh")
+    if len("".join(ch for ch in phone if ch.isdigit())) < 7:
+        return _err("Telefon raqami noto'g'ri (kamida 7 raqam)")
+    ok = await _db.add_client(None, shop_name, phone, auth["tg_id"], client_type)
+    if not ok:
+        return _err("Bu telefon raqamli mijoz allaqachon mavjud", 409)
+    c = await _db.get_client_by_phone(phone)
+    if not c:
+        return _err("Mijoz saqlandi, lekin qayta o'qilmadi", 500)
+    if allow_credit:
+        await _db.set_client_allow_credit(c["id"], True)
+    return web.json_response({"ok": True, "client": {
+        "id": c["id"],
+        "name": c.get("shop_name", ""),
+        "phone": c.get("phone", ""),
+        "type": c.get("client_type", "dona"),
+        "allow_credit": 1 if allow_credit else 0,
+        "is_internal": 0,
+        "debt_sum": 0,
+    }})
+
+
 @ROUTES.post("/api/client/credit")
 async def api_client_credit(request: web.Request):
     """Mijozni qarzga (nasiya) savdoga belgilash / belgini olib tashlash.
