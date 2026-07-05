@@ -74,7 +74,8 @@ class StatsMixin:
             try:
                 ord_row = conn.execute(
                     "SELECT COUNT(*) AS c, COALESCE(SUM(total),0) AS t "
-                    "FROM orders WHERE created_at LIKE ?", (f"{date}%",)
+                    "FROM orders WHERE created_at LIKE ? "
+                    "AND COALESCE(status,'') != 'cancelled'", (f"{date}%",)
                 ).fetchone()
             finally:
                 conn.close()
@@ -92,7 +93,8 @@ class StatsMixin:
             try:
                 ord_row = conn.execute(
                     "SELECT COUNT(*) AS c, COALESCE(SUM(total),0) AS t "
-                    "FROM orders WHERE created_at LIKE ?", (f"{month}%",)
+                    "FROM orders WHERE created_at LIKE ? "
+                    "AND COALESCE(status,'') != 'cancelled'", (f"{month}%",)
                 ).fetchone()
             finally:
                 conn.close()
@@ -183,7 +185,8 @@ class StatsMixin:
             try:
                 ord_row = conn.execute(
                     "SELECT COALESCE(SUM(total),0) AS t FROM orders "
-                    "WHERE client_id=? AND created_at LIKE ?",
+                    "WHERE client_id=? AND created_at LIKE ? "
+                    "AND COALESCE(status,'') != 'cancelled'",
                     (cid, f"{month}%")
                 ).fetchone()
                 pay_row = conn.execute(

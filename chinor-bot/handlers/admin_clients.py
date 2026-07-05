@@ -412,13 +412,29 @@ async def update_status(cb: CallbackQuery, bot: Bot):
     # shuning uchun faqat 2 ta "_" bo'yicha bo'lamiz.
     parts = cb.data.split("_", 2)
     oid = int(parts[1]); new_st = parts[2]
-    await db.update_order_status(oid, new_st)
-    o = await db.get_order(oid)
     from bot.config import ORDER_STATUSES
     from bot.keyboards import order_status_kb, order_client_confirm_kb
+
+    if new_st == "cancelled":
+        # Bekor qilish — ombor tiklanadi, qarz qaytariladi (cancel_order ichida)
+        o, err = await db.cancel_order(oid)
+        if o is None:
+            await cb.answer(f"⚠️ {err}", show_alert=True)
+            return
+    else:
+        await db.update_order_status(oid, new_st)
+        o = await db.get_order(oid)
+
     st_txt = ORDER_STATUSES.get(new_st, new_st)
     await cb.answer(f"✅ {st_txt}")
+
     if o and new_st == "delivered":
+        # Yetkazilgan buyurtma sotuvga aylanadi — tushum/foyda hisobotiga
+        # kiradi (ombor/qarz tegilmaydi, dublikatdan himoyalangan).
+        try:
+            await db.record_order_sale(o)
+        except Exception as e:
+            print(f"[order→sale] #{oid} xato: {e}")
         tg_id = o.get("client_tg_id")
         if tg_id:
             try:
@@ -433,7 +449,11 @@ async def update_status(cb: CallbackQuery, bot: Bot):
         tg_id = o.get("client_tg_id")
         if tg_id:
             try:
-                await bot.send_message(tg_id, f"🔔 Buyurtma #{oid}: <b>{st_txt}</b>", parse_mode="HTML")
+                msg = (f"❌ Buyurtma #{oid} <b>bekor qilindi</b>. "
+                       f"Summa qarzingizdan qaytarildi."
+                       if new_st == "cancelled" else
+                       f"🔔 Buyurtma #{oid}: <b>{st_txt}</b>")
+                await bot.send_message(tg_id, msg, parse_mode="HTML")
             except Exception:
                 pass
     await cb.message.edit_reply_markup(reply_markup=order_status_kb(oid, new_st))

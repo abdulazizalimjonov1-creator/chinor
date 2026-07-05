@@ -2000,10 +2000,15 @@
                 <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
                 <h2 style="font-size:18px;font-weight:800;">📋 Buyurtmalar (${data.total})</h2>
             </div>`;
+            const ORDER_ST = {
+                accepted: '✅ Qabul qilindi', on_way: "🚚 Yo'lda",
+                delivered: '📦 Yetkazildi', confirmed: '🎉 Tasdiqladi',
+                cancelled: '❌ Bekor qilindi',
+            };
             (data.items || []).forEach(o => {
-                const statusIcon = o.status === 'done' ? '✅' : o.status === 'cancelled' ? '❌' : '⏳';
+                const st = ORDER_ST[o.status] || ('⏳ ' + (o.status || ''));
                 html += `<div class="stat-block">
-                    <div class="stat-row"><span class="lbl">#${o.id}</span><span class="val">${statusIcon} ${escapeHtml(o.shop_name||'')}</span></div>
+                    <div class="stat-row"><span class="lbl">#${o.id} ${escapeHtml(o.shop_name||'')}</span><span class="val ${o.status==='cancelled'?'val-red':''}">${st}</span></div>
                     <div class="stat-row"><span class="lbl">💰 Summa</span><span class="val val-green">${fmtSum(o.total)} so'm</span></div>
                     <div class="stat-row"><span class="lbl">📅 Sana</span><span class="val">${o.created_at}</span></div>
                 </div>`;

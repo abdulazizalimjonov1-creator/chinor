@@ -98,6 +98,7 @@ ORDER_STATUSES = {
     "on_way":    "🚚 Yo'lda",
     "delivered": "📦 Yetkazildi",
     "confirmed": "🎉 Klient tasdiqladi",
+    "cancelled": "❌ Bekor qilindi",
 }
 STATUS_NEXT = {
     "accepted": "on_way",

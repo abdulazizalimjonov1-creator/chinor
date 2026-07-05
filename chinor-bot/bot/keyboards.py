@@ -427,6 +427,10 @@ def order_status_kb(oid: int, status: str):
         nxt = STATUS_NEXT[status]
         kb.button(text=f"➡️ {ORDER_STATUSES[nxt]}", callback_data=f"ostatus_{oid}_{nxt}")
     kb.button(text="📋 Tafsilot", callback_data=f"odetail_{oid}")
+    # Bekor qilish — faqat hali yetkazilmagan buyurtma uchun
+    # (ombor qoldig'i tiklanadi, mijoz qarzidan qaytariladi)
+    if status in ("accepted", "on_way"):
+        kb.button(text="❌ Bekor qilish", callback_data=f"ostatus_{oid}_cancelled")
     kb.adjust(1)
     return kb.as_markup()
 
