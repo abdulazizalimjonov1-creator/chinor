@@ -139,6 +139,11 @@ function applyState(st) {
   } else if (u.downloading) {
     ub.innerHTML = icoDownload + `Yuklanmoqda ${u.progress || 0}%`;
     ub.className = 'btn-update'; ub.dataset.mode = 'progress'; ub.classList.remove('hidden');
+  } else if (u.available && u.error) {
+    // Yuklash muvaffaqiyatsiz — xato KO'RINADI va qayta urinish mumkin
+    ub.innerHTML = `⚠ Qayta urinish (v${u.version})`;
+    ub.className = 'btn-update err'; ub.dataset.mode = 'download'; ub.classList.remove('hidden');
+    ub.title = u.error;
   } else if (u.available) {
     ub.innerHTML = icoDownload + `Yangilanish bor (v${u.version})`;
     ub.className = 'btn-update'; ub.dataset.mode = 'download'; ub.classList.remove('hidden');

@@ -844,3 +844,4 @@ input { font-family: inherit; }
 }
 .cl-typebtn.optom { border-color: #7c3aed; background: #f3e8ff; color: #7c3aed; }
 .cl-typebtn:hover { filter: brightness(.96); }
+.btn-update.err { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }

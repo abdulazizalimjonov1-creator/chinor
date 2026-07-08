@@ -975,6 +975,14 @@ function wireIpc() {
 
   ipcMain.handle('sync:now', async () => {
     await doSync({ force: true });
+    // Qo'lda sinxron — yangilanishni ham darhol tekshiramiz (30 daqiqalik
+    // avto-tekshiruvni kutmasdan; foydalanuvchi 🔄 bosib yangi versiyani ko'radi)
+    try {
+      if (app.isPackaged) {
+        if (process.platform === 'darwin') macCheckForUpdates();
+        else autoUpdater.checkForUpdates().catch(() => {});
+      }
+    } catch (_) {}
     return snapshot();
   });
 
@@ -1109,17 +1117,46 @@ async function macCheckForUpdates() {
 
 async function macDownloadUpdate() {
   if (!macUpdate) return;
-  status.update.downloading = true; status.update.progress = 0; pushState();
+  status.update.downloading = true; status.update.progress = 0;
+  status.update.error = ''; pushState();
   try {
     const fileUrl = /^https?:/i.test(macUpdate.file)
       ? macUpdate.file
       : `${updatesBase()}/${macUpdate.file}`;
+    // OQIMLI yuklash: jonli foiz ko'rinadi (avval 0% da "qotib" turardi va
+    // odam ilovani yopib yuborardi). Umumiy muddat o'rniga "uzilish" limiti —
+    // 30s davomida bitta ham bayt kelmasa bekor qilinadi; sekin internetda
+    // katta fayl xohlagancha yuklansin.
+    const ctrl = new AbortController();
+    let idleTimer = null;
+    const kickIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => ctrl.abort(), 30000);
+    };
+    kickIdle();
     const res = await fetch(fileUrl, {
       headers: { 'ngrok-skip-browser-warning': 'true' },
-      signal: AbortSignal.timeout(180000),
+      signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const buf = Buffer.from(await res.arrayBuffer());
+    if (!res.ok) { clearTimeout(idleTimer); throw new Error('HTTP ' + res.status); }
+    const totalLen = Number(res.headers.get('content-length')) || 0;
+    const chunks = [];
+    let got = 0, lastPct = -1;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      kickIdle();
+      chunks.push(Buffer.from(value));
+      got += value.length;
+      if (totalLen > 0) {
+        const pct = Math.min(99, Math.floor(got / totalLen * 100));
+        if (pct !== lastPct) { lastPct = pct; status.update.progress = pct; pushState(); }
+      }
+    }
+    clearTimeout(idleTimer);
+    const buf = Buffer.concat(chunks);
+    if (totalLen > 0 && buf.length < totalLen) throw new Error('uzildi: ' + buf.length + '/' + totalLen);
     const dir = path.join(app.getPath('temp'), 'chinor-update');
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
@@ -1132,6 +1169,9 @@ async function macDownloadUpdate() {
     pushState();
   } catch (e) {
     status.update.downloading = false;
+    status.update.progress = 0;
+    // Xato KO'RINSIN: tugma "Qayta urinish" bo'ladi (avval jim qolardi)
+    status.update.error = "Yuklab bo'lmadi — internetni tekshirib qayta urining";
     status.lastError = "Yangilanishni yuklab bo'lmadi";
     pushState();
   }
