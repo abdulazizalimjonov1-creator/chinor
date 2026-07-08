@@ -55,7 +55,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  store = new Store(dataFile());
+  store = new Store(dataFile(), app.isPackaged);
   createWindow();
   setupUpdater();
   app.on('activate', () => {

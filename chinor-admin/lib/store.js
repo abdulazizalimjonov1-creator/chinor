@@ -4,13 +4,14 @@
 
 const fs = require('fs');
 
-// Server admin kompyuterida ishlasa shu eng ishonchli manzil. Login oynasidan
-// o'zgartirsa bo'ladi (masalan, Cloudflare tunnel manzili).
-const DEFAULT_SERVER = 'http://127.0.0.1:8765';
+// Ishlab turgan (production) server. Login oynasidan o'zgartirsa bo'ladi
+// (masalan, lokal sinov uchun http://127.0.0.1:8765).
+const DEFAULT_SERVER = 'https://kassa.chinorpos.com';
 
 class Store {
-  constructor(file) {
+  constructor(file, packaged = false) {
     this.file = file;
+    this.packaged = !!packaged;
     this.data = this._load();
   }
 
@@ -31,7 +32,16 @@ class Store {
   _load() {
     try {
       const raw = fs.readFileSync(this.file, 'utf8');
-      return Object.assign(this._default(), JSON.parse(raw));
+      const data = Object.assign(this._default(), JSON.parse(raw));
+      // O'rnatilgan (packaged) ilovada eski lokal sinov manzili qolib ketgan
+      // bo'lsa — production manzilga o'tamiz ("login parol to'g'ri, lekin
+      // kirmayapti" muammosining klassik sababi). Dev rejimda (npm start)
+      // localhost saqlanadi.
+      if (this.packaged && /^https?:\/\/(127\.0\.0\.1|localhost)/i.test(String(data.serverUrl || ''))) {
+        data.serverUrl = DEFAULT_SERVER;
+        data.token = '';
+      }
+      return data;
     } catch {
       return this._default();
     }
