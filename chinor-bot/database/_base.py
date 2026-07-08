@@ -347,6 +347,25 @@ class BaseDB:
             print(f"[Kanal post xato] {chat_id}: {e}")
             return 0
 
+    async def _post_document_to(self, chat_id: str, filename: str,
+                                data: bytes, caption: str = "") -> int:
+        """Berilgan kanalga hujjat (fayl) yuboradi — masalan qoralama
+        nakladnoy (Excel). Xatoda 0 qaytaradi. Caption HTML, 1024 belgigacha."""
+        if not self._bot or not chat_id or not data:
+            return 0
+        try:
+            from aiogram.types import BufferedInputFile
+            msg = await self._bot.send_document(
+                chat_id,
+                BufferedInputFile(data, filename=filename),
+                caption=(caption or "")[:1024] or None,
+                parse_mode="HTML",
+            )
+            return msg.message_id
+        except Exception as e:
+            print(f"[Kanal hujjat xato] {chat_id}: {e}")
+            return 0
+
     def _buy_markup(self, product_id: int) -> Optional[InlineKeyboardMarkup]:
         """Kanal postining ostida 'Sotib olish' tugmasi (bot deep-link).
         'Mijoz buyurtmalari' funksiyasi o'chirilgan bo'lsa — tugma qo'yilmaydi."""

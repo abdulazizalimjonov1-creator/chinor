@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('kassa', {
   getClients: () => ipcRenderer.invoke('clients:get'),
   createClient: (payload) => ipcRenderer.invoke('clients:create', payload),
   setClientCredit: (clientId, allow) => ipcRenderer.invoke('clients:credit', { clientId, allow }),
+  setClientType: (clientId, clientType) => ipcRenderer.invoke('clients:setType', { clientId, clientType }),
   recordSale: (sale) => ipcRenderer.invoke('sale:record', sale),
   recordReturn: (ret) => ipcRenderer.invoke('sale:return', ret),
   // Smena (shift)

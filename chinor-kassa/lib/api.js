@@ -46,6 +46,8 @@ module.exports = {
     req(base, '/api/client/save', { method: 'POST', token, body: payload, timeout: 15000 }),
   clientCredit: (base, token, clientId, allow) =>
     req(base, '/api/client/credit', { method: 'POST', token, body: { client_id: clientId, allow: !!allow }, timeout: 15000 }),
+  clientType: (base, token, clientId, clientType) =>
+    req(base, '/api/client/type', { method: 'POST', token, body: { client_id: clientId, client_type: clientType }, timeout: 15000 }),
   recentSales: (base, token, since = '', limit = 1000) => {
     const qs = since
       ? `since=${encodeURIComponent(since)}&limit=${limit}`

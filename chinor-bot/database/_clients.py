@@ -243,6 +243,20 @@ class ClientsMixin:
             finally:
                 conn.close()
 
+    async def set_client_type(self, cid: int, client_type: str) -> None:
+        """Mijoz turini almashtiradi: dona ⇄ optom (ulgurji)."""
+        ctype = "optom" if str(client_type).lower().startswith("opt") else "dona"
+        with self._lock:
+            conn = self._conn()
+            try:
+                conn.execute(
+                    "UPDATE clients SET client_type=? WHERE id=?",
+                    (ctype, int(cid))
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
     async def set_client_allow_credit(self, cid: int, allow: bool) -> None:
         """Mijozni qarzga (nasiya) savdoga belgilash / belgini olib tashlash."""
         with self._lock:

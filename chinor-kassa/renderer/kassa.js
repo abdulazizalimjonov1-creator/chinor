@@ -194,14 +194,17 @@ function renderClientList(q) {
   box.innerHTML = list.map((c) => {
     const optom = String(c.type || '').toLowerCase().startsWith('opt');
     const badge = c.is_internal ? '🏠 rasxod'
-      : (c.debt_sum > 0 ? ('Qarz: ' + nf(c.debt_sum)) : (optom ? '📦 optom' : ''));
-    // Qarz ruxsati tugmasi — bosilsa yoqiladi/o'chiriladi (ichki mijozga chiqmaydi)
+      : (c.debt_sum > 0 ? ('Qarz: ' + nf(c.debt_sum)) : '');
+    // Tur o'tkazgichi (dona ⇄ optom) + qarz ruxsati — ichki mijozga chiqmaydi
+    const typeBtn = c.is_internal ? ''
+      : `<button class="cl-typebtn ${optom ? 'optom' : ''}" data-tid="${c.id}"
+           title="${optom ? "OPTOM mijoz — bosib DONAga o'tkazish" : "DONA mijoz — bosib OPTOMga o'tkazish"}">${optom ? '📦 optom' : '🛍️ dona'}</button>`;
     const credit = c.is_internal ? ''
       : `<button class="cl-credit ${c.allow_credit ? 'on' : ''}" data-cid="${c.id}"
            title="${c.allow_credit ? "Qarzga ruxsat YOQIQ — o'chirish" : "Qarzga ruxsat berish"}">🤝</button>`;
     return `<div class="modal-row" data-id="${c.id}">
-    <span>${escapeHtml(c.name)}${optom ? ' <span class="cl-type">optom</span>' : ''}</span>
-    <span class="mr-sub">${badge}${credit}</span>
+    <span>${escapeHtml(c.name)}</span>
+    <span class="mr-sub">${badge}${typeBtn}${credit}</span>
   </div>`;
   }).join('');
   box.querySelectorAll('.modal-row').forEach((el) =>
@@ -223,6 +226,33 @@ function renderClientList(q) {
         CLIENTS = res.clients || CLIENTS;
         renderClientList($('clientSearch').value);
         toast(allow ? `🤝 ${c.name} — qarzga ruxsat berildi` : `${c.name} — qarz yopildi`);
+      } else {
+        toast('❌ ' + ((res && res.error) || 'Xato'), true);
+      }
+    }));
+  // Dona ⇄ optom o'tkazgichi
+  box.querySelectorAll('.cl-typebtn').forEach((btn) =>
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const cid = Number(btn.dataset.tid);
+      const c = CLIENTS.find((x) => x.id === cid);
+      if (!c) return;
+      const wasOptom = String(c.type || '').toLowerCase().startsWith('opt');
+      const newType = wasOptom ? 'dona' : 'optom';
+      btn.disabled = true;
+      const res = await window.kassa.setClientType(cid, newType);
+      btn.disabled = false;
+      if (res && res.ok) {
+        CLIENTS = res.clients || CLIENTS;
+        renderClientList($('clientSearch').value);
+        toast(newType === 'optom'
+          ? `📦 ${c.name} — OPTOM mijozga o'tkazildi`
+          : `🛍️ ${c.name} — DONA mijozga o'tkazildi`);
+        // Ayni shu mijoz tanlangan bo'lsa — savat narxlari darhol yangilanadi
+        if (selClient && selClient.id === cid) {
+          selClient.type = newType;
+          repriceCart();
+        }
       } else {
         toast('❌ ' + ((res && res.error) || 'Xato'), true);
       }

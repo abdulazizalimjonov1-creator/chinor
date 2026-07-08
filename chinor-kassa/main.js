@@ -683,6 +683,17 @@ function wireIpc() {
     pushState();
     return { ok: true, clients: store.data.clients || [] };
   });
+  // Mijoz turini almashtirish: dona ⇄ optom
+  ipcMain.handle('clients:setType', async (_e, { clientId, clientType }) => {
+    if (!store.data.token) return { ok: false, error: 'Avval tizimga kiring' };
+    const { data } = await api.clientType(store.data.serverUrl, store.data.token, clientId, clientType);
+    if (!data || !data.ok) {
+      return { ok: false, error: (data && data.error) || 'Internet/server bilan aloqa yo\'q' };
+    }
+    try { await pullCatalog(); } catch (_) {}
+    pushState();
+    return { ok: true, clients: store.data.clients || [] };
+  });
 
   ipcMain.handle('drafts:get', () => store.listDrafts());
   ipcMain.handle('drafts:save', (_e, draft) => {

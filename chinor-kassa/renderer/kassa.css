@@ -836,3 +836,11 @@ input { font-family: inherit; }
 /* Chap mahsulot ro'yxatida optom ustuni (optom mijoz tanlanganda) */
 .pr-whole.wh-ok-txt { color: #16a34a; font-weight: 800; }
 .pr-whole.wh-no-txt { color: #dc2626; font-weight: 800; }
+/* Dona/optom o'tkazgichi (klient ro'yxatida) */
+.cl-typebtn {
+  margin-left: 8px; padding: 3px 8px; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid #cbd5e1; background: #f8fafc; font-size: 12px; font-weight: 700;
+  color: #475569;
+}
+.cl-typebtn.optom { border-color: #7c3aed; background: #f3e8ff; color: #7c3aed; }
+.cl-typebtn:hover { filter: brightness(.96); }

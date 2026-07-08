@@ -354,3 +354,121 @@ async def export_products() -> str:
     path = os.path.join(_OUTPUT_DIR, fname)
     wb.save(path)
     return path
+
+
+# ─── Qoralama nakladnoy (kassadan) ───────────────────────────────────────────
+
+def build_draft_invoice_bytes(draft: dict, client_phone: str = "") -> tuple:
+    """Kassadan kelgan qoralama (parked) chekni Excel NAKLADNOY ko'rinishida
+    yasaydi va (bytes, filename) qaytaradi — Telegram kanaliga hujjat sifatida
+    yuborish uchun (diskka yozilmaydi).
+
+    Tuzilishi: postavshik (Chinor + telefonlar), klient (tanlangan bo'lsa),
+    qoralama raqami/sana/kassir, tovarlar jadvali, JAMI."""
+    import io
+    from bot.config import CONTACT_PHONE_1, CONTACT_PHONE_2
+
+    d = draft or {}
+    items = d.get("items") or []
+    client = d.get("client") or {}
+    cl_name = (client.get("name") if isinstance(client, dict) else "") or \
+              (d.get("client_name") or "")
+    no = str(d.get("no") or d.get("id") or "").strip()
+    created = str(d.get("created_at") or now_local().strftime("%Y-%m-%d %H:%M"))[:16]
+    cashier = d.get("cashier_name") or ""
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Nakladnoy"
+
+    # Sarlavha
+    ws.merge_cells("A1:H1")
+    c = ws.cell(row=1, column=1, value="CHINOR — NAKLADNOY (QORALAMA)")
+    c.font = _TITLE_FONT
+    c.alignment = _CENTER
+
+    # Postavshik (bizning tomon) + hujjat rekvizitlari
+    meta = [
+        ("Postavshik:", "Chinor do'koni"),
+        ("Telefon:", f"{CONTACT_PHONE_1}   {CONTACT_PHONE_2}"),
+        ("Qoralama №:", no or "—"),
+        ("Sana:", created),
+    ]
+    if cashier:
+        meta.append(("Kassir:", cashier))
+    if cl_name:
+        meta.append(("Klient:", cl_name + (f"  ({client_phone})" if client_phone else "")))
+    r = 3
+    for label, value in meta:
+        lc = ws.cell(row=r, column=1, value=label)
+        lc.font = Font(bold=True, size=11)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=8)
+        ws.cell(row=r, column=2, value=value)
+        r += 1
+
+    # Jadval sarlavhasi
+    r += 1
+    head = ["№", "Tovar nomi", "SKU", "Barcode", "Birlik", "Miqdor", "Narx (so'm)", "Summa (so'm)"]
+    for col, h in enumerate(head, 1):
+        hc = ws.cell(row=r, column=col, value=h)
+        hc.fill = _HEADER_FILL
+        hc.font = _HEADER_FONT
+        hc.alignment = _CENTER
+        hc.border = _BORDER
+
+    total = 0.0
+    total_qty = 0.0
+    for n, it in enumerate(items, 1):
+        r += 1
+        qty = float(it.get("qty", 0) or 0)
+        price = float(it.get("price_sum", it.get("price", 0)) or 0)
+        line = round(price * qty, 2)
+        total += line
+        total_qty += qty
+        row_vals = [
+            n,
+            it.get("name", "") or "?",
+            str(it.get("sku") or it.get("product_id") or ""),
+            str(it.get("barcode") or ""),
+            it.get("unit", "dona") or "dona",
+            qty,
+            price,
+            line,
+        ]
+        for col, v in enumerate(row_vals, 1):
+            cell = ws.cell(row=r, column=col, value=v)
+            cell.border = _BORDER
+            if col in (6, 7, 8):
+                cell.alignment = _RIGHT
+                cell.number_format = '#,##0.##' if col == 6 else '#,##0'
+            elif col == 1:
+                cell.alignment = _CENTER
+
+    # JAMI qatori
+    r += 1
+    jc = ws.cell(row=r, column=5, value="JAMI:")
+    jc.font = Font(bold=True, size=12)
+    jc.alignment = _RIGHT
+    qc = ws.cell(row=r, column=6, value=total_qty)
+    qc.font = Font(bold=True); qc.alignment = _RIGHT
+    qc.number_format = '#,##0.##'
+    tc = ws.cell(row=r, column=8, value=total)
+    tc.font = Font(bold=True, size=12)
+    tc.alignment = _RIGHT
+    tc.number_format = '#,##0'
+    tc.fill = PatternFill("solid", fgColor="D9E1F2")
+
+    # Izoh: bu qoralama — sotuv emas
+    r += 2
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+    note = ws.cell(row=r, column=1,
+                   value="Eslatma: bu QORALAMA (namuna) — sotuv sifatida urilmagan.")
+    note.font = Font(italic=True, size=10, color="808080")
+
+    _autosize(ws)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    fname_no = no.replace("/", "-").replace("\\", "-") or now_local().strftime("%H%M%S")
+    fname = f"qoralama_{fname_no}_{now_local().strftime('%Y%m%d')}.xlsx"
+    return buf.getvalue(), fname

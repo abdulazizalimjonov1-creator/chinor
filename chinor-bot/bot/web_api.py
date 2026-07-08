@@ -1930,8 +1930,33 @@ async def api_desktop_draft_post(request: web.Request):
     if not draft.get("cashier_name"):
         draft["cashier_name"] = auth["user"].get("full_name") or "Kassa"
 
+    # Klient telefonini bazadan to'ldiramiz (nakladnoyda ko'rinadi)
+    client_phone = ""
+    cl = draft.get("client") or {}
+    if isinstance(cl, dict) and cl.get("id"):
+        try:
+            c = await _db.get_client_by_id(int(cl["id"]))
+            if c:
+                client_phone = c.get("phone", "") or ""
+        except Exception:
+            pass
+
+    # Excel NAKLADNOY yasab, kanalga HUJJAT sifatida yuboramiz (matn caption
+    # bilan). Excel yasashda xato bo'lsa — eski usul: faqat matnli post.
+    caption = _fmt_draft(draft)
     try:
-        await _db._post_to(CHANNEL_DRAFTS_ID, _fmt_draft(draft))
+        from bot.exporter import build_draft_invoice_bytes
+        data, fname = build_draft_invoice_bytes(draft, client_phone)
+        mid = await _db._post_document_to(CHANNEL_DRAFTS_ID, fname, data, caption)
+        if mid:
+            return web.json_response({"ok": True, "document": True})
+        # hujjat ketmadi — matnga tushamiz
+        logger.warning("[draft-post] hujjat yuborilmadi — matnli postga o'tildi")
+    except Exception as e:
+        logger.warning(f"[draft-post] Excel yasashda xato: {e} — matnli post")
+
+    try:
+        await _db._post_to(CHANNEL_DRAFTS_ID, caption)
     except Exception as e:
         logger.warning(f"[draft-post] kanal post xato: {e}")
         return web.json_response({"ok": False, "error": str(e)})
@@ -2421,6 +2446,31 @@ async def api_client_save(request: web.Request):
         "is_internal": 0,
         "debt_sum": 0,
     }})
+
+
+@ROUTES.post("/api/client/type")
+async def api_client_type(request: web.Request):
+    """Mijoz turini almashtirish: dona ⇄ optom. Body: {client_id, client_type}.
+    Faqat admin. Ichki (Chinor rasxod) mijozga qo'llanmaydi."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+    except (TypeError, ValueError):
+        cid = 0
+    if not cid:
+        return _err("client_id kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijozining turi o'zgartirilmaydi")
+    ctype = "optom" if str(body.get("client_type") or "").lower().startswith("opt") else "dona"
+    await _db.set_client_type(cid, ctype)
+    return web.json_response({"ok": True, "client_id": cid, "client_type": ctype})
 
 
 @ROUTES.post("/api/client/credit")
