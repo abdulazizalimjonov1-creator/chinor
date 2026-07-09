@@ -131,6 +131,7 @@ ipcMain.handle('data:prixodSave', withAuth((base, token, arg) => api.prixodSave(
 ipcMain.handle('data:clients', withAuth((base, token) => api.clients(base, token)));
 ipcMain.handle('data:admins', withAuth((base, token) => api.admins(base, token)));
 ipcMain.handle('data:settings', withAuth((base, token) => api.settings(base, token)));
+ipcMain.handle('data:settingsSave', withAuth((base, token, arg) => api.settingsSave(base, token, arg)));
 // Yetkazib beruvchilar (suppliers)
 ipcMain.handle('data:suppliers', withAuth((base, token) => api.suppliers(base, token)));
 ipcMain.handle('data:supplierSave', withAuth((base, token, arg) => api.supplierSave(base, token, arg)));

@@ -2597,7 +2597,13 @@ async def api_settings_save(request: web.Request):
     rate = body.get("usd_rate")
     if rate is not None:
         try:
-            _db.set_usd_rate(float(rate))
+            new_rate = float(rate)
+            _db.set_usd_rate(new_rate)
+            # Bot oqimi bilan bir xil: so'mdagi narxlar/qarz keshi USD (kanonik)
+            # qiymatlardan yangi kursda qayta hisoblanadi. Busiz kurs faqat
+            # yozilib, mavjud narxlar eski kursda qolib ketardi.
+            if new_rate > 0:
+                await _db.reprice_all_with_rate(new_rate)
         except (TypeError, ValueError):
             pass
     # Toggle settings

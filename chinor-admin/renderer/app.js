@@ -936,7 +936,23 @@ async function renderAdmins(c) {
     </table></div>`;
 }
 
-// ── Sozlamalar ────────────────────────────────────────────────────────────
+// ── Sozlamalar (kurs + funksiya bayroqlari — jonli tahrirlanadi) ─────────────
+// Har bir bayroq serverdagi POST /api/settings ga darhol yoziladi. Kurs esa
+// tasdiq bilan — u BARCHA narxlarning so'mdagi ko'rinishiga ta'sir qiladi.
+const SETTING_FLAGS = [
+  ['dona_enabled', 'Dona (chakana) narx', "Sotuv dona narxda. Optom bilan birga yoqilsa — mijoz turiga qarab avtomatik tanlanadi"],
+  ['wholesale_enabled', 'Ulgurji (optom) narx', 'Optomchi mijozlarga alohida narx (kassa va Mini App)'],
+  ['nasiya_enabled', 'Nasiya (qarz)', "Mijozga qarzga sotish va qarzlar hisobi"],
+  ['barcode_enabled', 'Shtrix-kod', "Tovarlarni barcode bilan qidirish/sotish"],
+  ['categories_enabled', 'Kategoriyalar', "Tovarlarni bo'limlarga ajratish"],
+  ['suppliers_enabled', 'Yetkazib beruvchilar', "Ombor bo'limidagi yetkazib beruvchilar hisobi"],
+  ['mini_app_enabled', 'Mini App', "Telegram Mini App (mijoz katalogi va admin panel)"],
+  ['client_orders_enabled', 'Mijoz buyurtmalari', "Mijozlar Mini App orqali buyurtma bera oladi"],
+  ['channel_enabled', 'Kanal postlari', "Yangi/tahrirlangan tovarlarni Telegram kanalga joylash"],
+  ['ai_consult_enabled', 'AI maslahatchi', "Mijoz savollariga AI javob beradi (Mini App)"],
+  ['ai_analytics_enabled', 'AI analitika', "Savdo bo'yicha AI tahlillar (bot)"],
+];
+
 async function renderSettings(c) {
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
   const r = await api.getSettings();
@@ -946,23 +962,105 @@ async function renderSettings(c) {
     return;
   }
   const s = r.settings || {};
-  const rows = [
-    ['USD kurs', money(s.usd_rate)],
-    ['Ulgurji narx', s.wholesale_enabled ? 'Yoqilgan' : 'O\'chiq'],
-    ['Shtrix-kod', s.barcode_enabled ? 'Yoqilgan' : 'O\'chiq'],
-    ['Mijoz buyurtmalari', s.client_orders_enabled ? 'Yoqilgan' : 'O\'chiq'],
-    ['Nasiya (qarz)', s.nasiya_enabled ? 'Yoqilgan' : 'O\'chiq'],
-    ['Mini App', s.mini_app_enabled ? 'Yoqilgan' : 'O\'chiq'],
-    ['Kategoriyalar', s.categories_enabled ? 'Yoqilgan' : 'O\'chiq'],
-  ];
+  const st = await api.getState();
+
   c.innerHTML = `
-    <div class="card" style="max-width:560px">
-      <div class="card-title">Sozlamalar</div>
-      <div class="filter" style="margin-bottom:14px"><label>Server manzili</label><span>${esc(S.serverUrl)}</span></div>
-      <table class="tbl">
-        <tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${esc(v)}</td></tr>`).join('')}</tbody>
-      </table>
+    <div class="set-wrap">
+      <div class="card">
+        <div class="card-title">💱 Valyuta kursi</div>
+        <div class="set-rate">
+          <span>1 $ =</span>
+          <input id="setRate" class="np-inp" type="number" min="1" step="any" value="${Number(s.usd_rate) || 0}" style="width:140px">
+          <span>so'm</span>
+          <button class="btn-soft" id="setRateSave">Saqlash</button>
+        </div>
+        <div class="set-hint">Narxlar bazada dollarda saqlanadi — so'mdagi barcha narxlar (kassa, Mini App, hisobotlar) shu kurs bilan hisoblanadi. O'zgartirsangiz darhol hammasiga ta'sir qiladi.</div>
+        <div id="setRateMsg" class="px-msg"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚙️ Funksiyalar</div>
+        <div id="setFlagWarn" class="set-warn hidden">⚠️ Dona va optom narx ikkalasi ham o'chiq — tizim dona narxga qaytadi. Kamida bittasini yoqing.</div>
+        ${SETTING_FLAGS.map(([key, label, desc]) => `
+          <div class="set-row">
+            <div class="set-txt"><b>${esc(label)}</b><small>${esc(desc)}</small></div>
+            <label class="sw"><input type="checkbox" class="set-flag" data-k="${key}" ${s[key] ? 'checked' : ''}><i></i></label>
+          </div>`).join('')}
+      </div>
+
+      <div class="card">
+        <div class="card-title">🖥 Ilova</div>
+        <div class="set-row"><div class="set-txt"><b>Server manzili</b><small>${esc(S.serverUrl)}</small></div></div>
+        <div class="set-row"><div class="set-txt"><b>Versiya</b><small>v ${esc(st.version || '')}</small></div>
+          <button class="btn-soft ghost" id="setUpdCheck">🔄 Yangilanishni tekshirish</button></div>
+        <div class="set-hint">Yangilanish topilsa chap pastda banner chiqadi.</div>
+      </div>
     </div>`;
+
+  const re = (id) => document.getElementById(id);
+
+  // Dona/optom ikkalasi o'chiq bo'lsa ogohlantirish
+  const flagState = {}; SETTING_FLAGS.forEach(([k]) => { flagState[k] = !!s[k]; });
+  const updWarn = () => {
+    re('setFlagWarn').classList.toggle('hidden',
+      !!(flagState.dona_enabled || flagState.wholesale_enabled));
+  };
+  updWarn();
+
+  // Kursni saqlash — tasdiq bilan
+  re('setRateSave').addEventListener('click', async () => {
+    const msg = re('setRateMsg');
+    const oldRate = Number(s.usd_rate) || 0;
+    const newRate = parseFloat(re('setRate').value) || 0;
+    if (newRate < 1) { msg.className = 'px-msg err'; msg.textContent = 'Kurs noto\'g\'ri'; return; }
+    if (Math.round(newRate) === Math.round(oldRate)) { msg.className = 'px-msg'; msg.textContent = 'Kurs o\'zgarmadi'; return; }
+    const ok = window.confirm(
+      `USD kursi o'zgartirilsinmi?\n\n` +
+      `Eski: 1$ = ${money(oldRate)} so'm\nYangi: 1$ = ${money(newRate)} so'm\n\n` +
+      `Barcha tovarlarning so'mdagi narxi yangi kurs bilan qayta hisoblanadi.`);
+    if (!ok) return;
+    const btn = re('setRateSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const rr = await api.saveSettings({ usd_rate: newRate });
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = rr.error || 'Xatolik'; return; }
+    s.usd_rate = newRate; S.usdRate = newRate;
+    invalidateProducts();               // so'mdagi narxlar o'zgardi
+    msg.className = 'px-msg'; msg.textContent = '';
+    toast(`✓ Kurs saqlandi: 1$ = ${money(newRate)} so'm`);
+  });
+
+  // Funksiya bayroqlari — darhol saqlanadi, xatoda qaytariladi
+  c.querySelectorAll('.set-flag').forEach((chk) => chk.addEventListener('change', async () => {
+    const key = chk.dataset.k;
+    const val = chk.checked;
+    chk.disabled = true;
+    const rr = await api.saveSettings({ [key]: val });
+    chk.disabled = false;
+    if (!rr.ok) {
+      if (rr.authRequired) return doLogout();
+      chk.checked = !val;
+      toast('⚠️ ' + (rr.error || 'Saqlanmadi'));
+      return;
+    }
+    flagState[key] = val; s[key] = val;
+    updWarn();
+    const label = (SETTING_FLAGS.find(([k]) => k === key) || [])[1] || key;
+    toast(`✓ ${label}: ${val ? 'yoqildi' : "o'chirildi"}`);
+  }));
+
+  // Yangilanishni qo'lda tekshirish
+  re('setUpdCheck').addEventListener('click', async () => {
+    const b = re('setUpdCheck');
+    b.disabled = true; b.textContent = 'Tekshirilmoqda…';
+    try { await api.checkUpdate(); } catch (_) {}
+    setTimeout(async () => {
+      b.disabled = false; b.textContent = '🔄 Yangilanishni tekshirish';
+      try {
+        const u = await api.getUpdate();
+        if (!u || (!u.available && !u.downloaded && !u.downloading)) toast('✓ Eng so\'nggi versiya o\'rnatilgan');
+      } catch (_) {}
+    }, 3000);
+  });
 }
 
 // ── Umumiy: barcha mahsulotlarni yuklash (tez: katta sahifa + parallel) ──────

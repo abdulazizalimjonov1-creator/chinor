@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('chinor', {
   getClients: () => ipcRenderer.invoke('data:clients'),
   getAdmins: () => ipcRenderer.invoke('data:admins'),
   getSettings: () => ipcRenderer.invoke('data:settings'),
+  saveSettings: (payload) => ipcRenderer.invoke('data:settingsSave', payload),
   // Yetkazib beruvchilar (suppliers)
   getSuppliers: () => ipcRenderer.invoke('data:suppliers'),
   supplierSave: (payload) => ipcRenderer.invoke('data:supplierSave', payload),

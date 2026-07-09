@@ -1,6 +1,6 @@
 {
   "name": "chinor-admin",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Chinor — boshqaruv paneli (hisobotlar, online savdo, tovarlar). Electron desktop.",
   "main": "main.js",
   "author": "Chinor",

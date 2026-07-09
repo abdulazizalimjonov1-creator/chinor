@@ -63,6 +63,9 @@ module.exports = {
     req(base, '/api/admins', { token, timeout: 20000 }),
   settings: (base, token) =>
     req(base, '/api/settings', { token, timeout: 15000 }),
+  // Sozlamalarni saqlash — qisman yuborish mumkin (faqat o'zgargan kalitlar).
+  settingsSave: (base, token, payload) =>
+    req(base, '/api/settings', { method: 'POST', token, body: payload, timeout: 15000 }),
   // AI prixod — nakladnoy rasmini yuborib, o'qilgan+katalogga moslangan qatorlarni oladi.
   // Multipart bo'lgani uchun `req` (JSON) emas, alohida fetch. AI sekin → uzun timeout.
   prixodScan: async (base, token, bytes, filename = 'nakladnoy.jpg') => {
