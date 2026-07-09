@@ -673,45 +673,86 @@ async function renderOnlineReport(c) {
     </div>`;
 }
 
-// ── Tovarlar ro'yxati ─────────────────────────────────────────────────────────
-async function renderProducts(c) {
+// ── Tovarlar ro'yxati (qidiruv + joyida tahrirlash) ──────────────────────────
+async function renderProducts(c, force) {
+  const st = renderProducts;
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
-  let all = [], page = 0, guard = 0;
-  while (guard++ < 200) {
-    const r = await api.getProducts(page);
-    if (!r.ok) {
-      if (r.authRequired) return doLogout();
-      c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
-      return;
-    }
-    all = all.concat(r.items || []);
-    if (!r.has_more) break;
-    page++;
+  const r = await fetchAllProducts(force);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
   }
+  st._all = r.items;
   await loadSuppliers();   // yetkazib beruvchilar — ustun va biriktirish uchun
+  drawProducts(c);
+}
+
+function drawProducts(c) {
+  const st = renderProducts;
+  const all = st._all || [];
+  const q = (st._q || '').trim().toLowerCase();
+  let list = all;
+  if (q) list = all.filter((p) =>
+    (p.name || '').toLowerCase().includes(q) ||
+    String(p.id).includes(q) ||
+    (p.barcode || '').includes(q));
+  if (st._onlyOut) list = list.filter((p) => (p.qty || 0) <= 0);
+  // Katalog minglab tovar bo'lishi mumkin — jadvalga birinchi 400 tasini
+  // chiqaramiz (qidiruv baribir TO'LIQ ro'yxatdan izlaydi).
+  const shown = list.slice(0, 400);
+  const hidden = list.length - shown.length;
+
   c.innerHTML = `
-    <div class="sum-chips">
+    <div class="filters" style="align-items:flex-end">
+      <div class="filter" style="flex:1; min-width:220px"><label>Qidiruv</label>
+        <input id="prSearch" type="text" placeholder="Nomi · SKU · barcode" value="${esc(st._q || '')}"></div>
+      <button class="btn-soft${st._onlyOut ? '' : ' ghost'}" id="prOut">Qoldiq tugagan</button>
+      <button class="btn-soft ghost" id="prReload" title="Serverdan qayta yuklash">🔄 Yangilash</button>
+    </div>
+    <div class="sum-chips" style="margin:12px 0">
       <div class="sum-chip"><div class="v">${int(all.length)}</div><div class="l">Tovarlar (aktiv)</div></div>
       <div class="sum-chip"><div class="v">${int(all.filter((p) => (p.qty || 0) <= 0).length)}</div><div class="l">Qoldiq tugagan</div></div>
+      ${q || st._onlyOut ? `<div class="sum-chip"><div class="v">${int(list.length)}</div><div class="l">Topildi</div></div>` : ''}
     </div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th><th>Yetkazib beruvchi</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th><th>Yetkazib beruvchi</th><th></th></tr></thead>
         <tbody>
-          ${all.map((p) => `
-            <tr>
+          ${shown.length ? shown.map((p) => `
+            <tr data-pid="${p.id}">
               <td>${esc(p.id)}</td>
               <td>${esc(p.name)}</td>
-              <td class="num">${money(p.qty)}</td>
+              <td class="num"><input class="qty-inp pr-inp" type="number" min="0" step="any" data-pid="${p.id}" data-f="qty" value="${Number(p.qty) || 0}"></td>
               <td>${esc(p.unit || 'dona')}</td>
-              <td class="num">${money(p.cost_price_sum || 0)}</td>
-              <td class="num">${money(p.sell_price_sum || p.price_sum || 0)}</td>
-              <td class="num">${money(p.wholesale_sum || 0)}</td>
+              <td class="num"><input class="qty-inp pr-inp" type="number" min="0" step="any" data-pid="${p.id}" data-f="cost_price_sum" value="${Number(p.cost_price_sum) || 0}"></td>
+              <td class="num"><input class="qty-inp pr-inp" type="number" min="0" step="any" data-pid="${p.id}" data-f="sell_price_sum" value="${Number(p.sell_price_sum || p.price_sum) || 0}"></td>
+              <td class="num"><input class="qty-inp pr-inp" type="number" min="0" step="any" data-pid="${p.id}" data-f="wholesale_sum" value="${Number(p.wholesale_sum) || 0}"></td>
               <td><select class="sup-sel" data-pid="${p.id}"><option value="0">—</option>${supOptions(p.supplier_id)}</select></td>
-            </tr>`).join('')}
+              <td class="num"><button class="btn-mini" data-edit="${p.id}" title="To'liq tahrirlash (nomi, birlik, barcode)">✏️</button></td>
+            </tr>`).join('')
+            : `<tr><td colspan="9"><div class="chart-empty">Tovar topilmadi</div></td></tr>`}
+          ${hidden > 0 ? `<tr><td colspan="9"><div class="chart-empty">… yana ${int(hidden)} ta tovar — qidiruv orqali toping</div></td></tr>` : ''}
         </tbody>
       </table>
     </div>`;
+
+  const re = (id) => document.getElementById(id);
+  re('prSearch').addEventListener('input', (e) => {
+    st._q = e.target.value;
+    clearTimeout(drawProducts._t);
+    drawProducts._t = setTimeout(() => drawProducts(c), 200);
+  });
+  re('prOut').addEventListener('click', () => { st._onlyOut = !st._onlyOut; drawProducts(c); });
+  re('prReload').addEventListener('click', () => renderProducts(c, true));
+
+  // Joyida tahrirlash: qoldiq/tannarx/sotuv/ulgurji — o'zgartirib Enter yoki
+  // boshqa katakka o'tilganda saqlanadi.
+  c.querySelectorAll('.pr-inp').forEach((inp) => {
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+    inp.addEventListener('change', () => saveProductField(inp, c));
+  });
+
   // Inline: yetkazib beruvchini biriktirish/yechish (faqat bog'lanish → /api/product/supplier)
   c.querySelectorAll('.sup-sel').forEach((sel) => sel.addEventListener('change', async () => {
     const pid = Number(sel.dataset.pid);
@@ -720,8 +761,132 @@ async function renderProducts(c) {
     const r = await api.productSetSupplier(pid, sid);
     sel.disabled = false;
     if (!r.ok) { if (r.authRequired) return doLogout(); toast(r.error || 'Xatolik'); return; }
+    const p = (st._all || []).find((x) => x.id === pid);
+    if (p) p.supplier_id = sid;
     toast(sid ? `✓ «${supName(sid)}» biriktirildi` : '✓ Yetkazib beruvchi yechildi');
   }));
+
+  // ✏️ — to'liq tahrir modali
+  c.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+    const p = (st._all || []).find((x) => x.id === Number(b.dataset.edit));
+    if (p) openProductEditModal(p, () => drawProducts(c));
+  }));
+}
+
+// Serverga to'liq obyekt yuboriladi (server hamma maydonni yangilaydi) —
+// shuning uchun keshdagi joriy qiymatlar + o'zgargan bitta maydon jo'natiladi.
+function productSavePayload(p) {
+  return {
+    id: p.id,
+    name: p.name || '',
+    unit: p.unit || 'dona',
+    barcode: p.barcode || '',
+    description: p.description || '',
+    qty: Number(p.qty) || 0,
+    cost_price_sum: Number(p.cost_price_sum) || 0,
+    sell_price_sum: Number(p.sell_price_sum || p.price_sum) || 0,
+    wholesale_sum: Number(p.wholesale_sum) || 0,
+    supplier_id: Number(p.supplier_id) || 0,
+    category_id: Number(p.category_id) || 0,
+  };
+}
+
+async function saveProductField(inp, c) {
+  const st = renderProducts;
+  const pid = Number(inp.dataset.pid);
+  const field = inp.dataset.f;
+  const p = (st._all || []).find((x) => x.id === pid);
+  if (!p) return;
+  const oldVal = Number(field === 'sell_price_sum' ? (p.sell_price_sum || p.price_sum) : p[field]) || 0;
+  const newVal = Math.max(0, parseFloat(inp.value) || 0);
+  if (newVal === oldVal) return;
+  const payload = productSavePayload(p);
+  payload[field] = newVal;
+  inp.disabled = true;
+  const r = await api.productSave(payload);
+  inp.disabled = false;
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    inp.value = oldVal;
+    toast('⚠️ ' + (r.error || 'Saqlanmadi'));
+    return;
+  }
+  // Kesh yozuvini yangilaymiz (to'liq qayta yuklashsiz)
+  Object.assign(p, r.product || payload);
+  if (r.product && r.product.price_sum != null) p.price_sum = r.product.price_sum;
+  toast(`✓ «${p.name}» saqlandi`);
+}
+
+// To'liq tahrir modali — nomi, birlik, barcode, narxlar, qoldiq, yetkazib beruvchi
+function openProductEditModal(p, onSaved) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  const units = ['dona', 'kg', 'litr', 'metr', 'upak'];
+  const unitOpts = units.map((u) =>
+    `<option value="${u}"${(p.unit || 'dona') === u ? ' selected' : ''}>${u[0].toUpperCase() + u.slice(1)}</option>`).join('');
+  ov.innerHTML = `
+    <div class="np-modal">
+      <div class="np-head"><span>✏️ Tovarni tahrirlash — SKU ${esc(p.id)}</span><button class="np-x" id="peX">✕</button></div>
+      <div class="np-body">
+        <label class="np-l">Nomi *</label>
+        <input id="peName" class="np-inp" type="text" value="${esc(p.name || '')}">
+        <div class="np-2">
+          <div><label class="np-l">O'lchov</label>
+            <select id="peUnit" class="np-inp">${unitOpts}</select></div>
+          <div><label class="np-l">Barkod</label><input id="peBarcode" class="np-inp" type="text" value="${esc(p.barcode || '')}"></div>
+        </div>
+        <div class="np-3">
+          <div><label class="np-l">Tannarx (so'm)</label><input id="peCost" class="np-inp" type="number" min="0" step="any" value="${Number(p.cost_price_sum) || 0}"></div>
+          <div><label class="np-l">Sotuv narxi (so'm)</label><input id="peSell" class="np-inp" type="number" min="0" step="any" value="${Number(p.sell_price_sum || p.price_sum) || 0}"></div>
+          <div><label class="np-l">Ulgurji (so'm)</label><input id="peWhs" class="np-inp" type="number" min="0" step="any" value="${Number(p.wholesale_sum) || 0}"></div>
+        </div>
+        <div class="np-2">
+          <div><label class="np-l">Qoldiq (${esc(p.unit || 'dona')})</label><input id="peQty" class="np-inp" type="number" min="0" step="any" value="${Number(p.qty) || 0}"></div>
+          <div><label class="np-l">Yetkazib beruvchi</label>
+            <select id="peSupplier" class="np-inp"><option value="0">— biriktirilmagan —</option>${supOptions(p.supplier_id)}</select></div>
+        </div>
+        <div id="peMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="peCancel">Bekor</button>
+        <button class="btn-soft" id="peSave">Saqlash</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('peX').addEventListener('click', close);
+  re('peCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('peName').focus();
+  re('peSave').addEventListener('click', async () => {
+    const name = re('peName').value.trim();
+    const msg = re('peMsg');
+    if (!name) { msg.className = 'px-msg err'; msg.textContent = 'Nomini kiriting'; return; }
+    const payload = Object.assign(productSavePayload(p), {
+      name,
+      unit: re('peUnit').value,
+      barcode: re('peBarcode').value.trim(),
+      qty: Math.max(0, parseFloat(re('peQty').value) || 0),
+      cost_price_sum: Math.max(0, parseFloat(re('peCost').value) || 0),
+      sell_price_sum: Math.max(0, parseFloat(re('peSell').value) || 0),
+      wholesale_sum: Math.max(0, parseFloat(re('peWhs').value) || 0),
+      supplier_id: parseInt(re('peSupplier').value, 10) || 0,
+    });
+    const btn = re('peSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const r = await api.productSave(payload);
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!r.ok) {
+      if (r.authRequired) return doLogout();
+      msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik';
+      return;
+    }
+    Object.assign(p, r.product || payload);
+    close();
+    toast(`✓ «${name}» saqlandi`);
+    if (onSaved) onSaved();
+  });
 }
 
 // ── Mijozlar ───────────────────────────────────────────────────────────────
@@ -800,16 +965,42 @@ async function renderSettings(c) {
     </div>`;
 }
 
-// ── Umumiy: barcha mahsulotlarni yuklash (sahifalab) ─────────────────────────
-async function fetchAllProducts() {
-  let all = [], page = 0, guard = 0;
-  while (guard++ < 200) {
-    const r = await api.getProducts(page);
-    if (!r.ok) return { ok: false, error: r.error, authRequired: r.authRequired };
-    all = all.concat(r.items || []);
-    if (!r.has_more) break;
-    page++;
+// ── Umumiy: barcha mahsulotlarni yuklash (tez: katta sahifa + parallel) ──────
+// Yangi server `limit=500` ni qo'llaydi — katalog 1-2 so'rovda keladi.
+// Eski server 20 talik qaytaradi — qolgan sahifalarni PARALLEL olamiz
+// (avvalgi ketma-ket usul yuzlab so'rov bilan sahifani sekinlashtirardi).
+// Natija qisqa muddat keshlanadi: Tovarlar/Prixod/Sennik tablari almashganda
+// har safar qayta yuklamaydi. Saqlash/prixoddan keyin kesh tozalanadi.
+let _prodCache = null;               // { items, ts }
+const PROD_CACHE_MS = 60 * 1000;
+function invalidateProducts() { _prodCache = null; }
+
+async function fetchAllProducts(force) {
+  if (!force && _prodCache && (Date.now() - _prodCache.ts) < PROD_CACHE_MS) {
+    return { ok: true, items: _prodCache.items };
   }
+  const first = await api.getProducts(0, 500);
+  if (!first.ok) return { ok: false, error: first.error, authRequired: first.authRequired };
+  let all = first.items || [];
+  const ps = Number(first.page_size) || all.length || 20;
+  const total = Number(first.total) || all.length;
+  if (first.has_more && ps > 0) {
+    const pages = [];
+    for (let p = 1; p * ps < total; p++) pages.push(p);
+    for (let i = 0; i < pages.length; i += 8) {          // 8 taliklarda parallel
+      const chunk = pages.slice(i, i + 8);
+      const rs = await Promise.all(chunk.map((p) => api.getProducts(p, 500)));
+      for (const r of rs) {
+        if (!r.ok) return { ok: false, error: r.error, authRequired: r.authRequired };
+        all = all.concat(r.items || []);
+      }
+    }
+    // Parallel yuklashda ro'yxat o'zgargan bo'lsa — dublikatni tozalab, tartiblaymiz
+    const seen = new Set();
+    all = all.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
+    all.sort((a, b) => (a.id || 0) - (b.id || 0));
+  }
+  _prodCache = { items: all, ts: Date.now() };
   return { ok: true, items: all };
 }
 
@@ -819,6 +1010,7 @@ function paymentMeta(pay) {
     card: { label: '💳 Karta', cls: 'blue' },
     click: { label: '⚡ Click', cls: 'blue' },
     qarz: { label: '🤝 Qarz', cls: 'gold' },
+    split: { label: '💵💳 Aralash', cls: 'blue' },
     rasxod: { label: '📦 Rasxod', cls: 'gray' },
     qaytarish: { label: '↩️ Qaytarish', cls: 'red' },
   })[pay] || { label: esc(pay || ''), cls: 'gray' };
@@ -855,7 +1047,7 @@ function drawReceipts(c) {
 
   const total = list.reduce((a, s) => a + (s.is_return ? -1 : 1) * (s.total_sum || 0), 0);
   const sel = list.find((s) => s.id === st._selId) || null;
-  const chips = [['', 'Hammasi'], ['cash', 'Naqd'], ['card', 'Karta'], ['click', 'Click'], ['qarz', 'Qarz'], ['qaytarish', 'Qaytarish']];
+  const chips = [['', 'Hammasi'], ['cash', 'Naqd'], ['card', 'Karta'], ['click', 'Click'], ['split', 'Aralash'], ['qarz', 'Qarz'], ['qaytarish', 'Qaytarish']];
 
   c.innerHTML = `
     <div class="filters">
@@ -1346,9 +1538,16 @@ function drawPrixod(c) {
   };
   search.addEventListener('input', renderResults);
   search.addEventListener('focus', renderResults);
-  document.addEventListener('click', (e) => {
-    if (!results.contains(e.target) && e.target !== search) results.classList.add('hidden');
-  }, { once: true });
+  // Doimiy bitta global tinglovchi: tashqariga bosilsa natijalar yopiladi.
+  // (Avval { once:true } edi — birinchi bosishdan keyin ishlamay qolardi.)
+  if (!drawPrixod._outsideClickBound) {
+    drawPrixod._outsideClickBound = true;
+    document.addEventListener('click', (e) => {
+      const res = document.getElementById('pxResults');
+      const inp = document.getElementById('pxSearch');
+      if (res && !res.contains(e.target) && e.target !== inp) res.classList.add('hidden');
+    });
+  }
 
   // Qator inputlari (miqdor/tannarx/narx) → modelni yangilab Jami/footerni qayta hisoblash
   c.querySelectorAll('.px-inp').forEach((inp) => inp.addEventListener('input', () => {
@@ -1659,6 +1858,7 @@ async function pxSave(c) {
     return;
   }
   toast(`✓ Prixod #${r.id} saqlandi (${r.saved} tovar qabul qilindi)`);
+  invalidateProducts();            // qoldiq/narx o'zgardi — katalog keshi eskirdi
   st._lines = [];
   st._review = [];
   st._scanInfo = null;
@@ -1742,6 +1942,7 @@ function openNewProductModal(c, prefill) {
     const np = r.product || { id: r.id, name, unit: prod.unit, qty: 0, barcode: prod.barcode,
       cost_price_sum: prod.cost_price_sum, sell_price_sum: prod.sell_price_sum, wholesale_sum: prod.wholesale_sum };
     renderPrixod._items.push(np);     // keshga qo'shamiz
+    invalidateProducts();             // umumiy katalog keshi ham yangilansin
     close();
     pxAddLine(np.id, c);              // qabul qilish jadvaliga qator sifatida qo'shamiz
     const newLn = renderPrixod._lines.find((l) => l.id === np.id);

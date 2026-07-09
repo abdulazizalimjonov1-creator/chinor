@@ -47,8 +47,10 @@ module.exports = {
   },
   orders: (base, token) =>
     req(base, '/api/orders', { token, timeout: 20000 }),
-  products: (base, token, page = 0) =>
-    req(base, `/api/products?page=${page}`, { token, timeout: 25000 }),
+  // `limit` — sahifa hajmi (yangi server 500 gacha qo'llaydi; eskisi e'tiborsiz
+  // qoldirib 20 talik qaytaradi — klient bunga moslashadi).
+  products: (base, token, page = 0, limit = 0) =>
+    req(base, `/api/products?page=${page}${limit ? `&limit=${limit}` : ''}`, { token, timeout: 25000 }),
   // Prixod — mavjud qoldiqqa delta qo'shadi (manfiy bo'lsa ayiradi).
   productQty: (base, token, id, delta) =>
     req(base, '/api/product/qty', { method: 'POST', token, body: { id, delta }, timeout: 15000 }),

@@ -118,7 +118,11 @@ function withAuth(fn) {
 ipcMain.handle('data:stats', withAuth((base, token) => api.stats(base, token)));
 ipcMain.handle('data:recentSales', withAuth((base, token, since) => api.recentSales(base, token, since || '')));
 ipcMain.handle('data:orders', withAuth((base, token) => api.orders(base, token)));
-ipcMain.handle('data:products', withAuth((base, token, page) => api.products(base, token, page || 0)));
+ipcMain.handle('data:products', withAuth((base, token, arg) => {
+  // Eski chaqiruv: raqam (page). Yangi: { page, limit }.
+  const o = (typeof arg === 'object' && arg) ? arg : { page: arg };
+  return api.products(base, token, Number(o.page) || 0, Number(o.limit) || 0);
+}));
 ipcMain.handle('data:productQty', withAuth((base, token, arg) => api.productQty(base, token, arg.id, arg.delta)));
 ipcMain.handle('data:productSave', withAuth((base, token, arg) => api.productSave(base, token, arg)));
 ipcMain.handle('data:prixodScan', withAuth((base, token, arg) => api.prixodScan(base, token, arg.bytes, arg.filename)));

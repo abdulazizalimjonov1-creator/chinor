@@ -511,6 +511,9 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         # Biriktirilgan yetkazib beruvchi (0 = biriktirilmagan). Nomini admin UI
         # suppliers ro'yxatidan id bo'yicha topadi.
         out["supplier_id"] = int(p.get("supplier_id", 0) or 0)
+        # Tahrirda saqlash to'liq obyektni qaytarib yuboradi — kategoriya
+        # yo'qolib qolmasligi uchun uni ham beramiz.
+        out["category_id"] = int(p.get("category_id", 0) or 0)
     return out
 
 
@@ -638,7 +641,15 @@ async def api_products(request: web.Request):
         page = max(0, int(request.query.get("page", "0") or 0))
     except ValueError:
         page = 0
+    # Desktop admin katalogni to'liq oladi — `limit` bilan sahifa hajmini
+    # kattalashtirish mumkin (20 taliklarda yuzlab ketma-ket so'rov sekin).
     page_size = 20
+    try:
+        req_ps = int(request.query.get("limit", "0") or 0)
+    except ValueError:
+        req_ps = 0
+    if req_ps > 0:
+        page_size = min(req_ps, 500)
 
     if q:
         prods = await _db.search_products(q, limit=200)

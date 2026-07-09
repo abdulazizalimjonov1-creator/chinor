@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('chinor', {
   getStats: () => ipcRenderer.invoke('data:stats'),
   getRecentSales: (since) => ipcRenderer.invoke('data:recentSales', since),
   getOrders: () => ipcRenderer.invoke('data:orders'),
-  getProducts: (page) => ipcRenderer.invoke('data:products', page || 0),
+  getProducts: (page, limit) => ipcRenderer.invoke('data:products', { page: page || 0, limit: limit || 0 }),
   productQty: (id, delta) => ipcRenderer.invoke('data:productQty', { id, delta }),
   productSave: (prod) => ipcRenderer.invoke('data:productSave', prod),
   prixodScan: (bytes, filename) => ipcRenderer.invoke('data:prixodScan', { bytes, filename }),
