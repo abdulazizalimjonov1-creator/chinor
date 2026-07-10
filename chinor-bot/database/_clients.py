@@ -273,6 +273,203 @@ class ClientsMixin:
         if c:
             await self._refresh_client(c)
 
+    async def update_client(self, cid: int, shop_name: str = None,
+                            phone: str = None) -> Tuple[bool, str]:
+        """Mijoz nomi/telefonini tahrirlash. None berilgan maydon o'zgarmaydi.
+        Telefon boshqa mijozda band bo'lsa (False, sabab) qaytaradi."""
+        c = await self.get_client_by_id(cid)
+        if not c:
+            return False, "Mijoz topilmadi"
+        phone_norm = normalize_phone(phone) if phone is not None else None
+        with self._lock:
+            conn = self._conn()
+            try:
+                if phone_norm:
+                    for r in conn.execute(
+                        "SELECT id, phone FROM clients WHERE phone IS NOT NULL "
+                        "AND phone != '' AND id != ?", (int(cid),)
+                    ).fetchall():
+                        if phones_match(r["phone"], phone_norm):
+                            return False, "Bu telefon boshqa mijozda mavjud"
+                sets, vals = [], []
+                if shop_name is not None and shop_name.strip():
+                    sets.append("shop_name=?")
+                    vals.append(shop_name.strip()[:80])
+                if phone_norm is not None:
+                    sets.append("phone=?")
+                    vals.append(phone_norm)
+                if not sets:
+                    return False, "O'zgartiriladigan maydon yo'q"
+                vals.append(int(cid))
+                conn.execute(f"UPDATE clients SET {', '.join(sets)} WHERE id=?", vals)
+                conn.commit()
+            finally:
+                conn.close()
+        c = await self.get_client_by_id(cid)
+        if c:
+            await self._refresh_client(c)
+        return True, ""
+
+    # ── Bonus tizimi ─────────────────────────────────────────────────────────
+    async def add_bonus(self, cid: int, delta: float, reason: str = "",
+                        by_name: str = "", sale_id: int = 0) -> Optional[float]:
+        """Mijoz bonusini o'zgartiradi (delta: + yig'ildi / - ishlatildi) va
+        bonus_log ga iz yozadi. Balans 0 dan pastga tushmaydi (delta shunga
+        qarab qirqiladi). Yangi balansni qaytaradi, mijoz topilmasa None."""
+        delta = float(delta or 0)
+        if not delta:
+            return None
+        with self._lock:
+            conn = self._conn()
+            try:
+                r = conn.execute(
+                    "SELECT bonus_balance FROM clients WHERE id=?", (int(cid),)
+                ).fetchone()
+                if not r:
+                    return None
+                cur_bal = float(r["bonus_balance"] or 0)
+                new_bal = max(0.0, round(cur_bal + delta, 2))
+                real_delta = round(new_bal - cur_bal, 2)
+                if not real_delta:
+                    return cur_bal
+                conn.execute(
+                    "UPDATE clients SET bonus_balance=? WHERE id=?",
+                    (new_bal, int(cid))
+                )
+                conn.execute(
+                    "INSERT INTO bonus_log(client_id, sale_id, delta, "
+                    "balance_after, reason, by_name, created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (int(cid), int(sale_id or 0), real_delta, new_bal,
+                     (reason or "")[:160], (by_name or "")[:80], _now())
+                )
+                conn.commit()
+                return new_bal
+            finally:
+                conn.close()
+
+    def _bonus_log(self, cid: int, limit: int = 100) -> List[Dict]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM bonus_log WHERE client_id=? "
+                    "ORDER BY id DESC LIMIT ?", (int(cid), int(limit))
+                ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def get_bonus_log(self, cid: int, limit: int = 100) -> List[Dict]:
+        return await self._in_thread(self._bonus_log, cid, limit)
+
+    # ── Mijoz kartochkasi: xaridlar, to'lovlar, statistika ───────────────────
+    def _client_sales(self, cid: int, limit: int = 60) -> List[Dict]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM sales WHERE client_id=? "
+                    "ORDER BY id DESC LIMIT ?", (int(cid), int(limit))
+                ).fetchall()
+                return [self._row_to_sale(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def get_client_sales(self, cid: int, limit: int = 60) -> List[Dict]:
+        return await self._in_thread(self._client_sales, cid, limit)
+
+    def _client_payments(self, cid: int, limit: int = 60) -> List[Dict]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM payments WHERE client_id=? "
+                    "ORDER BY id DESC LIMIT ?", (int(cid), int(limit))
+                ).fetchall()
+                return [self._row_to_payment(r) for r in rows]
+            finally:
+                conn.close()
+
+    async def get_client_payments(self, cid: int, limit: int = 60) -> List[Dict]:
+        return await self._in_thread(self._client_payments, cid, limit)
+
+    def _client_stats(self, cid: int) -> Dict:
+        """Mijozning umumiy xarid statistikasi (barcha davr).
+        Qaytarish (is_return) manfiy hisoblanadi, ichki rasxod kirmaydi."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                r = conn.execute(
+                    "SELECT COUNT(*) AS cnt,"
+                    " COALESCE(SUM(CASE WHEN is_return=1 THEN -total ELSE total END),0) AS revenue,"
+                    " MAX(created_at) AS last_at"
+                    " FROM sales WHERE client_id=? AND COALESCE(is_internal,0)=0",
+                    (int(cid),)
+                ).fetchone()
+                cnt = int(r["cnt"] or 0)
+                revenue = float(r["revenue"] or 0)
+                pays = conn.execute(
+                    "SELECT COALESCE(SUM(amount),0) AS paid, COUNT(*) AS pcnt "
+                    "FROM payments WHERE client_id=?", (int(cid),)
+                ).fetchone()
+                return {
+                    "sale_count": cnt,
+                    "revenue_sum": round(revenue, 2),
+                    "avg_check": round(revenue / cnt, 2) if cnt else 0.0,
+                    "last_sale_at": r["last_at"] or "",
+                    "paid_sum": float(pays["paid"] or 0),
+                    "payment_count": int(pays["pcnt"] or 0),
+                }
+            finally:
+                conn.close()
+
+    async def get_client_stats(self, cid: int) -> Dict:
+        return await self._in_thread(self._client_stats, cid)
+
+    # ── Top mijozlar (davr bo'yicha reyting) ─────────────────────────────────
+    def _top_clients(self, since: str = "", limit: int = 50) -> List[Dict]:
+        """Sotuvlar bo'yicha mijozlar reytingi. since — 'YYYY-MM-DD HH:MM:SS'
+        (bo'sh = barcha davr). Ichki (Chinor) mijoz kirmaydi, qaytarishlar
+        ayiriladi. Har mijoz: revenue, cheklar soni, oxirgi xarid."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                where = "s.client_id > 0 AND COALESCE(s.is_internal,0)=0"
+                params: list = []
+                if since:
+                    where += " AND s.created_at >= ?"
+                    params.append(since)
+                params.append(int(limit))
+                rows = conn.execute(
+                    "SELECT s.client_id AS id,"
+                    " COALESCE(SUM(CASE WHEN s.is_return=1 THEN -s.total ELSE s.total END),0) AS revenue,"
+                    " SUM(CASE WHEN COALESCE(s.is_return,0)=0 THEN 1 ELSE 0 END) AS checks,"
+                    " MAX(s.created_at) AS last_at,"
+                    " c.shop_name, c.phone, c.client_type, c.debt,"
+                    " COALESCE(c.bonus_balance,0) AS bonus_balance"
+                    " FROM sales s JOIN clients c ON c.id = s.client_id"
+                    f" WHERE {where}"
+                    " GROUP BY s.client_id"
+                    " ORDER BY revenue DESC LIMIT ?",
+                    params
+                ).fetchall()
+                out = []
+                for r in rows:
+                    d = dict(r)
+                    checks = int(d.get("checks") or 0)
+                    rev = float(d.get("revenue") or 0)
+                    d["revenue"] = round(rev, 2)
+                    d["checks"] = checks
+                    d["avg_check"] = round(rev / checks, 2) if checks else 0.0
+                    out.append(d)
+                return out
+            finally:
+                conn.close()
+
+    async def get_top_clients(self, since: str = "", limit: int = 50) -> List[Dict]:
+        return await self._in_thread(self._top_clients, since, limit)
+
     async def delete_client(self, cid: int):
         mid = 0
         with self._lock:

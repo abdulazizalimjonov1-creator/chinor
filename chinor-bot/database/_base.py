@@ -237,6 +237,22 @@ class BaseDB:
             if col not in cli_cols3:
                 conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_clients_username ON clients(username)")
+        # clients.bonus_balance — mijoz kartochkasida yig'iladigan bonus (so'm).
+        # Har bir o'zgarish bonus_log jadvalida iz qoldiradi (kuzatuv uchun).
+        if "bonus_balance" not in cli_cols3:
+            conn.execute("ALTER TABLE clients ADD COLUMN bonus_balance REAL DEFAULT 0")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS bonus_log ("
+            " id            INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " client_id     INTEGER NOT NULL,"
+            " sale_id       INTEGER DEFAULT 0,"      # sotuvdan avto-hisoblansa — chek IDsi
+            " delta         REAL    NOT NULL,"       # +yig'ildi / -ishlatildi
+            " balance_after REAL    DEFAULT 0,"
+            " reason        TEXT    DEFAULT '',"
+            " by_name       TEXT    DEFAULT '',"     # kim o'zgartirdi (admin/kassa)
+            " created_at    TEXT    NOT NULL)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bonus_cli ON bonus_log(client_id)")
         # «Chinor» — do'konning o'zi mijoz sifatida (bir martalik). Unga yozilgan
         # tovarlar ichki rasxod (tannarxda) bo'lib hisoblanadi.
         has_internal = conn.execute(
@@ -686,6 +702,30 @@ class BaseDB:
 
     def set_quick_prixod_enabled(self, enabled: bool):
         self.set_setting("quick_prixod_enabled", "1" if enabled else "0")
+
+    def is_bonus_enabled(self) -> bool:
+        """🎁 Mijoz bonus tizimi yoqilganmi? Yoqilgan bo'lsa — mijozga
+        biriktirilgan har bir sotuvdan bonus_percent foizida bonus yig'iladi.
+        Standart — o'chiq (mavjud xulq-atvor o'zgarmasin)."""
+        return self._flag_on(self.get_setting("bonus_enabled", "0"))
+
+    def set_bonus_enabled(self, enabled: bool):
+        self.set_setting("bonus_enabled", "1" if enabled else "0")
+
+    def get_bonus_percent(self) -> float:
+        """Sotuvdan bonusga o'tadigan foiz (masalan 1.0 = 1%)."""
+        try:
+            v = float(self.get_setting("bonus_percent", "1"))
+        except (TypeError, ValueError):
+            v = 1.0
+        return max(0.0, min(100.0, v))
+
+    def set_bonus_percent(self, percent: float):
+        try:
+            p = max(0.0, min(100.0, float(percent)))
+        except (TypeError, ValueError):
+            return
+        self.set_setting("bonus_percent", str(p))
 
     def is_mini_app_enabled(self) -> bool:
         """🌐 Mini App (WebApp) yoqilganmi? Yoqilgan bo'lsa — foydalanuvchilar

@@ -111,4 +111,33 @@ module.exports = {
   // Mahsulotga yetkazib beruvchi biriktirish/yechish (faqat bog'lanish).
   productSetSupplier: (base, token, product_id, supplier_id) =>
     req(base, '/api/product/supplier', { method: 'POST', token, body: { product_id, supplier_id }, timeout: 15000 }),
+  // ── Mijozlar boshqaruvi ─────────────────────────────────────────────────────
+  clientSave: (base, token, payload) =>
+    req(base, '/api/client/save', { method: 'POST', token, body: payload, timeout: 15000 }),
+  clientUpdate: (base, token, payload) =>
+    req(base, '/api/client/update', { method: 'POST', token, body: payload, timeout: 15000 }),
+  clientDelete: (base, token, client_id) =>
+    req(base, '/api/client/delete', { method: 'POST', token, body: { client_id }, timeout: 15000 }),
+  // Qarz to'lovi qabul qilish: {client_id, amount, method, note}
+  clientPayment: (base, token, payload) =>
+    req(base, '/api/client/payment', { method: 'POST', token, body: payload, timeout: 15000 }),
+  // Bonus qo'lda o'zgartirish: {client_id, delta, reason}
+  clientBonus: (base, token, payload) =>
+    req(base, '/api/client/bonus', { method: 'POST', token, body: payload, timeout: 15000 }),
+  // Mijoz kartochkasi: statistika + xaridlar + to'lovlar + bonus tarixi
+  clientDetail: (base, token, client_id) =>
+    req(base, `/api/client/detail?client_id=${Number(client_id) || 0}`, { token, timeout: 20000 }),
+  clientsTop: (base, token, days = 30) =>
+    req(base, `/api/clients/top?days=${Number(days) || 0}`, { token, timeout: 20000 }),
+  // ── Xodimlar boshqaruvi + KPI ───────────────────────────────────────────────
+  staff: (base, token) =>
+    req(base, '/api/staff', { token, timeout: 20000 }),
+  staffAdd: (base, token, payload) =>
+    req(base, '/api/staff/add', { method: 'POST', token, body: payload, timeout: 15000 }),
+  staffRole: (base, token, telegram_id, role) =>
+    req(base, '/api/staff/role', { method: 'POST', token, body: { telegram_id, role }, timeout: 15000 }),
+  staffRemove: (base, token, payload) =>
+    req(base, '/api/staff/remove', { method: 'POST', token, body: payload, timeout: 15000 }),
+  staffStats: (base, token, days = 30) =>
+    req(base, `/api/staff/stats?days=${Number(days) || 0}`, { token, timeout: 25000 }),
 };

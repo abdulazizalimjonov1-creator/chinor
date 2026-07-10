@@ -234,6 +234,21 @@ class SalesMixin:
             finally:
                 conn.close()
 
+        # 🎁 Bonus: mijozga biriktirilgan sotuvdan foizli bonus yig'iladi
+        # (bonus_enabled sozlamasi yoqilgan bo'lsa). Ichki rasxodga bonus yo'q.
+        if client_id and not is_internal and total_sum > 0:
+            try:
+                if self.is_bonus_enabled():
+                    pct = self.get_bonus_percent()
+                    bonus = round(total_sum * pct / 100.0, 2)
+                    if bonus > 0:
+                        await self.add_bonus(
+                            client_id, bonus,
+                            reason=f"Xariddan {pct:g}% bonus",
+                            by_name=cashier_name or "", sale_id=sid)
+            except Exception:
+                pass   # bonus yozilmasa ham sotuv buzilmasin
+
         data = {
             "id": sid, "cashier_id": cashier_id, "cashier_name": cashier_name,
             "items": sale_items,

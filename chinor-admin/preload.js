@@ -34,6 +34,20 @@ contextBridge.exposeInMainWorld('chinor', {
   supplierSave: (payload) => ipcRenderer.invoke('data:supplierSave', payload),
   supplierDelete: (id) => ipcRenderer.invoke('data:supplierDelete', { id }),
   productSetSupplier: (product_id, supplier_id) => ipcRenderer.invoke('data:productSetSupplier', { product_id, supplier_id }),
+  // Mijozlar boshqaruvi
+  clientSave: (payload) => ipcRenderer.invoke('data:clientSave', payload),
+  clientUpdate: (payload) => ipcRenderer.invoke('data:clientUpdate', payload),
+  clientDelete: (client_id) => ipcRenderer.invoke('data:clientDelete', { client_id }),
+  clientPayment: (payload) => ipcRenderer.invoke('data:clientPayment', payload),
+  clientBonus: (payload) => ipcRenderer.invoke('data:clientBonus', payload),
+  clientDetail: (client_id) => ipcRenderer.invoke('data:clientDetail', { client_id }),
+  clientsTop: (days) => ipcRenderer.invoke('data:clientsTop', { days }),
+  // Xodimlar boshqaruvi + KPI
+  getStaff: () => ipcRenderer.invoke('data:staff'),
+  staffAdd: (payload) => ipcRenderer.invoke('data:staffAdd', payload),
+  staffRole: (telegram_id, role) => ipcRenderer.invoke('data:staffRole', { telegram_id, role }),
+  staffRemove: (payload) => ipcRenderer.invoke('data:staffRemove', payload),
+  staffStats: (days) => ipcRenderer.invoke('data:staffStats', { days }),
   getLogo: () => ipcRenderer.invoke('assets:logo'),
   // ⌘R bosilganda main process shu hodisani yuboradi — sahifa yangilanadi.
   onRefresh: (cb) => ipcRenderer.on('app:refresh', () => cb()),

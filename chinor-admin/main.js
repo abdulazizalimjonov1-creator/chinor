@@ -137,6 +137,20 @@ ipcMain.handle('data:suppliers', withAuth((base, token) => api.suppliers(base, t
 ipcMain.handle('data:supplierSave', withAuth((base, token, arg) => api.supplierSave(base, token, arg)));
 ipcMain.handle('data:supplierDelete', withAuth((base, token, arg) => api.supplierDelete(base, token, arg.id)));
 ipcMain.handle('data:productSetSupplier', withAuth((base, token, arg) => api.productSetSupplier(base, token, arg.product_id, arg.supplier_id)));
+// Mijozlar boshqaruvi
+ipcMain.handle('data:clientSave', withAuth((base, token, arg) => api.clientSave(base, token, arg)));
+ipcMain.handle('data:clientUpdate', withAuth((base, token, arg) => api.clientUpdate(base, token, arg)));
+ipcMain.handle('data:clientDelete', withAuth((base, token, arg) => api.clientDelete(base, token, arg.client_id)));
+ipcMain.handle('data:clientPayment', withAuth((base, token, arg) => api.clientPayment(base, token, arg)));
+ipcMain.handle('data:clientBonus', withAuth((base, token, arg) => api.clientBonus(base, token, arg)));
+ipcMain.handle('data:clientDetail', withAuth((base, token, arg) => api.clientDetail(base, token, arg.client_id)));
+ipcMain.handle('data:clientsTop', withAuth((base, token, arg) => api.clientsTop(base, token, (arg && arg.days) || 0)));
+// Xodimlar boshqaruvi + KPI
+ipcMain.handle('data:staff', withAuth((base, token) => api.staff(base, token)));
+ipcMain.handle('data:staffAdd', withAuth((base, token, arg) => api.staffAdd(base, token, arg)));
+ipcMain.handle('data:staffRole', withAuth((base, token, arg) => api.staffRole(base, token, arg.telegram_id, arg.role)));
+ipcMain.handle('data:staffRemove', withAuth((base, token, arg) => api.staffRemove(base, token, arg)));
+ipcMain.handle('data:staffStats', withAuth((base, token, arg) => api.staffStats(base, token, (arg && arg.days) || 0)));
 
 ipcMain.handle('net:health', async () => {
   const r = await api.health(store.get('serverUrl'));

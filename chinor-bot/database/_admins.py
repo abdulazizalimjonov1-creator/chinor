@@ -380,6 +380,98 @@ class AdminsMixin:
             pass
         return result
 
+    # ── Xodimlar KPI (CRM): sotuvlar bo'yicha kassir statistikasi ────────────
+    def _staff_stats(self, since: str = "") -> List[dict]:
+        """Har bir kassir (cashier_id) bo'yicha davr ichidagi natijalar:
+        tushum, foyda, cheklar soni, o'rtacha chek, kunlik seriya, oxirgi sotuv.
+        Ichki rasxod hisobga kirmaydi; qaytarishlar ayiriladi (netto).
+        Foyda items ichidagi cost_price dan hisoblanadi (recent-sales bilan
+        bir xil mantiq)."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                if since:
+                    rows = conn.execute(
+                        "SELECT cashier_id, cashier_name, items, total, "
+                        "is_internal, is_return, is_nasiya, created_at "
+                        "FROM sales WHERE created_at >= ?", (since,)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT cashier_id, cashier_name, items, total, "
+                        "is_internal, is_return, is_nasiya, created_at "
+                        "FROM sales"
+                    ).fetchall()
+            finally:
+                conn.close()
+        agg: Dict[int, dict] = {}
+        for r in rows:
+            if r["is_internal"]:
+                continue
+            cid = int(r["cashier_id"] or 0)
+            a = agg.get(cid)
+            if a is None:
+                a = agg[cid] = {
+                    "cashier_id": cid, "cashier_name": r["cashier_name"] or "",
+                    "revenue": 0.0, "profit": 0.0, "checks": 0, "returns": 0,
+                    "nasiya_sum": 0.0, "last_sale_at": "", "daily": {},
+                }
+            # Oxirgi ko'ringan ism dolzarb bo'lsin (ism o'zgargan bo'lishi mumkin)
+            if r["cashier_name"]:
+                a["cashier_name"] = r["cashier_name"]
+            total = float(r["total"] or 0)
+            sign = -1 if r["is_return"] else 1
+            a["revenue"] += sign * total
+            if r["is_return"]:
+                a["returns"] += 1
+            else:
+                a["checks"] += 1
+                if r["is_nasiya"]:
+                    a["nasiya_sum"] += total
+            # Foyda: (narx - tannarx) * miqdor. Qaytarishda qty manfiy —
+            # foyda o'z-o'zidan manfiy chiqadi (netto to'g'ri).
+            try:
+                items = json.loads(r["items"]) if r["items"] else []
+            except Exception:
+                items = []
+            for it in items:
+                try:
+                    qty = float(it.get("qty", 0) or 0)
+                    price = float(it.get("price", 0) or 0)
+                    cost = float(it.get("cost_price", 0) or 0)
+                    a["profit"] += (price - cost) * qty
+                except (TypeError, ValueError):
+                    continue
+            created = r["created_at"] or ""
+            if created > a["last_sale_at"]:
+                a["last_sale_at"] = created
+            day = created[:10]
+            if day:
+                a["daily"][day] = a["daily"].get(day, 0.0) + sign * total
+        out = []
+        for a in agg.values():
+            checks = a["checks"]
+            out.append({
+                "cashier_id": a["cashier_id"],
+                "cashier_name": a["cashier_name"],
+                "revenue": round(a["revenue"], 2),
+                "profit": round(a["profit"], 2),
+                "checks": checks,
+                "returns": a["returns"],
+                "nasiya_sum": round(a["nasiya_sum"], 2),
+                "avg_check": round(a["revenue"] / checks, 2) if checks else 0.0,
+                "last_sale_at": a["last_sale_at"],
+                "daily": [
+                    {"day": d, "revenue": round(v, 2)}
+                    for d, v in sorted(a["daily"].items())
+                ],
+            })
+        out.sort(key=lambda x: x["revenue"], reverse=True)
+        return out
+
+    async def get_staff_stats(self, since: str = "") -> List[dict]:
+        return await self._in_thread(self._staff_stats, since)
+
     # ── Global valyuta rejimi (settings) ─────────────────────────────────────
     def get_currency_mode_global(self) -> str:
         """Default 'hybrid' — ikkalasi ko'rinadi.

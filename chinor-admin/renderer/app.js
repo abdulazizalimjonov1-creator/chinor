@@ -362,9 +362,25 @@ function renderModuleMenu(mod) {
       suppliers: () => openTab('omb:suppliers', 'Yetkazib beruvchilar', renderSuppliers),
     });
   } else if (mod === 'mijozlar') {
-    renderClients(c);
+    c.innerHTML = tilesHtml([
+      { key: 'list', label: "Mijozlar ro'yxati", icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+      { key: 'top', label: 'Top mijozlar', icon: 'M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3' },
+      { key: 'qarz', label: 'Qarzdorlar', icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
+    ]);
+    bindTiles(c, {
+      list: () => { renderClients._filter = ''; openTab('cli:list', 'Mijozlar', renderClients); },
+      top: () => openTab('cli:top', 'Top mijozlar', renderTopClients),
+      qarz: () => { renderClients._filter = 'qarz'; openTab('cli:list', 'Mijozlar', renderClients); },
+    });
   } else if (mod === 'xodimlar') {
-    renderAdmins(c);
+    c.innerHTML = tilesHtml([
+      { key: 'list', label: "Xodimlar ro'yxati", icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+      { key: 'kpi', label: 'Xodimlar KPI (CRM)', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
+    ]);
+    bindTiles(c, {
+      list: () => openTab('stf:list', 'Xodimlar', renderStaff),
+      kpi: () => openTab('stf:kpi', 'Xodimlar KPI', renderStaffKpi),
+    });
   } else if (mod === 'sozlamalar') {
     renderSettings(c);
   } else {
@@ -889,8 +905,15 @@ function openProductEditModal(p, onSaved) {
   });
 }
 
-// ── Mijozlar ───────────────────────────────────────────────────────────────
+// ── MIJOZLAR: to'liq boshqaruv (ro'yxat, kartochka, to'lov, bonus) ───────────
+function clientTypePill(x) {
+  if (x.is_internal) return `<span class="pill blue">Ichki</span>`;
+  const optom = (x.client_type || 'dona') === 'optom';
+  return `<span class="pill ${optom ? 'green' : 'gray'}">${optom ? 'Optom' : 'Dona'}</span>`;
+}
+
 async function renderClients(c) {
+  const st = renderClients;
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
   const r = await api.getClients();
   if (!r.ok) {
@@ -898,42 +921,658 @@ async function renderClients(c) {
     c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
     return;
   }
-  const items = r.items || [];
-  const debt = items.reduce((a, x) => a + (x.debt_sum || 0), 0);
-  c.innerHTML = `
-    <div class="sum-chips">
-      <div class="sum-chip"><div class="v">${int(items.length)}</div><div class="l">Mijozlar</div></div>
-      <div class="sum-chip"><div class="v">${money(debt)}</div><div class="l">Umumiy qarz</div></div>
-    </div>
-    <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>№</th><th>Nomi</th><th>Telefon</th><th>Turi</th><th class="num">Qarz</th></tr></thead>
-      <tbody>${items.length ? items.map((x) => `
-        <tr><td>#${esc(x.id)}</td><td>${esc(x.shop_name || '—')}</td><td>${esc(x.phone || '—')}</td>
-        <td><span class="pill ${x.is_internal ? 'blue' : 'gray'}">${x.is_internal ? 'Ichki' : esc(x.client_type || 'dona')}</span></td>
-        <td class="num">${money(x.debt_sum)}</td></tr>`).join('')
-        : `<tr><td colspan="5"><div class="chart-empty">Mijozlar yo'q</div></td></tr>`}</tbody>
-    </table></div>`;
+  st._all = r.items || [];
+  drawClients(c);
 }
 
-// ── Xodimlar (adminlar) ──────────────────────────────────────────────────────
-async function renderAdmins(c) {
+function drawClients(c) {
+  const st = renderClients;
+  const q = (st._q || '').toLowerCase().trim();
+  const f = st._filter || '';
+  let list = st._all || [];
+  if (f === 'dona') list = list.filter((x) => !x.is_internal && (x.client_type || 'dona') !== 'optom');
+  else if (f === 'optom') list = list.filter((x) => !x.is_internal && x.client_type === 'optom');
+  else if (f === 'qarz') list = list.filter((x) => (x.debt_sum || 0) > 0);
+  else if (f === 'bonus') list = list.filter((x) => (x.bonus_balance || 0) > 0);
+  if (q) list = list.filter((x) =>
+    (x.shop_name || '').toLowerCase().includes(q) ||
+    (x.phone || '').includes(q.replace(/\D/g, '') || q));
+
+  const real = (st._all || []).filter((x) => !x.is_internal);
+  const debt = real.reduce((a, x) => a + (x.debt_sum || 0), 0);
+  const bonus = real.reduce((a, x) => a + (x.bonus_balance || 0), 0);
+  const chips = [['', 'Hammasi'], ['dona', 'Dona'], ['optom', 'Optom'], ['qarz', 'Qarzdorlar'], ['bonus', 'Bonusli']];
+
+  c.innerHTML = `
+    <div class="bar-row">
+      <div class="sum-chips">
+        <div class="sum-chip"><div class="v">${int(real.length)}</div><div class="l">Mijozlar</div></div>
+        <div class="sum-chip"><div class="v">${money(debt)}</div><div class="l">Umumiy qarz</div></div>
+        <div class="sum-chip"><div class="v">${money(bonus)}</div><div class="l">Umumiy bonus</div></div>
+      </div>
+      <button class="btn-soft" id="cliNew">➕ Yangi mijoz</button>
+    </div>
+    <div class="filters">
+      <div class="filter" style="flex:1; min-width:220px"><label>Qidiruv</label>
+        <input id="cliSearch" type="text" placeholder="Nomi yoki telefon" value="${esc(st._q || '')}"></div>
+    </div>
+    <div class="rc-chips">${chips.map(([k, l]) =>
+      `<button class="rc-chip${(st._filter || '') === k ? ' active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+    <div class="tbl-wrap" style="margin-top:12px"><table class="tbl">
+      <thead><tr><th>№</th><th>Nomi</th><th>Telefon</th><th>Turi</th>
+        <th class="num">Qarz</th><th class="num">🎁 Bonus</th><th>🤝 Qarzga</th><th class="num">Amal</th></tr></thead>
+      <tbody>${list.length ? list.map((x) => `
+        <tr class="cli-row" data-id="${x.id}">
+          <td>#${esc(x.id)}</td>
+          <td class="cli-name" title="Kartochkani ochish"><b>${esc(x.shop_name || '—')}</b></td>
+          <td>${esc(x.phone || '—')}</td>
+          <td>${x.is_internal ? clientTypePill(x)
+            : `<button class="pill-btn" data-type="${x.id}" title="Bosib dona ⇄ optom almashtiring">${clientTypePill(x)}</button>`}</td>
+          <td class="num${(x.debt_sum || 0) > 0 ? ' debt-pos' : ''}">${money(x.debt_sum)}</td>
+          <td class="num${(x.bonus_balance || 0) > 0 ? ' bonus-pos' : ''}">${money(x.bonus_balance || 0)}</td>
+          <td>${x.is_internal ? '—' : `<label class="sw sw-sm"><input type="checkbox" class="cli-credit" data-id="${x.id}" ${x.allow_credit ? 'checked' : ''}><i></i></label>`}</td>
+          <td class="num">${x.is_internal ? '' : `
+            <button class="btn-mini" data-pay="${x.id}" title="Qarz to'lovi qabul qilish">💳</button>
+            <button class="btn-mini" data-edit="${x.id}" title="Tahrirlash">✏️</button>
+            <button class="btn-mini danger" data-del="${x.id}" title="O'chirish">🗑</button>`}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="8"><div class="chart-empty">Mijoz topilmadi</div></td></tr>`}</tbody>
+    </table></div>`;
+
+  const byId = (id) => (st._all || []).find((x) => x.id === Number(id));
+  document.getElementById('cliNew').addEventListener('click', () => openClientModal(null, () => renderClients(c)));
+  document.getElementById('cliSearch').addEventListener('input', (e) => { st._q = e.target.value; drawClients(c); });
+  c.querySelectorAll('.rc-chip').forEach((b) => b.addEventListener('click', () => { st._filter = b.dataset.f; drawClients(c); }));
+  // Nomi bosilsa — kartochka tab'i ochiladi
+  c.querySelectorAll('.cli-name').forEach((td) => td.addEventListener('click', () => {
+    const x = byId(td.closest('.cli-row').dataset.id);
+    if (x) openClientCard(x.id, x.shop_name);
+  }));
+  // Turi: dona ⇄ optom (bir bosishda almashadi)
+  c.querySelectorAll('[data-type]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const x = byId(b.dataset.type);
+    if (!x) return;
+    const next = (x.client_type === 'optom') ? 'dona' : 'optom';
+    const rr = await api.clientUpdate({ client_id: x.id, client_type: next });
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); toast(rr.error || 'Xatolik'); return; }
+    x.client_type = next;
+    toast(`✓ «${x.shop_name}» endi ${next === 'optom' ? 'OPTOM' : 'DONA'} mijoz`);
+    drawClients(c);
+  }));
+  // Qarzga ruxsat switch'i
+  c.querySelectorAll('.cli-credit').forEach((chk) => chk.addEventListener('change', async () => {
+    const x = byId(chk.dataset.id);
+    if (!x) return;
+    chk.disabled = true;
+    const rr = await api.clientUpdate({ client_id: x.id, allow_credit: chk.checked });
+    chk.disabled = false;
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); chk.checked = !chk.checked; toast(rr.error || 'Xatolik'); return; }
+    x.allow_credit = chk.checked ? 1 : 0;
+    toast(chk.checked ? `✓ «${x.shop_name}» — qarzga savdo ochildi` : `✓ «${x.shop_name}» — qarzga savdo yopildi`);
+  }));
+  c.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const x = byId(b.dataset.pay);
+    if (x) openClientPayModal(x, () => renderClients(c));
+  }));
+  c.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const x = byId(b.dataset.edit);
+    if (x) openClientModal(x, () => renderClients(c));
+  }));
+  c.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const x = byId(b.dataset.del);
+    if (!x) return;
+    if ((x.debt_sum || 0) > 0) { toast(`«${x.shop_name}» qarzdor — avval qarzni yoping`); return; }
+    if (!window.confirm(`«${x.shop_name}» o'chirilsinmi?\n\nXaridlar tarixi saqlanadi, lekin mijoz ro'yxatdan yo'qoladi.`)) return;
+    const rr = await api.clientDelete(x.id);
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); toast(rr.error || 'Xatolik'); return; }
+    toast(`✓ «${x.shop_name}» o'chirildi`);
+    renderClients(c);
+  }));
+}
+
+// Yangi mijoz / tahrirlash modal'i
+function openClientModal(cli, onSaved) {
+  const edit = !!cli;
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal">
+      <div class="np-head"><span>${edit ? '✏️ Mijozni tahrirlash' : '➕ Yangi mijoz'}</span><button class="np-x" id="cmX">✕</button></div>
+      <div class="np-body">
+        <label class="np-l">Nomi (do'kon/ism) *</label>
+        <input id="cmName" class="np-inp" type="text" placeholder="Masalan: Baraka do'koni" value="${edit ? esc(cli.shop_name) : ''}">
+        <label class="np-l">Telefon *</label>
+        <input id="cmPhone" class="np-inp" type="text" placeholder="+998 90 123 45 67" value="${edit ? esc(cli.phone) : ''}">
+        <div class="np-2">
+          <div><label class="np-l">Turi</label>
+            <select id="cmType" class="np-inp">
+              <option value="dona"${edit && cli.client_type === 'optom' ? '' : ' selected'}>Dona (chakana)</option>
+              <option value="optom"${edit && cli.client_type === 'optom' ? ' selected' : ''}>Optom (ulgurji)</option>
+            </select></div>
+          <div><label class="np-l">Qarzga savdo</label>
+            <label class="sw" style="margin-top:8px"><input type="checkbox" id="cmCredit" ${edit && cli.allow_credit ? 'checked' : ''}><i></i></label></div>
+        </div>
+        <div id="cmMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="cmCancel">Bekor</button>
+        <button class="btn-soft" id="cmSave">Saqlash</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('cmX').addEventListener('click', close);
+  re('cmCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('cmName').focus();
+  re('cmSave').addEventListener('click', async () => {
+    const name = re('cmName').value.trim();
+    const phone = re('cmPhone').value.trim();
+    const msg = re('cmMsg');
+    if (!name) { msg.className = 'px-msg err'; msg.textContent = 'Nomini kiriting'; return; }
+    if (phone.replace(/\D/g, '').length < 7) { msg.className = 'px-msg err'; msg.textContent = 'Telefon raqami noto\'g\'ri'; return; }
+    const btn = re('cmSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const payload = {
+      shop_name: name, phone,
+      client_type: re('cmType').value,
+      allow_credit: re('cmCredit').checked,
+    };
+    const r = edit
+      ? await api.clientUpdate({ client_id: cli.id, ...payload })
+      : await api.clientSave(payload);
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
+    close();
+    toast(edit ? '✓ Saqlandi' : `✓ «${name}» qo'shildi`);
+    if (onSaved) onSaved();
+  });
+}
+
+// Qarz to'lovi qabul qilish modal'i
+function openClientPayModal(cli, onSaved) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal" style="max-width:420px">
+      <div class="np-head"><span>💳 To'lov qabul qilish</span><button class="np-x" id="cpX">✕</button></div>
+      <div class="np-body">
+        <div class="pc-sum">
+          <div><span>Mijoz</span><b>${esc(cli.shop_name)}</b></div>
+          <div><span>Joriy qarz</span><b>${money(cli.debt_sum)} so'm</b></div>
+        </div>
+        <label class="np-l">Summa (so'm) *</label>
+        <input id="cpAmount" class="np-inp" type="number" min="0" step="any" placeholder="0">
+        <label class="np-l">To'lov usuli</label>
+        <select id="cpMethod" class="np-inp">
+          <option value="cash">💵 Naqd</option>
+          <option value="card">💳 Karta</option>
+          <option value="click">⚡ Click</option>
+        </select>
+        <label class="np-l">Izoh (ixtiyoriy)</label>
+        <input id="cpNote" class="np-inp" type="text" placeholder="masalan: iyul uchun">
+        <div id="cpMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="cpCancel">Bekor</button>
+        <button class="btn-soft" id="cpSave">✓ Qabul qilish</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('cpX').addEventListener('click', close);
+  re('cpCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('cpAmount').focus();
+  re('cpSave').addEventListener('click', async () => {
+    const amount = parseFloat(re('cpAmount').value) || 0;
+    const msg = re('cpMsg');
+    if (amount <= 0) { msg.className = 'px-msg err'; msg.textContent = 'Musbat summa kiriting'; return; }
+    const btn = re('cpSave'); btn.disabled = true; btn.textContent = 'Yozilyapti…';
+    const r = await api.clientPayment({
+      client_id: cli.id, amount,
+      method: re('cpMethod').value, note: re('cpNote').value.trim(),
+    });
+    btn.disabled = false; btn.textContent = '✓ Qabul qilish';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
+    close();
+    const left = r.client ? r.client.debt_sum : Math.max(0, (cli.debt_sum || 0) - amount);
+    toast(`✓ ${money(amount)} so'm qabul qilindi — qoldiq qarz: ${money(left)}`);
+    if (onSaved) onSaved();
+  });
+}
+
+// Bonus qo'shish/ishlatish modal'i
+function openClientBonusModal(cli, onSaved) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal" style="max-width:420px">
+      <div class="np-head"><span>🎁 Bonus</span><button class="np-x" id="cbX">✕</button></div>
+      <div class="np-body">
+        <div class="pc-sum">
+          <div><span>Mijoz</span><b>${esc(cli.shop_name)}</b></div>
+          <div><span>Joriy bonus</span><b>${money(cli.bonus_balance || 0)} so'm</b></div>
+        </div>
+        <div class="rc-chips" style="margin-top:10px">
+          <button class="rc-chip active" id="cbAdd">➕ Qo'shish</button>
+          <button class="rc-chip" id="cbUse">➖ Ishlatish</button>
+        </div>
+        <label class="np-l">Summa (so'm) *</label>
+        <input id="cbAmount" class="np-inp" type="number" min="0" step="any" placeholder="0">
+        <label class="np-l">Sabab (ixtiyoriy)</label>
+        <input id="cbReason" class="np-inp" type="text" placeholder="masalan: aksiya sovg'asi / xariddan chegirma">
+        <div id="cbMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="cbCancel">Bekor</button>
+        <button class="btn-soft" id="cbSave">Saqlash</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  let mode = 1; // +1 qo'shish, -1 ishlatish
+  re('cbX').addEventListener('click', close);
+  re('cbCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('cbAdd').addEventListener('click', () => { mode = 1; re('cbAdd').classList.add('active'); re('cbUse').classList.remove('active'); });
+  re('cbUse').addEventListener('click', () => { mode = -1; re('cbUse').classList.add('active'); re('cbAdd').classList.remove('active'); });
+  re('cbAmount').focus();
+  re('cbSave').addEventListener('click', async () => {
+    const amount = parseFloat(re('cbAmount').value) || 0;
+    const msg = re('cbMsg');
+    if (amount <= 0) { msg.className = 'px-msg err'; msg.textContent = 'Musbat summa kiriting'; return; }
+    if (mode < 0 && amount > (cli.bonus_balance || 0)) {
+      msg.className = 'px-msg err'; msg.textContent = `Bonusda faqat ${money(cli.bonus_balance || 0)} so'm bor`; return;
+    }
+    const btn = re('cbSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const r = await api.clientBonus({ client_id: cli.id, delta: mode * amount, reason: re('cbReason').value.trim() });
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
+    close();
+    toast(`✓ Bonus ${mode > 0 ? 'qo\'shildi' : 'ishlatildi'} — yangi balans: ${money(r.bonus_balance)} so'm`);
+    if (onSaved) onSaved();
+  });
+}
+
+// ── Mijoz kartochkasi (alohida tab) ─────────────────────────────────────────
+function openClientCard(cid, name) {
+  openTab(`cli:card:${cid}`, `👤 ${name || 'Mijoz'}`, (c) => renderClientCard(c, cid));
+}
+
+async function renderClientCard(c, cid) {
+  const stMap = renderClientCard._st || (renderClientCard._st = {});
+  const st = stMap[cid] || (stMap[cid] = { sub: 'sales' });
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
-  const r = await api.getAdmins();
+  const r = await api.clientDetail(cid);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  st.data = r;
+  drawClientCard(c, cid);
+}
+
+function drawClientCard(c, cid) {
+  const st = renderClientCard._st[cid];
+  const d = st.data;
+  const cli = d.client || {};
+  const s = d.stats || {};
+  const reload = () => renderClientCard(c, cid);
+  const optom = (cli.client_type || 'dona') === 'optom';
+
+  const subTabs = [['sales', `🧾 Xaridlar (${(d.sales || []).length})`],
+                   ['pays', `💳 To'lovlar (${(d.payments || []).length})`],
+                   ['bonus', `🎁 Bonus tarixi (${(d.bonus_log || []).length})`]];
+
+  let body = '';
+  if (st.sub === 'sales') {
+    const rows = (d.sales || []).map((x, i) => {
+      const pm = paymentMeta(x.payment);
+      const det = (x.items || []).map((it) => `
+        <tr class="cc-det cc-det-${i} hidden"><td></td>
+          <td colspan="2" class="ph-det-name">${esc(it.name)}</td>
+          <td class="num">${money(it.qty)}</td>
+          <td class="num" colspan="2">${money(it.price_sum)} so'm</td></tr>`).join('');
+      return `<tr class="cc-row" data-i="${i}" title="Tovarlarni ko'rish">
+          <td>#${esc(x.receipt_no)}</td><td>${esc(x.created_at)}</td>
+          <td><span class="pill ${pm.cls}">${pm.label}</span></td>
+          <td class="num">${int(x.item_count)}</td>
+          <td>${esc(x.cashier_name || '')}</td>
+          <td class="num"><b>${money((x.is_return ? -1 : 1) * x.total_sum)}</b></td>
+        </tr>${det}`;
+    }).join('');
+    body = `<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Chek</th><th>Sana</th><th>To'lov</th><th class="num">Tovar</th><th>Kassir</th><th class="num">Summa</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6"><div class="chart-empty">Hali xarid yo'q</div></td></tr>`}</tbody>
+    </table></div>`;
+  } else if (st.sub === 'pays') {
+    const rows = (d.payments || []).map((p) => `
+      <tr><td>${esc(p.created_at)}</td><td class="num"><b>${money(p.amount)}</b></td><td>${esc(p.note || '—')}</td></tr>`).join('');
+    body = `<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Sana</th><th class="num">Summa</th><th>Izoh</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="3"><div class="chart-empty">To'lovlar yo'q</div></td></tr>`}</tbody>
+    </table></div>`;
+  } else {
+    const rows = (d.bonus_log || []).map((b) => `
+      <tr><td>${esc(b.created_at)}</td>
+        <td class="num ${b.delta >= 0 ? 'bonus-pos' : 'debt-pos'}"><b>${b.delta >= 0 ? '+' : ''}${money(b.delta)}</b></td>
+        <td class="num">${money(b.balance_after)}</td>
+        <td>${esc(b.reason || '—')}${b.sale_id ? ` <small class="muted">(chek #${b.sale_id})</small>` : ''}</td>
+        <td>${esc(b.by_name || '—')}</td></tr>`).join('');
+    body = `<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Sana</th><th class="num">O'zgarish</th><th class="num">Balans</th><th>Sabab</th><th>Kim</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="5"><div class="chart-empty">Bonus harakati yo'q. Sozlamalarda bonus tizimini yoqing yoki qo'lda qo'shing.</div></td></tr>`}</tbody>
+    </table></div>`;
+  }
+
+  c.innerHTML = `
+    <div class="cc-head">
+      <div>
+        <div class="cc-name">${esc(cli.shop_name || '—')} ${clientTypePill(cli)}
+          ${cli.allow_credit ? '<span class="pill gold">🤝 Qarzga ruxsat</span>' : ''}</div>
+        <div class="cc-meta">📞 ${esc(cli.phone || '—')} · Ro'yxatda: ${esc(cli.created_at || '—')}${cli.telegram_id ? ' · Telegram ulangan' : ''}</div>
+      </div>
+      ${cli.is_internal ? '' : `<div class="cc-actions">
+        <button class="btn-soft" id="ccPay">💳 To'lov</button>
+        <button class="btn-soft" id="ccBonus">🎁 Bonus</button>
+        <button class="btn-soft ghost" id="ccType">${optom ? '→ Dona qilish' : '→ Optom qilish'}</button>
+        <button class="btn-soft ghost" id="ccEdit">✏️ Tahrirlash</button>
+      </div>`}
+    </div>
+    <div class="kpi-wrap"><div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${money(s.revenue_sum || 0)}</div><div class="kpi-lbl">Jami xarid</div></div>
+      <div class="kpi"><div class="kpi-val">${int(s.sale_count || 0)}</div><div class="kpi-lbl">Cheklar</div></div>
+      <div class="kpi"><div class="kpi-val">${money(s.avg_check || 0)}</div><div class="kpi-lbl">O'rtacha chek</div></div>
+      <div class="kpi"><div class="kpi-val${(cli.debt_sum || 0) > 0 ? ' red' : ''}">${money(cli.debt_sum || 0)}</div><div class="kpi-lbl">Qarz</div></div>
+      <div class="kpi"><div class="kpi-val green">${money(cli.bonus_balance || 0)}</div><div class="kpi-lbl">🎁 Bonus</div></div>
+    </div></div>
+    ${s.last_sale_at ? `<div class="cc-last">Oxirgi xarid: <b>${esc((s.last_sale_at || '').slice(0, 16))}</b> · Jami to'lovlar: <b>${money(s.paid_sum || 0)}</b> so'm (${int(s.payment_count || 0)} ta)</div>` : ''}
+    <div class="rc-chips" style="margin-top:14px">${subTabs.map(([k, l]) =>
+      `<button class="rc-chip${st.sub === k ? ' active' : ''}" data-sub="${k}">${l}</button>`).join('')}</div>
+    <div style="margin-top:12px">${body}</div>`;
+
+  c.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => { st.sub = b.dataset.sub; drawClientCard(c, cid); }));
+  c.querySelectorAll('.cc-row').forEach((row) => row.addEventListener('click', () => {
+    c.querySelectorAll(`.cc-det-${row.dataset.i}`).forEach((el) => el.classList.toggle('hidden'));
+  }));
+  if (!cli.is_internal) {
+    const re = (id) => document.getElementById(id);
+    re('ccPay').addEventListener('click', () => openClientPayModal(cli, reload));
+    re('ccBonus').addEventListener('click', () => openClientBonusModal(cli, reload));
+    re('ccEdit').addEventListener('click', () => openClientModal(cli, reload));
+    re('ccType').addEventListener('click', async () => {
+      const next = optom ? 'dona' : 'optom';
+      const rr = await api.clientUpdate({ client_id: cli.id, client_type: next });
+      if (!rr.ok) { if (rr.authRequired) return doLogout(); toast(rr.error || 'Xatolik'); return; }
+      toast(`✓ Endi ${next === 'optom' ? 'OPTOM' : 'DONA'} mijoz`);
+      reload();
+    });
+  }
+}
+
+// ── Top mijozlar (davr bo'yicha reyting) ─────────────────────────────────────
+async function renderTopClients(c) {
+  const st = renderTopClients;
+  if (st._days == null) st._days = 30;
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.clientsTop(st._days);
   if (!r.ok) {
     if (r.authRequired) return doLogout();
     c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
     return;
   }
   const items = r.items || [];
+  const maxRev = Math.max(1, ...items.map((x) => x.revenue || 0));
+  const totalRev = items.reduce((a, x) => a + (x.revenue || 0), 0);
+  const chips = [[7, '7 kun'], [30, '30 kun'], [90, '90 kun'], [365, '1 yil'], [0, 'Barcha davr']];
+  const medal = (i) => (['🥇', '🥈', '🥉'][i] || `${i + 1}.`);
+
   c.innerHTML = `
-    <div class="sum-chips"><div class="sum-chip"><div class="v">${int(items.length)}</div><div class="l">Xodimlar</div></div></div>
+    <div class="rc-chips">${chips.map(([k, l]) =>
+      `<button class="rc-chip${st._days === k ? ' active' : ''}" data-d="${k}">${l}</button>`).join('')}</div>
+    <div class="sum-chips" style="margin:14px 0">
+      <div class="sum-chip"><div class="v">${int(items.length)}</div><div class="l">Xarid qilgan mijozlar</div></div>
+      <div class="sum-chip"><div class="v">${money(totalRev)}</div><div class="l">Umumiy tushum (mijozli)</div></div>
+    </div>
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Ism</th><th>Username</th><th>Rol</th><th>Qo'shilgan</th></tr></thead>
-      <tbody>${items.length ? items.map((a) => `
-        <tr><td>${esc(a.full_name || '—')}</td><td>${a.username ? '@' + esc(a.username) : '—'}</td>
-        <td><span class="pill blue">${esc(a.role || 'full')}</span></td><td>${esc(a.created_at || '')}</td></tr>`).join('')
-        : `<tr><td colspan="4"><div class="chart-empty">Xodimlar yo'q</div></td></tr>`}</tbody>
+      <thead><tr><th style="width:52px">O'rin</th><th>Mijoz</th><th>Turi</th>
+        <th style="min-width:220px">Tushum</th><th class="num">Cheklar</th><th class="num">O'rtacha chek</th>
+        <th class="num">Qarz</th><th class="num">🎁 Bonus</th><th>Oxirgi xarid</th></tr></thead>
+      <tbody>${items.length ? items.map((x, i) => `
+        <tr class="top-row" data-id="${x.id}" data-name="${esc(x.shop_name)}" title="Kartochkani ochish">
+          <td class="top-medal">${medal(i)}</td>
+          <td><b>${esc(x.shop_name || '—')}</b><br><small class="muted">${esc(x.phone || '')}</small></td>
+          <td>${clientTypePill(x)}</td>
+          <td><div class="paybar-track"><div class="paybar-fill" style="width:${(x.revenue / maxRev) * 100}%"></div></div>
+            <b>${money(x.revenue)}</b></td>
+          <td class="num">${int(x.checks)}</td>
+          <td class="num">${money(x.avg_check)}</td>
+          <td class="num${(x.debt_sum || 0) > 0 ? ' debt-pos' : ''}">${money(x.debt_sum)}</td>
+          <td class="num${(x.bonus_balance || 0) > 0 ? ' bonus-pos' : ''}">${money(x.bonus_balance)}</td>
+          <td>${esc(x.last_sale_at || '')}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="9"><div class="chart-empty">Bu davrda mijozga biriktirilgan sotuv yo'q. Kassada sotuvni mijozga biriktirsangiz, reyting shu yerda chiqadi.</div></td></tr>`}</tbody>
     </table></div>`;
+
+  c.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => {
+    st._days = Number(b.dataset.d); renderTopClients(c);
+  }));
+  c.querySelectorAll('.top-row').forEach((row) => row.addEventListener('click', () =>
+    openClientCard(Number(row.dataset.id), row.dataset.name)));
+}
+
+// ── XODIMLAR: boshqaruv + CRM (KPI) ─────────────────────────────────────────
+const ROLE_META = {
+  full:     { label: "👑 To'liq admin", cls: 'blue' },
+  products: { label: '📦 Mahsulotchi', cls: 'gold' },
+  cashier:  { label: '🧾 Kassir', cls: 'green' },
+  stats:    { label: '📊 Statistikachi', cls: 'gray' },
+  custom:   { label: '⚙️ Maxsus', cls: 'gray' },
+};
+const ROLE_CHOICES = [['full', "👑 To'liq admin"], ['products', '📦 Mahsulotchi'],
+                      ['cashier', '🧾 Kassir'], ['stats', '📊 Statistikachi']];
+
+async function renderStaff(c) {
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.getStaff();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const items = r.items || [];
+  const canManage = !!r.can_manage;
+  const active = items.filter((x) => !x.pending);
+  const pending = items.filter((x) => x.pending);
+
+  const roleCell = (a) => {
+    const meta = ROLE_META[a.role] || ROLE_META.full;
+    if (!canManage || a.is_glavniy || a.pending || a.role === 'custom') {
+      return `<span class="pill ${meta.cls}">${a.is_glavniy ? '⭐ Glavniy' : meta.label}</span>`;
+    }
+    return `<select class="stf-role" data-tg="${a.telegram_id}">
+      ${ROLE_CHOICES.map(([k, l]) => `<option value="${k}"${a.role === k ? ' selected' : ''}>${l}</option>`).join('')}
+    </select>`;
+  };
+  const rowHtml = (a) => `
+    <tr${a.pending ? ' class="stf-pending"' : ''}>
+      <td><b>${esc(a.full_name || '—')}</b>${a.pending ? ' <span class="pill gold">⏳ Kutilmoqda</span>' : ''}</td>
+      <td>${esc(a.phone || '—')}</td>
+      <td>${a.username ? '@' + esc(a.username) : '—'}</td>
+      <td>${roleCell(a)}</td>
+      <td>${esc(a.created_at || '')}</td>
+      <td class="num">${(canManage && !a.is_glavniy)
+        ? `<button class="btn-mini danger" data-rm="${a.pending ? 'p' + a.pending_id : 't' + a.telegram_id}" data-name="${esc(a.full_name || a.phone || '')}" title="O'chirish">🗑</button>` : ''}</td>
+    </tr>`;
+
+  c.innerHTML = `
+    <div class="bar-row">
+      <div class="sum-chips">
+        <div class="sum-chip"><div class="v">${int(active.length)}</div><div class="l">Faol xodimlar</div></div>
+        ${pending.length ? `<div class="sum-chip"><div class="v">${int(pending.length)}</div><div class="l">Kutilmoqda</div></div>` : ''}
+      </div>
+      ${canManage ? `<button class="btn-soft" id="stfNew">➕ Yangi xodim</button>` : ''}
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Ism</th><th>Telefon</th><th>Username</th><th>Rol</th><th>Qo'shilgan</th><th class="num">Amal</th></tr></thead>
+      <tbody>${(active.length + pending.length)
+        ? active.map(rowHtml).join('') + pending.map(rowHtml).join('')
+        : `<tr><td colspan="6"><div class="chart-empty">Xodimlar yo'q</div></td></tr>`}</tbody>
+    </table></div>
+    <div class="set-hint" style="margin-top:10px">⏳ «Kutilmoqda» — xodim hali botga kirmagan: u botda /start bosib, telefon raqamini (kontakt) yuborsa avtomatik faollashadi.</div>`;
+
+  if (canManage) {
+    const newBtn = document.getElementById('stfNew');
+    if (newBtn) newBtn.addEventListener('click', () => openStaffModal(() => renderStaff(c)));
+  }
+  c.querySelectorAll('.stf-role').forEach((sel) => sel.addEventListener('change', async () => {
+    const tg = Number(sel.dataset.tg);
+    sel.disabled = true;
+    const rr = await api.staffRole(tg, sel.value);
+    sel.disabled = false;
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); toast(rr.error || 'Xatolik'); renderStaff(c); return; }
+    toast(`✓ Rol o'zgartirildi: ${(ROLE_META[sel.value] || {}).label || sel.value}`);
+  }));
+  c.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
+    const key = b.dataset.rm;
+    const name = b.dataset.name || 'xodim';
+    if (!window.confirm(`«${name}» xodimlardan o'chirilsinmi?\n\nU admin panelga va botga kira olmay qoladi.`)) return;
+    const payload = key.startsWith('p') ? { pending_id: Number(key.slice(1)) } : { telegram_id: Number(key.slice(1)) };
+    const rr = await api.staffRemove(payload);
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); toast(rr.error || 'Xatolik'); return; }
+    toast(`✓ «${name}» o'chirildi`);
+    renderStaff(c);
+  }));
+}
+
+// Yangi xodim qo'shish (telefon orqali — bot oqimi bilan bir xil)
+function openStaffModal(onSaved) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal" style="max-width:440px">
+      <div class="np-head"><span>➕ Yangi xodim</span><button class="np-x" id="sfX">✕</button></div>
+      <div class="np-body">
+        <label class="np-l">Telefon raqami *</label>
+        <input id="sfPhone" class="np-inp" type="text" placeholder="+998 90 123 45 67">
+        <label class="np-l">Ismi (ixtiyoriy)</label>
+        <input id="sfName" class="np-inp" type="text" placeholder="Xodim ismi">
+        <label class="np-l">Rol</label>
+        <select id="sfRole" class="np-inp">
+          ${ROLE_CHOICES.map(([k, l]) => `<option value="${k}"${k === 'cashier' ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <div class="set-hint" style="margin-top:10px">Xodim botga kirib /start bosadi va telefon raqamini (kontakt) yuboradi — shunda avtomatik faollashadi.</div>
+        <div id="sfMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="sfCancel">Bekor</button>
+        <button class="btn-soft" id="sfSave">Qo'shish</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('sfX').addEventListener('click', close);
+  re('sfCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('sfPhone').focus();
+  re('sfSave').addEventListener('click', async () => {
+    const phone = re('sfPhone').value.trim();
+    const msg = re('sfMsg');
+    if (phone.replace(/\D/g, '').length < 7) { msg.className = 'px-msg err'; msg.textContent = 'Telefon raqami noto\'g\'ri'; return; }
+    const btn = re('sfSave'); btn.disabled = true; btn.textContent = 'Qo\'shilyapti…';
+    const r = await api.staffAdd({ phone, full_name: re('sfName').value.trim(), role: re('sfRole').value });
+    btn.disabled = false; btn.textContent = 'Qo\'shish';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
+    close();
+    toast('✓ Xodim qo\'shildi — botga kirib kontakt yuborishi kutilmoqda');
+    if (onSaved) onSaved();
+  });
+}
+
+// ── Xodimlar KPI (CRM): davr bo'yicha sotuv natijalari ───────────────────────
+async function renderStaffKpi(c) {
+  const st = renderStaffKpi;
+  if (st._days == null) st._days = 30;
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.staffStats(st._days);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  st._items = r.items || [];
+  if (st._sel != null && !st._items.some((x) => x.cashier_id === st._sel)) st._sel = null;
+  drawStaffKpi(c);
+}
+
+function drawStaffKpi(c) {
+  const st = renderStaffKpi;
+  const items = st._items || [];
+  const chips = [[7, '7 kun'], [30, '30 kun'], [90, '90 kun'], [0, 'Barcha davr']];
+  const totRev = items.reduce((a, x) => a + (x.revenue || 0), 0);
+  const totProfit = items.reduce((a, x) => a + (x.profit || 0), 0);
+  const totChecks = items.reduce((a, x) => a + (x.checks || 0), 0);
+  const medal = (i) => (['🥇', '🥈', '🥉'][i] || `${i + 1}.`);
+  const sel = items.find((x) => x.cashier_id === st._sel);
+
+  c.innerHTML = `
+    <div class="rc-chips">${chips.map(([k, l]) =>
+      `<button class="rc-chip${st._days === k ? ' active' : ''}" data-d="${k}">${l}</button>`).join('')}</div>
+    <div class="kpi-wrap" style="margin-top:12px"><div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${money(totRev)}</div><div class="kpi-lbl">Umumiy tushum</div></div>
+      <div class="kpi"><div class="kpi-val green">${money(totProfit)}</div><div class="kpi-lbl">Umumiy foyda</div></div>
+      <div class="kpi"><div class="kpi-val">${int(totChecks)}</div><div class="kpi-lbl">Cheklar</div></div>
+      <div class="kpi"><div class="kpi-val">${int(items.length)}</div><div class="kpi-lbl">Sotgan xodimlar</div></div>
+    </div></div>
+    ${items.length ? `<div class="card"><div class="card-title">Xodimlar bo'yicha tushum</div>
+      ${barChart(items.map((x) => ({ label: x.cashier_name || ('#' + x.cashier_id), value: x.revenue })), { width: 920, height: 240 })}</div>` : ''}
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th style="width:52px">O'rin</th><th>Xodim</th><th class="num">Tushum</th><th class="num">Foyda</th>
+        <th class="num">Cheklar</th><th class="num">O'rtacha chek</th><th class="num">Qaytarish</th>
+        <th class="num">Nasiya</th><th>Oxirgi sotuv</th></tr></thead>
+      <tbody>${items.length ? items.map((x, i) => `
+        <tr class="kpi-row${x.cashier_id === st._sel ? ' active' : ''}" data-id="${x.cashier_id}" title="Kunlik grafikni ko'rish">
+          <td class="top-medal">${medal(i)}</td>
+          <td><b>${esc(x.cashier_name || ('#' + x.cashier_id))}</b></td>
+          <td class="num"><b>${money(x.revenue)}</b></td>
+          <td class="num green-txt">${money(x.profit)}</td>
+          <td class="num">${int(x.checks)}</td>
+          <td class="num">${money(x.avg_check)}</td>
+          <td class="num">${x.returns ? `<span class="badge-low">${int(x.returns)}</span>` : '0'}</td>
+          <td class="num">${money(x.nasiya_sum)}</td>
+          <td>${esc((x.last_sale_at || '').slice(0, 16))}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="9"><div class="chart-empty">Bu davrda sotuv yo'q</div></td></tr>`}</tbody>
+    </table></div>
+    ${sel ? `<div class="card" style="margin-top:14px">
+      <div class="card-title">📈 ${esc(sel.cashier_name || '#' + sel.cashier_id)} — kunlik tushum</div>
+      ${multiLineChart((sel.daily || []).map((p) => p.day.slice(5)), [
+        { name: 'Tushum', color: '#2d9142', values: (sel.daily || []).map((p) => p.revenue), fill: 'rgba(45,145,66,.12)' },
+      ])}
+    </div>` : (items.length ? `<div class="set-hint" style="margin-top:10px">Xodim qatorini bossangiz — kunlik tushum grafigi chiqadi.</div>` : '')}`;
+  bindCharts(c);
+
+  c.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => {
+    st._days = Number(b.dataset.d); renderStaffKpi(c);
+  }));
+  c.querySelectorAll('.kpi-row').forEach((row) => row.addEventListener('click', () => {
+    const id = Number(row.dataset.id);
+    st._sel = (st._sel === id) ? null : id;
+    drawStaffKpi(c);
+  }));
 }
 
 // ── Sozlamalar (kurs + funksiya bayroqlari — jonli tahrirlanadi) ─────────────
@@ -989,6 +1628,21 @@ async function renderSettings(c) {
       </div>
 
       <div class="card">
+        <div class="card-title">🎁 Mijoz bonusi</div>
+        <div class="set-row">
+          <div class="set-txt"><b>Bonus tizimi</b><small>Mijozga biriktirilgan har bir sotuvdan quyidagi foizda bonus yig'iladi — mijoz kartochkasida ko'rinadi va kuzatiladi</small></div>
+          <label class="sw"><input type="checkbox" id="setBonusOn" ${s.bonus_enabled ? 'checked' : ''}><i></i></label>
+        </div>
+        <div class="set-rate">
+          <span>Har xariddan</span>
+          <input id="setBonusPct" class="np-inp" type="number" min="0" max="100" step="any" value="${Number(s.bonus_percent) || 0}" style="width:90px">
+          <span>% bonus</span>
+          <button class="btn-soft" id="setBonusSave">Saqlash</button>
+        </div>
+        <div id="setBonusMsg" class="px-msg"></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">🖥 Ilova</div>
         <div class="set-row"><div class="set-txt"><b>Server manzili</b><small>${esc(S.serverUrl)}</small></div></div>
         <div class="set-row"><div class="set-txt"><b>Versiya</b><small>v ${esc(st.version || '')}</small></div>
@@ -1027,6 +1681,28 @@ async function renderSettings(c) {
     invalidateProducts();               // so'mdagi narxlar o'zgardi
     msg.className = 'px-msg'; msg.textContent = '';
     toast(`✓ Kurs saqlandi: 1$ = ${money(newRate)} so'm`);
+  });
+
+  // 🎁 Bonus sozlamalari
+  re('setBonusOn').addEventListener('change', async () => {
+    const chk = re('setBonusOn');
+    chk.disabled = true;
+    const rr = await api.saveSettings({ bonus_enabled: chk.checked });
+    chk.disabled = false;
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); chk.checked = !chk.checked; toast('⚠️ ' + (rr.error || 'Saqlanmadi')); return; }
+    s.bonus_enabled = chk.checked;
+    toast(chk.checked ? '✓ Bonus tizimi yoqildi' : '✓ Bonus tizimi o\'chirildi');
+  });
+  re('setBonusSave').addEventListener('click', async () => {
+    const msg = re('setBonusMsg');
+    const pct = parseFloat(re('setBonusPct').value);
+    if (isNaN(pct) || pct < 0 || pct > 100) { msg.className = 'px-msg err'; msg.textContent = 'Foiz 0–100 orasida bo\'lsin'; return; }
+    const btn = re('setBonusSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const rr = await api.saveSettings({ bonus_percent: pct });
+    btn.disabled = false; btn.textContent = 'Saqlash';
+    if (!rr.ok) { if (rr.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = rr.error || 'Xatolik'; return; }
+    s.bonus_percent = pct; msg.className = 'px-msg'; msg.textContent = '';
+    toast(`✓ Bonus foizi saqlandi: ${pct}%`);
   });
 
   // Funksiya bayroqlari — darhol saqlanadi, xatoda qaytariladi

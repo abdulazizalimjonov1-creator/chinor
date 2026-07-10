@@ -2418,6 +2418,7 @@ async def api_clients(request: web.Request):
             "telegram_id": c.get("telegram_id", 0),
             "is_internal": 1 if c.get("is_internal") else 0,
             "allow_credit": 1 if c.get("allow_credit") else 0,
+            "bonus_balance": float(c.get("bonus_balance", 0) or 0),
             "created_at": (c.get("created_at", "") or "")[:16],
         })
     return web.json_response({"ok": True, "items": items, "total": len(items)})
@@ -2511,6 +2512,428 @@ async def api_client_credit(request: web.Request):
     return web.json_response({"ok": True, "client_id": cid, "allow_credit": 1 if allow else 0})
 
 
+@ROUTES.post("/api/client/update")
+async def api_client_update(request: web.Request):
+    """Mijozni tahrirlash (admin paneli). Body: {client_id, shop_name?, phone?,
+    client_type?, allow_credit?}. Berilgan maydonlargina o'zgaradi."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+    except (TypeError, ValueError):
+        cid = 0
+    if not cid:
+        return _err("client_id kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijozi tahrirlanmaydi")
+    shop_name = body.get("shop_name")
+    phone = body.get("phone")
+    if shop_name is not None or phone is not None:
+        if phone is not None and len("".join(ch for ch in str(phone) if ch.isdigit())) < 7:
+            return _err("Telefon raqami noto'g'ri (kamida 7 raqam)")
+        ok, why = await _db.update_client(
+            cid,
+            shop_name=str(shop_name) if shop_name is not None else None,
+            phone=str(phone) if phone is not None else None,
+        )
+        if not ok:
+            return _err(why or "Saqlanmadi", 409)
+    if body.get("client_type") is not None:
+        ctype = "optom" if str(body["client_type"]).lower().startswith("opt") else "dona"
+        await _db.set_client_type(cid, ctype)
+    if body.get("allow_credit") is not None:
+        await _db.set_client_allow_credit(cid, bool(body["allow_credit"]))
+    c = await _db.get_client_by_id(cid)
+    return web.json_response({"ok": True, "client": _client_json(c)})
+
+
+@ROUTES.post("/api/client/delete")
+async def api_client_delete(request: web.Request):
+    """Mijozni o'chirish. Body: {client_id}. Ichki (Chinor) mijoz o'chmaydi;
+    qarzi bor mijoz ham himoyalangan (avval qarz yopilsin)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+    except (TypeError, ValueError):
+        cid = 0
+    if not cid:
+        return _err("client_id kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijozi o'chirilmaydi")
+    if float(c.get("debt", 0) or 0) > 0:
+        return _err("Qarzi bor mijoz o'chirilmaydi — avval qarzni yoping", 409)
+    await _db.delete_client(cid)
+    return web.json_response({"ok": True, "client_id": cid})
+
+
+@ROUTES.post("/api/client/payment")
+async def api_client_payment(request: web.Request):
+    """Mijozdan qarz to'lovini qabul qilish (admin paneli).
+    Body: {client_id, amount, method: cash|card|click, note?}."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+        amount = float(body.get("amount") or 0)
+    except (TypeError, ValueError):
+        return _err("client_id/amount noto'g'ri")
+    if not cid or amount <= 0:
+        return _err("Mijoz va musbat summa kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijoziga to'lov yozilmaydi")
+    method = (body.get("method") or "cash").lower()
+    if method not in ("cash", "card", "click"):
+        method = "cash"
+    note = (body.get("note") or "").strip()[:160]
+    by = auth["user"].get("full_name") or "Admin"
+    full_note = f"Admin panel to'lovi ({method}) — {by}"
+    if note:
+        full_note += f": {note}"
+    pay = await _db.add_payment(cid, amount, "sum", full_note)
+    if not pay:
+        return _err("To'lov yozilmadi", 500)
+    c = await _db.get_client_by_id(cid)
+    return web.json_response({"ok": True, "payment_id": pay.get("id"),
+                              "client": _client_json(c)})
+
+
+@ROUTES.post("/api/client/bonus")
+async def api_client_bonus(request: web.Request):
+    """Mijoz bonusini qo'lda o'zgartirish (+qo'shish / -ishlatish).
+    Body: {client_id, delta, reason?}. Balans 0 dan pastga tushmaydi."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    body = await _read_json(request)
+    try:
+        cid = int(body.get("client_id") or 0)
+        delta = float(body.get("delta") or 0)
+    except (TypeError, ValueError):
+        return _err("client_id/delta noto'g'ri")
+    if not cid or not delta:
+        return _err("Mijoz va nolga teng bo'lmagan delta kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    if c.get("is_internal"):
+        return _err("«Chinor» ichki mijoziga bonus qo'llanmaydi")
+    by = auth["user"].get("full_name") or "Admin"
+    reason = (body.get("reason") or "").strip()[:160] or \
+        ("Qo'lda qo'shildi" if delta > 0 else "Qo'lda ishlatildi")
+    new_bal = await _db.add_bonus(cid, delta, reason=reason, by_name=by)
+    if new_bal is None:
+        return _err("Bonus yozilmadi", 500)
+    return web.json_response({"ok": True, "client_id": cid,
+                              "bonus_balance": new_bal})
+
+
+def _client_json(c: dict) -> dict:
+    """Mijozni admin paneli formatiga o'girish (bitta joyda — takror bo'lmasin)."""
+    if not c:
+        return {}
+    return {
+        "id": c.get("id", 0),
+        "shop_name": c.get("shop_name", ""),
+        "phone": c.get("phone", ""),
+        "debt_sum": float(c.get("debt", 0) or 0),
+        "debt_usd": float(c.get("debt_usd", 0) or 0),
+        "client_type": c.get("client_type", "dona"),
+        "telegram_id": c.get("telegram_id", 0),
+        "is_internal": 1 if c.get("is_internal") else 0,
+        "allow_credit": 1 if c.get("allow_credit") else 0,
+        "bonus_balance": float(c.get("bonus_balance", 0) or 0),
+        "created_at": (c.get("created_at", "") or "")[:16],
+    }
+
+
+def _sale_pay_kind(s: dict) -> str:
+    """Sotuvning to'lov turini aniqlaydi (recent-sales bilan bir xil mantiq)."""
+    if s.get("is_return"):
+        return "qaytarish"
+    if s.get("is_internal"):
+        return "rasxod"
+    if s.get("is_nasiya"):
+        return "qarz"
+    p_cash = float(s.get("paid_cash", 0) or 0)
+    p_card = float(s.get("paid_card", 0) or 0)
+    p_other = float(s.get("paid_other", 0) or 0)
+    p_total = float(s.get("paid_total", 0) or 0)
+    debt_part = max(0.0, round(float(s.get("total", 0) or 0) - p_total, 2)) \
+        if p_total > 0 else 0.0
+    if sum(1 for v in (p_cash, p_card, p_other, debt_part) if v > 0) > 1:
+        return "split"
+    if p_card > 0:
+        return "card"
+    if p_other > 0:
+        return "click"
+    return "cash"
+
+
+@ROUTES.get("/api/client/detail")
+async def api_client_detail(request: web.Request):
+    """Mijoz kartochkasi: ma'lumot + statistika + so'nggi xaridlar +
+    to'lovlar + bonus tarixi. Query: ?client_id=N"""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        cid = int(request.query.get("client_id") or 0)
+    except (TypeError, ValueError):
+        cid = 0
+    if not cid:
+        return _err("client_id kerak")
+    c = await _db.get_client_by_id(cid)
+    if not c:
+        return _err("Mijoz topilmadi", 404)
+    stats = await _db.get_client_stats(cid)
+    sales = await _db.get_client_sales(cid, 60)
+    payments = await _db.get_client_payments(cid, 60)
+    bonus_log = await _db.get_bonus_log(cid, 100)
+    sales_out = [{
+        "id": s.get("id", 0),
+        "receipt_no": s.get("receipt_no", "") or str(s.get("id", 0)),
+        "created_at": (s.get("created_at", "") or "")[:16],
+        "total_sum": float(s.get("total", 0) or 0),
+        "payment": _sale_pay_kind(s),
+        "is_return": 1 if s.get("is_return") else 0,
+        "item_count": len(s.get("items") or []),
+        "cashier_name": s.get("cashier_name", "") or "",
+        "items": [{
+            "name": it.get("name", ""),
+            "qty": it.get("qty", 0),
+            "price_sum": float(it.get("price", 0) or 0),
+        } for it in (s.get("items") or [])],
+    } for s in sales]
+    pays_out = [{
+        "id": p.get("id", 0),
+        "amount": float(p.get("amount", 0) or 0),
+        "note": p.get("note", "") or "",
+        "created_at": (p.get("created_at", "") or "")[:16],
+    } for p in payments]
+    bonus_out = [{
+        "id": b.get("id", 0),
+        "delta": float(b.get("delta", 0) or 0),
+        "balance_after": float(b.get("balance_after", 0) or 0),
+        "reason": b.get("reason", "") or "",
+        "by_name": b.get("by_name", "") or "",
+        "sale_id": b.get("sale_id", 0) or 0,
+        "created_at": (b.get("created_at", "") or "")[:16],
+    } for b in bonus_log]
+    return web.json_response({
+        "ok": True,
+        "client": _client_json(c),
+        "stats": stats,
+        "sales": sales_out,
+        "payments": pays_out,
+        "bonus_log": bonus_out,
+    })
+
+
+@ROUTES.get("/api/clients/top")
+async def api_clients_top(request: web.Request):
+    """Top mijozlar reytingi. Query: ?days=30 (0 = barcha davr) &limit=50."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        days = max(0, int(request.query.get("days", "30")))
+    except (TypeError, ValueError):
+        days = 30
+    try:
+        limit = min(200, max(1, int(request.query.get("limit", "50"))))
+    except (TypeError, ValueError):
+        limit = 50
+    since = ""
+    if days:
+        from datetime import timedelta
+        from database._helpers import now_local
+        since = (now_local() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = await _db.get_top_clients(since, limit)
+    items = [{
+        "id": r.get("id", 0),
+        "shop_name": r.get("shop_name", ""),
+        "phone": r.get("phone", ""),
+        "client_type": r.get("client_type", "dona"),
+        "revenue": float(r.get("revenue", 0) or 0),
+        "checks": int(r.get("checks", 0) or 0),
+        "avg_check": float(r.get("avg_check", 0) or 0),
+        "debt_sum": float(r.get("debt", 0) or 0),
+        "bonus_balance": float(r.get("bonus_balance", 0) or 0),
+        "last_sale_at": (r.get("last_at", "") or "")[:16],
+    } for r in rows]
+    return web.json_response({"ok": True, "items": items, "days": days})
+
+
+# ── Xodimlar boshqaruvi (admin paneli) ───────────────────────────────────────
+
+def _staff_can_manage(auth: dict) -> bool:
+    """Xodimlarni boshqarish huquqi: glavniy admin yoki 'full' rolli admin."""
+    if auth.get("is_glavniy"):
+        return True
+    role = ((auth.get("user") or {}).get("role") or "full").strip().lower()
+    return role == "full"
+
+
+@ROUTES.get("/api/staff")
+async def api_staff(request: web.Request):
+    """Xodimlar ro'yxati: faol adminlar + kutilayotganlar (pending_staff)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    admins = await _db.get_all_admins()
+    pending = await _db.get_all_pending_staff()
+    items = []
+    for a in admins:
+        items.append({
+            "telegram_id": a.get("telegram_id", 0),
+            "full_name": a.get("full_name", ""),
+            "phone": a.get("phone", "") or "",
+            "role": a.get("role", "full"),
+            "username": a.get("username", "") or "",
+            "created_at": (a.get("created_at", "") or "")[:16],
+            "is_glavniy": 1 if a.get("telegram_id") == GLAVNIY_ADMIN_ID else 0,
+            "pending": 0,
+        })
+    for p in pending:
+        items.append({
+            "pending_id": p.get("id", 0),
+            "telegram_id": 0,
+            "full_name": p.get("full_name", ""),
+            "phone": p.get("phone", "") or "",
+            "role": p.get("role", "full"),
+            "username": "",
+            "created_at": (p.get("created_at", "") or "")[:16],
+            "is_glavniy": 0,
+            "pending": 1,
+        })
+    return web.json_response({"ok": True, "items": items,
+                              "can_manage": 1 if _staff_can_manage(auth) else 0})
+
+
+@ROUTES.post("/api/staff/add")
+async def api_staff_add(request: web.Request):
+    """Yangi xodimni telefon raqami orqali qo'shish (bot oqimi bilan bir xil:
+    pending_staff ga yoziladi, xodim botga kontakt yuborganda faollashadi).
+    Body: {phone, full_name?, role?}."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not _staff_can_manage(auth):
+        return _err("Xodim qo'shish faqat to'liq adminlar uchun", 403)
+    body = await _read_json(request)
+    phone = (body.get("phone") or "").strip()
+    full_name = (body.get("full_name") or "").strip()[:80]
+    role = (body.get("role") or "full").strip().lower()
+    if role not in ("full", "products", "cashier", "stats"):
+        role = "full"
+    if len("".join(ch for ch in phone if ch.isdigit())) < 7:
+        return _err("Telefon raqami noto'g'ri (kamida 7 raqam)")
+    ok, why = await _db.add_pending_staff(phone, full_name, role, auth["tg_id"])
+    if not ok:
+        return _err(why or "Qo'shilmadi", 409)
+    return web.json_response({"ok": True})
+
+
+@ROUTES.post("/api/staff/role")
+async def api_staff_role(request: web.Request):
+    """Xodim rolini o'zgartirish. Body: {telegram_id, role}."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not _staff_can_manage(auth):
+        return _err("Rol o'zgartirish faqat to'liq adminlar uchun", 403)
+    body = await _read_json(request)
+    try:
+        tg_id = int(body.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    role = (body.get("role") or "").strip().lower()
+    if not tg_id or role not in ("full", "products", "cashier", "stats"):
+        return _err("telegram_id va rol (full/products/cashier/stats) kerak")
+    if tg_id == GLAVNIY_ADMIN_ID:
+        return _err("Glavniy adminning roli o'zgartirilmaydi")
+    a = await _db.get_admin(tg_id)
+    if not a:
+        return _err("Xodim topilmadi", 404)
+    await _db.set_admin_role(tg_id, role)
+    return web.json_response({"ok": True, "telegram_id": tg_id, "role": role})
+
+
+@ROUTES.post("/api/staff/remove")
+async def api_staff_remove(request: web.Request):
+    """Xodimni o'chirish. Body: {telegram_id} (faol) yoki {pending_id}
+    (hali botga kirmagan)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not _staff_can_manage(auth):
+        return _err("Xodim o'chirish faqat to'liq adminlar uchun", 403)
+    body = await _read_json(request)
+    try:
+        pending_id = int(body.get("pending_id") or 0)
+        tg_id = int(body.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        pending_id = tg_id = 0
+    if pending_id:
+        await _db.remove_pending_staff(pending_id)
+        return web.json_response({"ok": True})
+    if not tg_id:
+        return _err("telegram_id yoki pending_id kerak")
+    if tg_id == GLAVNIY_ADMIN_ID:
+        return _err("Glavniy admin o'chirilmaydi")
+    if tg_id == auth["tg_id"]:
+        return _err("O'zingizni o'chira olmaysiz")
+    await _db.remove_admin(tg_id)
+    return web.json_response({"ok": True, "telegram_id": tg_id})
+
+
+@ROUTES.get("/api/staff/stats")
+async def api_staff_stats(request: web.Request):
+    """Xodimlar KPI (CRM): davr ichida har bir kassir bo'yicha tushum, foyda,
+    cheklar, o'rtacha chek, kunlik seriya. Query: ?days=30 (0 = barcha davr)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    try:
+        days = max(0, int(request.query.get("days", "30")))
+    except (TypeError, ValueError):
+        days = 30
+    since = ""
+    if days:
+        from datetime import timedelta
+        from database._helpers import now_local
+        since = (now_local() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    items = await _db.get_staff_stats(since)
+    return web.json_response({"ok": True, "items": items, "days": days})
+
+
 @ROUTES.get("/api/orders")
 async def api_orders(request: web.Request):
     from database.channel_db import db as _db
@@ -2581,6 +3004,8 @@ async def api_settings(request: web.Request):
         "mini_app_enabled": _db.is_mini_app_enabled(),
         "ai_consult_enabled": _db.is_ai_consult_enabled(),
         "ai_analytics_enabled": _db.is_ai_analytics_enabled(),
+        "bonus_enabled": _db.is_bonus_enabled(),
+        "bonus_percent": _db.get_bonus_percent(),
     }
     return web.json_response({"ok": True, "settings": settings})
 
@@ -2619,6 +3044,7 @@ async def api_settings_save(request: web.Request):
         "mini_app_enabled": "set_mini_app_enabled",
         "ai_consult_enabled": "set_ai_consult_enabled",
         "ai_analytics_enabled": "set_ai_analytics_enabled",
+        "bonus_enabled": "set_bonus_enabled",
     }
     for key, setter in toggle_map.items():
         if key in body:
@@ -2627,6 +3053,12 @@ async def api_settings_save(request: web.Request):
                 getattr(_db, setter)(val)
             elif isinstance(val, str):
                 getattr(_db, setter)(val.lower() in ("1", "true", "on"))
+    # Bonus foizi (sotuvdan mijoz kartochkasiga o'tadigan ulush)
+    if body.get("bonus_percent") is not None:
+        try:
+            _db.set_bonus_percent(float(body["bonus_percent"]))
+        except (TypeError, ValueError):
+            pass
     return web.json_response({"ok": True})
 
 

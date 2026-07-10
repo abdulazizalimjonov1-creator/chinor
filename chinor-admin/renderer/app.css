@@ -384,3 +384,34 @@ table.tbl tr:hover td { background: #f7faf6; }
 .sw input:checked + i { background: var(--brand); }
 .sw input:checked + i::after { transform: translateX(20px); }
 .sw input:disabled + i { opacity: .5; }
+
+/* ── Mijozlar boshqaruvi + kartochka ─────────────────────────────────────── */
+.kpi .kpi-val.red { color: var(--red); }
+.debt-pos { color: var(--red); font-weight: 700; }
+.bonus-pos { color: var(--green); font-weight: 700; }
+.green-txt { color: var(--green); }
+.pill-btn { background: none; border: none; padding: 0; cursor: pointer; }
+.pill-btn:hover .pill { filter: brightness(.93); }
+.cli-name { cursor: pointer; }
+.cli-name:hover b { text-decoration: underline; }
+.sw.sw-sm { width: 38px; height: 22px; }
+.sw.sw-sm i::after { width: 16px; height: 16px; }
+.sw.sw-sm input:checked + i::after { transform: translateX(16px); }
+.cc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.cc-name { font-size: 20px; font-weight: 800; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.cc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cc-last { color: var(--muted); font-size: 13px; margin-top: 10px; }
+.cc-row { cursor: pointer; }
+.cc-row:hover td { background: #f4f8f4; }
+.top-medal { font-size: 16px; font-weight: 700; }
+.top-row { cursor: pointer; }
+.top-row:hover td { background: #f4f8f4; }
+.top-row .paybar-track { height: 8px; margin-bottom: 4px; max-width: 220px; }
+
+/* ── Xodimlar boshqaruvi + KPI ───────────────────────────────────────────── */
+.stf-pending td { background: #fbf7ea; }
+.stf-role { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 13px; background: #fff; cursor: pointer; }
+.kpi-row { cursor: pointer; }
+.kpi-row:hover td { background: #f4f8f4; }
+.kpi-row.active td { background: #eaf4ec; }
