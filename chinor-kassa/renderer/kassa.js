@@ -83,18 +83,26 @@ function repriceCart() {
   renderList(si ? si.value : '');
 }
 
+// Tovarning barcha shtrix-kodlari (asosiy + qo'shimchalar) — massiv qilib
+function allCodes(p) {
+  const out = [];
+  const push = (c) => { c = String(c || '').trim(); if (c && !out.includes(c)) out.push(c); };
+  push(p.barcode);
+  if (Array.isArray(p.barcodes)) p.barcodes.forEach(push);
+  return out;
+}
 function matchProducts(q) {
   q = (q || '').trim().toLowerCase();
   if (!q) return CATALOG;
   return CATALOG.filter((p) =>
     (p.name || '').toLowerCase().includes(q) ||
     String(p.id).includes(q) ||
-    String(p.barcode || '').includes(q));
+    allCodes(p).some((c) => c.includes(q)));
 }
 function byBarcode(code) {
   code = String(code || '').trim();
   if (!code) return null;
-  return CATALOG.find((x) => String(x.barcode || '').trim() === code) || null;
+  return CATALOG.find((x) => allCodes(x).includes(code)) || null;
 }
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"]/g, (c) =>
@@ -1508,7 +1516,13 @@ async function doBindBarcode(code) {
   const res = await window.kassa.setProductBarcode(bindTarget.id, code);
   if (!res || !res.ok) { toast('❌ ' + ((res && res.error) || 'saqlanmadi'), true); return; }
   const cp = CATALOG.find((x) => x.id === bindTarget.id);
-  if (cp) cp.barcode = code;                 // lokal katalogni darrov yangilaymiz (skaner topishi uchun)
+  if (cp) {
+    // lokal katalogni darrov yangilaymiz (skaner topishi uchun) —
+    // yangi kod asosiy bo'ladi, eski kodlar ham ro'yxatda qoladi
+    cp.barcodes = allCodes(cp);
+    if (!cp.barcodes.includes(code)) cp.barcodes.unshift(code);
+    cp.barcode = code;
+  }
   toast(`🔗 «${bindTarget.name}» ← ${code}`);
   bindTarget = null;
   const scan = $('scanInput');

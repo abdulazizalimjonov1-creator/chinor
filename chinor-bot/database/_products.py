@@ -14,45 +14,191 @@ from database._formatters import (
 )
 
 
+def _norm_codes(barcodes, barcode="") -> List[str]:
+    """Shtrix-kodlar ro'yxatini normallashtiradi: strip + bo'shlarni tashlash +
+    tartibni saqlagan holda dublikatlarni olib tashlash. `barcode` (eski,
+    yakka qiymat) ro'yxat berilmaganda ishlatiladi."""
+    raw = barcodes if isinstance(barcodes, (list, tuple)) else None
+    if raw is None:
+        raw = [barcode] if barcode else []
+    out: List[str] = []
+    for c in raw:
+        c = str(c or "").strip()
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
 class ProductsMixin:
+    # ── SKU (mahsulot ID) ────────────────────────────────────────────────────
+    @staticmethod
+    def _next_sku_sync(conn) -> int:
+        """Keyingi SKU — 5 xonali (10000–99999) oraliqda ketma-ket.
+        AUTOINCREMENT'ga ishonmaymiz: importdan qolgan katta (masalan 33 mln)
+        idlar sequence'ni buzib, yangi tovarlarga sakragan raqam berardi.
+        5 xonali oraliq to'lib qolsa — umumiy MAX(id)+1 ga tushamiz."""
+        row = conn.execute(
+            "SELECT COALESCE(MAX(id), 9999) FROM products WHERE id <= 99999"
+        ).fetchone()
+        nid = max(9999, int(row[0] or 9999)) + 1
+        if nid > 99999:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 9999) FROM products"
+            ).fetchone()
+            nid = int(row[0] or 9999) + 1
+        return nid
+
+    def next_product_sku(self) -> int:
+        """Keyingi beriladigan SKU (admin UI oldindan ko'rsatishi uchun)."""
+        with self._lock:
+            conn = self._conn()
+            try:
+                return self._next_sku_sync(conn)
+            finally:
+                conn.close()
+
+    # ── Shtrix-kodlar (bitta tovarga bir nechta kod) ─────────────────────────
+    @staticmethod
+    def _attach_barcodes_sync(conn, prods: List[dict]) -> List[dict]:
+        """Har bir mahsulot dict'iga `barcodes` ro'yxatini qo'shadi.
+        products.barcode (asosiy/birinchi kod) ro'yxatda doim birinchi turadi."""
+        if not prods:
+            return prods
+        m: Dict[int, List[str]] = {}
+        for r in conn.execute(
+            "SELECT product_id, code FROM product_barcodes ORDER BY rowid"
+        ).fetchall():
+            m.setdefault(r["product_id"], []).append(r["code"])
+        for p in prods:
+            codes = list(m.get(p.get("id"), []))
+            bc = (p.get("barcode") or "").strip()
+            if bc:
+                if bc in codes:
+                    codes.remove(bc)
+                codes.insert(0, bc)
+            p["barcodes"] = codes
+        return prods
+
+    async def barcode_owner(self, code: str) -> Optional[dict]:
+        """Shu shtrix-kod qaysi tovarga tegishli (is_active'dan qat'i nazar) —
+        to'qnashuv tekshiruvi uchun. Topilmasa None."""
+        c = (code or "").strip()
+        if not c:
+            return None
+        with self._lock:
+            conn = self._conn()
+            try:
+                r = conn.execute(
+                    "SELECT * FROM products WHERE id IN ("
+                    " SELECT product_id FROM product_barcodes WHERE code=?)"
+                    " OR (barcode=? AND barcode!='') LIMIT 1",
+                    (c, c)
+                ).fetchone()
+                return self._row_to_product(r) if r else None
+            finally:
+                conn.close()
+
+    async def get_product_barcodes(self, pid: int) -> List[str]:
+        with self._lock:
+            conn = self._conn()
+            try:
+                p = conn.execute(
+                    "SELECT id, barcode FROM products WHERE id=?", (pid,)
+                ).fetchone()
+                if not p:
+                    return []
+                d = dict(p)
+                self._attach_barcodes_sync(conn, [d])
+                return d["barcodes"]
+            finally:
+                conn.close()
+
+    async def set_product_barcodes(self, pid: int, codes: List[str]) -> Tuple[bool, str]:
+        """Tovarning BARCHA shtrix-kodlarini berilgan ro'yxatga almashtiradi.
+        Birinchi kod products.barcode (asosiy) bo'lib yoziladi.
+        Kod boshqa tovarniki bo'lsa — (False, xato_matni) qaytadi."""
+        codes = _norm_codes(codes)
+        with self._lock:
+            conn = self._conn()
+            try:
+                for c in codes:
+                    r = conn.execute(
+                        "SELECT p.id, p.name FROM products p WHERE p.id IN ("
+                        " SELECT product_id FROM product_barcodes WHERE code=?)"
+                        " OR (p.barcode=? AND p.barcode!='')",
+                        (c, c)
+                    ).fetchone()
+                    if r and int(r["id"]) != int(pid):
+                        return False, f"«{c}» shtrix-kod «{r['name']}» da bor"
+                conn.execute(
+                    "DELETE FROM product_barcodes WHERE product_id=?", (pid,)
+                )
+                now = _now()
+                for c in codes:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO product_barcodes"
+                        "(code, product_id, created_at) VALUES(?,?,?)",
+                        (c, pid, now)
+                    )
+                conn.execute(
+                    "UPDATE products SET barcode=? WHERE id=?",
+                    (codes[0] if codes else "", pid)
+                )
+                conn.commit()
+                return True, ""
+            finally:
+                conn.close()
+
     # ── Mahsulot ─────────────────────────────────────────────────────────────
     async def add_product(self, name: str, description: str,
-                          sell_price_usd: float, cost_price_usd: float,
+                          sell_price: float, cost_price: float,
                           qty: float, image_file_id: str = "",
                           unit: str = "dona",
-                          wholesale_price_usd: float = 0,
+                          wholesale_price: float = 0,
                           barcode: str = "",
+                          barcodes: Optional[List[str]] = None,
                           category_id: int = 0,
                           supplier_id: int = 0) -> int:
-        """Mahsulot qo'shish — narxlar USD da kelinadi (sentlarda).
-        So'm versiyasi joriy kurs bo'yicha keshlanadi.
-        barcode — ixtiyoriy, shtrix-kod matni (raqamlar yoki kod).
+        """Mahsulot qo'shish — narxlar SO'M da (kanonik, butun so'mga
+        yaxlitlanadi). USD ustunlari faqat ko'rsatkich keshi — joriy kurs
+        bo'yicha hisoblanadi, so'm narxni hech qachon o'zgartirmaydi.
+        barcodes — ixtiyoriy shtrix-kodlar ro'yxati (bir tovarga bir nechta);
+        barcode (yakka) eski chaqiriqlar mosligi uchun qoldirilgan.
         category_id / supplier_id — ixtiyoriy bog'lanishlar (0 — biriktirilmagan)."""
         created = _now()
         rate = self.get_usd_rate()
-        sell_sum = round(usd_to_sum(sell_price_usd, rate), 2)
-        cost_sum = round(usd_to_sum(cost_price_usd, rate), 2)
-        whs_sum = round(usd_to_sum(wholesale_price_usd, rate), 2) \
-            if wholesale_price_usd else 0
-        barcode = (barcode or "").strip()
+        sell_sum = round(float(sell_price or 0))
+        cost_sum = round(float(cost_price or 0))
+        whs_sum = round(float(wholesale_price or 0))
+        sell_usd = round(sum_to_usd(sell_sum, rate), 4)
+        cost_usd = round(sum_to_usd(cost_sum, rate), 4)
+        whs_usd = round(sum_to_usd(whs_sum, rate), 4) if whs_sum else 0
+        codes = _norm_codes(barcodes, barcode)
+        primary_bc = codes[0] if codes else ""
         category_id = int(category_id or 0)
         supplier_id = int(supplier_id or 0)
         with self._lock:
             conn = self._conn()
             try:
-                cur = conn.execute(
-                    "INSERT INTO products(name, description, sell_price, "
+                pid = self._next_sku_sync(conn)
+                conn.execute(
+                    "INSERT INTO products(id, name, description, sell_price, "
                     "wholesale_price, cost_price, "
                     "sell_price_usd, wholesale_price_usd, cost_price_usd, "
                     "qty, unit, image_file_id, barcode, "
                     "category_id, supplier_id, is_active, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
-                    (name, description, sell_sum, whs_sum, cost_sum,
-                     sell_price_usd, wholesale_price_usd, cost_price_usd,
-                     qty, unit, image_file_id, barcode,
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                    (pid, name, description, sell_sum, whs_sum, cost_sum,
+                     sell_usd, whs_usd, cost_usd,
+                     qty, unit, image_file_id, primary_bc,
                      category_id, supplier_id, created)
                 )
-                pid = cur.lastrowid
+                for c in codes:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO product_barcodes"
+                        "(code, product_id, created_at) VALUES(?,?,?)",
+                        (c, pid, created)
+                    )
                 conn.commit()
             finally:
                 conn.close()
@@ -61,11 +207,11 @@ class ProductsMixin:
             "id": pid, "name": name, "description": description,
             "sell_price": sell_sum, "wholesale_price": whs_sum,
             "cost_price": cost_sum,
-            "sell_price_usd": sell_price_usd,
-            "wholesale_price_usd": wholesale_price_usd,
-            "cost_price_usd": cost_price_usd,
+            "sell_price_usd": sell_usd,
+            "wholesale_price_usd": whs_usd,
+            "cost_price_usd": cost_usd,
             "qty": qty, "unit": unit, "image_file_id": image_file_id,
-            "barcode": barcode,
+            "barcode": primary_bc, "barcodes": codes,
             "category_id": category_id, "supplier_id": supplier_id,
             "is_active": 1, "created_at": created
         }
@@ -93,7 +239,11 @@ class ProductsMixin:
                 r = conn.execute(
                     "SELECT * FROM products WHERE id=? AND is_active=1", (pid,)
                 ).fetchone()
-                return self._row_to_product(r) if r else None
+                if not r:
+                    return None
+                p = self._row_to_product(r)
+                self._attach_barcodes_sync(conn, [p])
+                return p
             finally:
                 conn.close()
 
@@ -105,7 +255,11 @@ class ProductsMixin:
                 r = conn.execute(
                     "SELECT * FROM products WHERE id=?", (pid,)
                 ).fetchone()
-                return self._row_to_product(r) if r else None
+                if not r:
+                    return None
+                p = self._row_to_product(r)
+                self._attach_barcodes_sync(conn, [p])
+                return p
             finally:
                 conn.close()
 
@@ -160,13 +314,20 @@ class ProductsMixin:
         with self._lock:
             conn = self._conn()
             try:
-                # 1) Aniq shtrix-kod bo'yicha (barcode bo'sh emas va aniq mos kelsa)
+                def _out(rows):
+                    prods = [self._row_to_product(r) for r in rows]
+                    return self._attach_barcodes_sync(conn, prods)
+
+                # 1) Aniq shtrix-kod bo'yicha (asosiy kod YOKI qo'shimcha
+                #    kodlar jadvalidagi istalgan kod aniq mos kelsa)
                 rows = conn.execute(
-                    "SELECT * FROM products WHERE is_active=1 AND barcode=? AND barcode!=''",
-                    (q,)
+                    "SELECT * FROM products WHERE is_active=1 AND ("
+                    " (barcode=? AND barcode!='') OR id IN ("
+                    "  SELECT product_id FROM product_barcodes WHERE code=?))",
+                    (q, q)
                 ).fetchall()
                 if rows:
-                    return [self._row_to_product(r) for r in rows]
+                    return _out(rows)
                 # 2) Raqam bo'lsa — ID yoki shtrix-kodning bir qismi
                 if q.isdigit():
                     rows = conn.execute(
@@ -174,27 +335,30 @@ class ProductsMixin:
                         (int(q),)
                     ).fetchall()
                     if rows:
-                        return [self._row_to_product(r) for r in rows]
+                        return _out(rows)
                     # Barcode'ning qismi bo'yicha qidirish (oxiri yoki ichida)
                     rows = conn.execute(
-                        "SELECT * FROM products WHERE is_active=1 AND barcode LIKE ? "
+                        "SELECT * FROM products WHERE is_active=1 AND ("
+                        " barcode LIKE ? OR id IN ("
+                        "  SELECT product_id FROM product_barcodes WHERE code LIKE ?)) "
                         "ORDER BY name LIMIT ?",
-                        (f"%{q}%", limit)
+                        (f"%{q}%", f"%{q}%", limit)
                     ).fetchall()
                     if rows:
-                        return [self._row_to_product(r) for r in rows]
+                        return _out(rows)
                 # 3) Nom bo'yicha
                 rows = conn.execute(
                     "SELECT * FROM products WHERE is_active=1 AND name LIKE ? "
                     "ORDER BY name LIMIT ?",
                     (f"%{q}%", limit)
                 ).fetchall()
-                return [self._row_to_product(r) for r in rows]
+                return _out(rows)
             finally:
                 conn.close()
 
     async def get_product_by_barcode(self, barcode: str) -> Optional[dict]:
-        """Shtrix-kod bo'yicha mahsulotni qaytaradi (faqat is_active=1)."""
+        """Shtrix-kod bo'yicha mahsulotni qaytaradi (faqat is_active=1).
+        Asosiy kod ham, qo'shimcha kodlar jadvalidagi kodlar ham tekshiriladi."""
         bc = (barcode or "").strip()
         if not bc:
             return None
@@ -202,10 +366,16 @@ class ProductsMixin:
             conn = self._conn()
             try:
                 r = conn.execute(
-                    "SELECT * FROM products WHERE barcode=? AND is_active=1 LIMIT 1",
-                    (bc,)
+                    "SELECT * FROM products WHERE is_active=1 AND ("
+                    " (barcode=? AND barcode!='') OR id IN ("
+                    "  SELECT product_id FROM product_barcodes WHERE code=?)) LIMIT 1",
+                    (bc, bc)
                 ).fetchone()
-                return self._row_to_product(r) if r else None
+                if not r:
+                    return None
+                p = self._row_to_product(r)
+                self._attach_barcodes_sync(conn, [p])
+                return p
             finally:
                 conn.close()
 
@@ -231,22 +401,45 @@ class ProductsMixin:
             kw = {k: v for k, v in kw.items() if k in self._EDITABLE_COLUMNS}
         if not kw:
             return
-        # USD narxlari yangilanganda — so'm kesh ham qayta hisoblanadi.
+        # SO'M — kanonik. USD faqat kirishda bir marta so'mga aylantiriladi
+        # (masalan bot oqimida $ kiritilsa); so'm kelganda USD kesh yangilanadi.
         rate = self.get_usd_rate()
-        usd_to_sum_map = {
-            "sell_price_usd":      "sell_price",
-            "wholesale_price_usd": "wholesale_price",
-            "cost_price_usd":      "cost_price",
-        }
-        for usd_col, sum_col in usd_to_sum_map.items():
+        price_pairs = (
+            ("sell_price",      "sell_price_usd"),
+            ("wholesale_price", "wholesale_price_usd"),
+            ("cost_price",      "cost_price_usd"),
+        )
+        for sum_col, usd_col in price_pairs:
             if usd_col in kw and sum_col not in kw:
-                kw[sum_col] = round(usd_to_sum(kw[usd_col], rate), 2)
+                # $ kiritildi — kirish paytida BIR MARTA so'mga aylantiramiz
+                kw[sum_col] = round(usd_to_sum(kw[usd_col], rate))
+            if sum_col in kw:
+                kw[sum_col] = round(float(kw[sum_col] or 0))
+                kw[usd_col] = round(sum_to_usd(kw[sum_col], rate), 4)
+        if "barcode" in kw:
+            kw["barcode"] = (kw["barcode"] or "").strip()
         cols = ",".join(f"{k}=?" for k in kw.keys())
         vals = list(kw.values()) + [pid]
         with self._lock:
             conn = self._conn()
             try:
                 conn.execute(f"UPDATE products SET {cols} WHERE id=?", vals)
+                # Yakka `barcode` yangilanganda qo'shimcha kodlar jadvali ham
+                # sinxron bo'lsin: bo'sh → tovarning hamma kodlari o'chadi;
+                # qiymat → ro'yxatga qo'shiladi (boshqa kodlari saqlanadi).
+                if "barcode" in kw:
+                    bc = kw["barcode"]
+                    if bc:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO product_barcodes"
+                            "(code, product_id, created_at) VALUES(?,?,?)",
+                            (bc, pid, _now())
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM product_barcodes WHERE product_id=?",
+                            (pid,)
+                        )
                 conn.commit()
             finally:
                 conn.close()
@@ -255,8 +448,11 @@ class ProductsMixin:
             await self._refresh_product(p)
 
     async def reprice_all_with_rate(self, rate: float = None):
-        """Barcha mahsulot narxlarini va mijoz qarzlarining so'mdagi keshini
-        joriy USD kurs bo'yicha qayta hisoblaydi. USD qiymatlari — kanonik."""
+        """SO'M — kanonik: kurs o'zgarganda so'mdagi narx va qarzlar
+        O'ZGARMAYDI. Bu metod endi faqat USD KO'RSATKICH keshlarini yangi
+        kursda yangilaydi ($ ko'rinishlar va prixodda $ kiritish uchun).
+        Ilgari teskari edi (USD kanonik) — bu 16 000 so'mlik narxni kurs
+        aylanishida 15 999/16 001 qilib yuborardi."""
         if rate is None:
             rate = self.get_usd_rate()
         if rate <= 0:
@@ -266,15 +462,13 @@ class ProductsMixin:
             try:
                 conn.execute("""
                     UPDATE products
-                       SET sell_price = ROUND(COALESCE(sell_price_usd,0) * ?, 2),
-                           wholesale_price = ROUND(COALESCE(wholesale_price_usd,0) * ?, 2),
-                           cost_price = ROUND(COALESCE(cost_price_usd,0) * ?, 2)
-                     WHERE COALESCE(sell_price_usd,0) > 0
+                       SET sell_price_usd = ROUND(COALESCE(sell_price,0) / ?, 4),
+                           wholesale_price_usd = ROUND(COALESCE(wholesale_price,0) / ?, 4),
+                           cost_price_usd = ROUND(COALESCE(cost_price,0) / ?, 4)
                 """, (rate, rate, rate))
                 conn.execute("""
                     UPDATE clients
-                       SET debt = ROUND(COALESCE(debt_usd,0) * ?, 2)
-                     WHERE COALESCE(debt_usd,0) > 0
+                       SET debt_usd = ROUND(COALESCE(debt,0) / ?, 4)
                 """, (rate,))
                 conn.commit()
             finally:

@@ -894,7 +894,8 @@ async def usd_rate_set(message: Message, state: FSMContext):
     menu = await _menu_for(uid)
     await message.answer(
         f"✅ Yangi kurs saqlandi: <b>1$ = {new_rate:,.2f} so'm</b>\n"
-        f"📦 Barcha mahsulotlarning so'mdagi narxlari qayta hisoblandi.",
+        f"📦 Tovarlarning <b>so'mdagi narxlari o'zgarmadi</b> — narxlar bazada "
+        f"so'mda saqlanadi. Kurs faqat dollarda kiritish va $ ko'rsatish uchun.",
         reply_markup=menu, parse_mode="HTML"
     )
 

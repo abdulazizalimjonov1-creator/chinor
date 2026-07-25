@@ -434,6 +434,15 @@ if [ -n "$NEW" ]; then
   rm -rf "$APP"
   /usr/bin/ditto "$NEW" "$APP"
   /usr/bin/xattr -cr "$APP" 2>/dev/null || true
+  # MUHIM: almashtirilgan ilovani QAYTA IMZOLAYMIZ. Imzo muhri (_CodeSignature)
+  # buzilgan/yo'q bo'lsa Apple Silicon'da macOS ilovani ishga tushishi bilanoq
+  # o'ldiradi (SIGKILL) — foydalanuvchiga "ochilmayapti" bo'lib ko'rinadi.
+  # Avval ichki framework/helper'lar, keyin ilovaning o'zi.
+  /usr/bin/find "$APP/Contents/Frameworks" -maxdepth 1 \\( -name "*.framework" -o -name "*.app" -o -name "*.dylib" \\) -print0 2>/dev/null |
+    while IFS= read -r -d '' f; do
+      /usr/bin/codesign --force --sign - --timestamp=none "$f" 2>/dev/null || true
+    done
+  /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP" 2>/dev/null || true
 fi
 sleep 0.5
 open "$APP"
