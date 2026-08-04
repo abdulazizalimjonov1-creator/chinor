@@ -26,29 +26,7 @@ from marketplace.db import MarketplaceDB
 from marketplace import analytics
 
 
-def _load_bot_env() -> None:
-    """Telegram tokeni chinor-bot'ning o'z .env faylida turadi.
-
-    Uni ikkinchi joyga ko'chirmaymiz — bitta maxfiy qiymat ikki faylda
-    yotmagani ma'qul. Shu sabab kerak bo'lganda o'sha fayldan o'qiymiz.
-    """
-    if os.getenv("BOT_TOKEN"):
-        return
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for candidate in (
-        os.path.join(root, "chinor-bot", ".env"),
-        "/opt/chinor/chinor-bot/.env",
-    ):
-        if os.path.exists(candidate):
-            load_dotenv(candidate, override=False)
-            return
-
-
-_load_bot_env()
+config.load_bot_env()
 
 TG_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 TG_CHAT = os.getenv("REPORT_CHAT_ID", os.getenv("GLAVNIY_ADMIN_ID", "")).strip()

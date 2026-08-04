@@ -189,9 +189,17 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
     if img_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
     parts.append({"text": prompt})
+    # Gemini 2.5+ "o'ylash" tokenlarini sarflaydi va ular ham shu limitdan
+    # yeydi. Limit kichik bo'lsa javobga joy qolmay, model BO'SH qaytaradi
+    # (thoughtsTokenCount 381, javob 0 — real holat). Shuning uchun matn
+    # uchun limit kattaroq va o'ylash butunlay o'chiriladi: bizga mulohaza
+    # emas, javob kerak.
     payload = {
         "contents": [{"parts": parts}],
-        "generationConfig": {"maxOutputTokens": 1200 if not img_b64 else 400},
+        "generationConfig": {
+            "maxOutputTokens": 4000 if not img_b64 else 800,
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}

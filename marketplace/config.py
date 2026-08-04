@@ -47,3 +47,24 @@ OUT_OF_STOCK_DAYS = int(os.getenv("OUT_OF_STOCK_DAYS", "7"))
 # YesPOS qoldiq/narxi shu bazaga ko'chiriladi. Ulash kaliti:
 # Chinor `products.id` == YesPOS `sku` (98.8% moslik tekshirilgan).
 POS_DB = os.getenv("POS_DB", os.path.join(_DATA_DIR, "pos.db"))
+
+
+def load_bot_env() -> None:
+    """chinor-bot/.env dagi kalitlarni yuklaydi (BOT_TOKEN, GEMINI_API_KEY, ...).
+
+    Nega kerak: marketplace vositalari repo ildizidagi `.env` ni o'qiydi
+    (YesPOS kaliti, DATA_DIR). Bot kalitlari esa ALOHIDA faylda —
+    `chinor-bot/.env`. Ularni ikkinchi joyga ko'chirmaymiz (bitta maxfiy
+    qiymat bitta joyda tursin), shuning uchun kerak bo'lganda shu yerdan
+    o'qiymiz. Buni unutish jim nosozlikka olib keladi: AI "kalit yo'q" deb
+    yiqiladi, sababi esa ko'rinmaydi.
+    """
+    if os.getenv("BOT_TOKEN") and os.getenv("GEMINI_API_KEY"):
+        return
+    for candidate in (
+        os.path.join(_REPO_ROOT, "chinor-bot", ".env"),
+        "/opt/chinor/chinor-bot/.env",
+    ):
+        if os.path.exists(candidate):
+            load_dotenv(candidate, override=False)
+            return
