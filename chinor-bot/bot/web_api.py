@@ -1591,6 +1591,67 @@ async def auth_telegram(request: web.Request):
     })
 
 
+@ROUTES.get("/api/credentials")
+async def credentials_status(request: web.Request):
+    """Kassa/admin ilovalari uchun login o'rnatilganmi — holat."""
+    from database.channel_db import db as _db
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    user = auth["user"] or {}
+    if auth["role"] == "admin":
+        has = await _db.admin_has_credentials(auth["tg_id"])
+    else:
+        has = await _db.client_has_credentials(int(user.get("id") or 0))
+    return web.json_response({
+        "ok": True,
+        "has_credentials": bool(has),
+        "username": user.get("username", "") or "",
+    })
+
+
+@ROUTES.post("/api/credentials")
+async def credentials_save(request: web.Request):
+    """Kassa va admin ish stoli ilovalari uchun login/parol o'rnatish.
+
+    Nega hali ham kerak: Mini App Telegram imzosi bilan kiradi, lekin kassa
+    va admin ilovalari Telegramdan tashqarida ishlaydi — ularda initData
+    yo'q, shuning uchun `/api/desktop/login` uchun login+parol zarur.
+    Ilgari buni bot menyusidagi «🔑 Login/parol» tugmasi qilardi; endi
+    boshqaruv Mini App ichida.
+    """
+    from database.channel_db import db as _db
+    from bot.auth import validate_username, validate_password, hash_password
+
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    body = await _read_json(request)
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+
+    ok_u, why_u = validate_username(username)
+    if not ok_u:
+        return _err(why_u)
+    ok_p, why_p = validate_password(password)
+    if not ok_p:
+        return _err(why_p)
+
+    user = auth["user"] or {}
+    pw_hash = hash_password(password)
+    if auth["role"] == "admin":
+        saved = await _db.set_admin_credentials(auth["tg_id"], username, pw_hash)
+    else:
+        saved = await _db.set_client_credentials(
+            int(user.get("id") or 0), username, pw_hash)
+
+    if not saved:
+        return _err("Bu login band — boshqasini tanlang", 409)
+    return web.json_response({"ok": True, "username": username})
+
+
 # ─── POS Sotuv (admin) ──────────────────────────────────────────────────────
 
 @ROUTES.post("/api/sale")

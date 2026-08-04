@@ -1344,7 +1344,66 @@
                 <div class="stat-block">
                     <h3>📋 Oxirgi buyurtmalar</h3>
                     ${ordHtml}
+                </div>
+                <div class="stat-block" id="credBlock">
+                    <h3>🔑 Kassa uchun login/parol</h3>
+                    <div class="list-status">Yuklanmoqda...</div>
                 </div>`;
+            renderCredentials();
+        };
+
+        // ================================================================
+        // KASSA/ADMIN ILOVASI UCHUN LOGIN-PAROL
+        // ================================================================
+        // Mini App Telegram imzosi bilan kiradi — bu yerda parol kerak emas.
+        // Lekin kassa va admin ilovalari Telegramdan TASHQARIDA ishlaydi,
+        // ularda initData yo'q, shuning uchun ular uchun login+parol
+        // o'rnatiladi. Ilgari buni botdagi «🔑 Login/parol» tugmasi qilardi.
+        async function renderCredentials() {
+            const box = $('credBlock');
+            if (!box) return;
+            const { ok, data } = await apiFetch('/api/credentials');
+            const cur = (ok && data.ok && data.username) ? data.username : '';
+            const has = ok && data.ok && data.has_credentials;
+            box.innerHTML = `
+                <h3>🔑 Kassa uchun login/parol</h3>
+                <div class="list-status" style="text-align:left">
+                    Bu login faqat <b>kassa</b> va <b>admin</b> dasturlariga
+                    kirish uchun. Mini App'ga kirishda kerak emas.
+                </div>
+                ${has ? `<div class="stat-row"><span class="lbl">Joriy login</span>
+                         <span class="val">${escapeHtml(cur)}</span></div>` : ''}
+                <input type="text" id="credUser" placeholder="Login"
+                       autocomplete="off" value="${escapeHtml(cur)}"
+                       style="width:100%;margin:8px 0;padding:10px;border-radius:8px;
+                              border:1px solid var(--border,#ccc)">
+                <input type="password" id="credPass" placeholder="Yangi parol"
+                       autocomplete="new-password"
+                       style="width:100%;margin:0 0 8px;padding:10px;border-radius:8px;
+                              border:1px solid var(--border,#ccc)">
+                <button class="more-btn" style="width:100%"
+                        onclick="saveCredentials()">${has ? 'Yangilash' : 'Saqlash'}</button>
+                <div id="credMsg" class="list-status"></div>`;
+        }
+
+        window.saveCredentials = async function () {
+            const u = ($('credUser') || {}).value || '';
+            const pw = ($('credPass') || {}).value || '';
+            const msg = $('credMsg');
+            if (msg) msg.textContent = 'Saqlanmoqda...';
+            const { ok, data } = await apiFetch('/api/credentials', {
+                method: 'POST',
+                body: JSON.stringify({ username: u.trim(), password: pw.trim() }),
+            });
+            if (!msg) return;
+            if (ok && data.ok) {
+                msg.innerHTML = '<span class="val-green">✅ Saqlandi. Endi kassa ' +
+                                'dasturiga shu login/parol bilan kiring.</span>';
+                const pf = $('credPass'); if (pf) pf.value = '';
+            } else {
+                msg.innerHTML = '<span class="val-red">⚠️ ' +
+                    escapeHtml((data && data.error) || 'Saqlanmadi') + '</span>';
+            }
         };
 
         // ================================================================

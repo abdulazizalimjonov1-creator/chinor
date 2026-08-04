@@ -117,8 +117,9 @@ def glavniy_menu():
     kb.button(text="📥 Eksport")
     kb.button(text="⚠️ Past qoldiq")
     if _feature_on("mini_app"):
-        # Kassa/admin ish stoli ilovalari uchun kerak (Telegram initData yo'q)
-        kb.button(text="🔑 Login/parol")
+        # «🔑 Login/parol» olib tashlandi — endi Mini App ichida
+        # (Hisobim → Kassa uchun login/parol). Kassa va admin ilovalari
+        # uchun parolning o'zi baribir kerak, faqat joyi ko'chdi.
         url = _mini_app_url()
         if url:
             kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
@@ -165,10 +166,6 @@ def admin_menu(perms: set = None):
         ("📥 Eksport",              "export",        None),
         ("⚠️ Past qoldiq",          "low_stock",     None),
         ("🤖 AI Analitika",         "ai_analytics",  "ai_analytics"),
-        # Kassa va admin ish stoli ilovalari login+parol bilan kiradi
-        # (/api/desktop/login) — ularda Telegram initData yo'q, shuning
-        # uchun bu tugma Mini App'ga ko'chgunicha kerak.
-        ("🔑 Login/parol",          "",              "mini_app"),
         ("🌐 Mini App",             "",              "mini_app"),
     ]
     kb = ReplyKeyboardBuilder()
