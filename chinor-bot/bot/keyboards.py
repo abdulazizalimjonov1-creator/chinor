@@ -128,6 +128,20 @@ def glavniy_menu():
     return kb.as_markup(resize_keyboard=True)
 
 
+def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
+    """Bosh admin uchun sozlamalar — dona va optom narxni alohida yoqish/o'chirish."""
+    kb = InlineKeyboardBuilder()
+    dona_status = "✅" if dona_enabled else "❌"
+    whs_status = "✅" if wholesale_enabled else "❌"
+    dona_action = "🔴 Dona narxni o'chirish" if dona_enabled else "🟢 Dona narxni yoqish"
+    whs_action = "🔴 Optom narxni o'chirish" if wholesale_enabled else "🟢 Optom narxni yoqish"
+    kb.button(text=f"🛍️ Dona narx: {dona_status}", callback_data="settings_noop")
+    kb.button(text=dona_action, callback_data="settings_toggle_dona")
+    kb.button(text=f"📦 Optom narx: {whs_status}", callback_data="settings_noop")
+    kb.button(text=whs_action, callback_data="settings_toggle_wholesale")
+    kb.adjust(1)
+    return kb.as_markup()
+
 def admin_menu(perms: set = None):
     """Admin menyusi.
     perms=None → eski xulq-atvor (hammasi ko'rinadi).
