@@ -94,9 +94,18 @@ def client_type_kb():
 
 
 def glavniy_menu():
+    """Bosh admin menyusi — QISQARTIRILGAN.
+
+    Olib tashlanganlar (Mini App qoplaydi): Adminlar → Xodimlar ekrani
+    (/api/admins), Statistika → /api/stats, USD kursi va Sozlamalar →
+    /api/settings.
+
+    Qolganlar Mini App'da HALI yo'q. Reyting va Umumiy foyda ham qoldirildi:
+    app.js `/api/client/top` ni chaqiradi, lekin interfeysda reyting yoki
+    foyda ekrani topilmadi — ishonch hosil qilinmaguncha olib tashlamaymiz,
+    aks holda funksiya jimgina yo'qolardi.
+    """
     kb = ReplyKeyboardBuilder()
-    kb.button(text="👥 Adminlar")
-    kb.button(text="📊 Statistika")
     if _feature_on("categories"):
         kb.button(text="🗂 Kategoriyalar")
     if _feature_on("suppliers"):
@@ -107,32 +116,16 @@ def glavniy_menu():
         kb.button(text="🤖 AI Analitika")
     kb.button(text="📥 Eksport")
     kb.button(text="⚠️ Past qoldiq")
-    kb.button(text="💱 USD kursi")
     if _feature_on("mini_app"):
+        # Kassa/admin ish stoli ilovalari uchun kerak (Telegram initData yo'q)
         kb.button(text="🔑 Login/parol")
         url = _mini_app_url()
         if url:
             kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
         else:
             kb.button(text="🌐 Mini App")
-    kb.button(text="⚙️ Sozlamalar")
     kb.adjust(2)
     return kb.as_markup(resize_keyboard=True)
-
-
-def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
-    """Bosh admin uchun sozlamalar — dona va optom narxni alohida yoqish/o'chirish."""
-    kb = InlineKeyboardBuilder()
-    dona_status = "✅" if dona_enabled else "❌"
-    whs_status = "✅" if wholesale_enabled else "❌"
-    dona_action = "🔴 Dona narxni o'chirish" if dona_enabled else "🟢 Dona narxni yoqish"
-    whs_action = "🔴 Optom narxni o'chirish" if wholesale_enabled else "🟢 Optom narxni yoqish"
-    kb.button(text=f"🛍️ Dona narx: {dona_status}", callback_data="settings_noop")
-    kb.button(text=dona_action, callback_data="settings_toggle_dona")
-    kb.button(text=f"📦 Optom narx: {whs_status}", callback_data="settings_noop")
-    kb.button(text=whs_action, callback_data="settings_toggle_wholesale")
-    kb.adjust(1)
-    return kb.as_markup()
 
 
 def admin_menu(perms: set = None):
@@ -141,22 +134,26 @@ def admin_menu(perms: set = None):
     perms berilgan bo'lsa — faqat ruxsat etilgan tugmalar chiqadi."""
     # Tugma -> (kerakli ruxsat kaliti, funksiya kaliti yoki None)
     # funksiya kaliti berilgan bo'lsa — o'sha funksiya o'chirilgan bo'lsa tugma chiqmaydi.
+    # Bot menyusi QISQARTIRILDI: Mini App qoplaydigan tugmalar olib tashlandi,
+    # chunki ular ikki joyda takrorlanib, chalg'itardi. Mini App'da bor:
+    #   Sotuv (/api/sale), Mahsulotlar (/api/products, /api/product/save),
+    #   Mijozlar (/api/clients), Buyurtmalar (/api/orders),
+    #   Statistika (/api/stats), Reyting (/api/client/top),
+    #   USD kursi va Sozlamalar (/api/settings), Xodimlar (/api/admins),
+    #   To'lov/qarz (/api/client/credit), Kassa harakati (/api/cash-movements).
+    #
+    # Quyidagilar QOLDI, chunki Mini App'da HALI YO'Q — olib tashlansa
+    # funksiya butunlay yo'qolardi. Mini App'ga ko'chirilgach bu ro'yxat
+    # yana qisqaradi.
     BUTTONS = [
-        ("🧾 Sotuv",                "sale",          None),
-        ("📦 Mahsulotlar",          "products_view", None),
-        ("➕ Mahsulot qo'shish",    "products_add",  None),
         ("🗂 Kategoriyalar",        "categories",    "categories"),
         ("🚚 Yetkazib beruvchilar", "suppliers",     "suppliers"),
-        ("👤 Mijozlar",             "clients_view",  None),
-        ("➕ Mijoz qo'shish",       "clients_add",   None),
-        ("📋 Buyurtmalar",          "orders",        None),
-        ("📊 Statistika",           "stats",         None),
-        ("💳 To'lov qabul qilish",  "clients_pay",   None),
         ("📥 Eksport",              "export",        None),
         ("⚠️ Past qoldiq",          "low_stock",     None),
-        ("💱 USD kursi",            "usd_rate",      None),
         ("🤖 AI Analitika",         "ai_analytics",  "ai_analytics"),
-        # perm "" — har qanday rolli admin ko'radi (faqat o'z credentialsi)
+        # Kassa va admin ish stoli ilovalari login+parol bilan kiradi
+        # (/api/desktop/login) — ularda Telegram initData yo'q, shuning
+        # uchun bu tugma Mini App'ga ko'chgunicha kerak.
         ("🔑 Login/parol",          "",              "mini_app"),
         ("🌐 Mini App",             "",              "mini_app"),
     ]
