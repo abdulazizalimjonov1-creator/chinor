@@ -183,13 +183,41 @@ class ProductsMixin:
                     ).fetchall()
                     if rows:
                         return [self._row_to_product(r) for r in rows]
-                # 3) Nom bo'yicha
+                # 3) Nom bo'yicha — to'g'ridan-to'g'ri
                 rows = conn.execute(
                     "SELECT * FROM products WHERE is_active=1 AND name LIKE ? "
                     "ORDER BY name LIMIT ?",
                     (f"%{q}%", limit)
                 ).fetchall()
-                return [self._row_to_product(r) for r in rows]
+                if rows:
+                    return [self._row_to_product(r) for r in rows]
+
+                # 4) Normalizatsiya bilan — apostrof, q/k, x/h, ch/sh farqi
+                #    e'tiborga olinmaydi ("cho'tka" ↔ "chotka").
+                from database._helpers import norm_search, skeleton_search
+                nq = norm_search(q)
+                if nq:
+                    rows = conn.execute(
+                        "SELECT * FROM products WHERE is_active=1 "
+                        "AND nrm(name) LIKE ? ORDER BY name LIMIT ?",
+                        (f"%{nq}%", limit)
+                    ).fetchall()
+                    if rows:
+                        return [self._row_to_product(r) for r in rows]
+
+                # 5) ZAXIRA: unlilarsiz "skelet". Imlo farqi asosan unlilarda
+                #    ("samorez" ↔ "samarez"), shuning uchun bu ko'p holatni
+                #    qutqaradi. Faqat oldingilari bo'sh qolgandagina —
+                #    aks holda ortiqcha natija chiqarardi.
+                sq = skeleton_search(q)
+                if len(sq) >= 3:
+                    rows = conn.execute(
+                        "SELECT * FROM products WHERE is_active=1 "
+                        "AND skl(name) LIKE ? ORDER BY name LIMIT ?",
+                        (f"%{sq}%", limit)
+                    ).fetchall()
+                    return [self._row_to_product(r) for r in rows]
+                return []
             finally:
                 conn.close()
 

@@ -64,6 +64,11 @@ class BaseDB:
         # ── Doimiy ulanish ──────────────────────────────────────────────────
         raw = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
         raw.row_factory = sqlite3.Row
+        # Qidiruv normalizatsiyasi — SQL ichida ishlatish uchun (imlo
+        # variantlariga bardoshli qidiruv, _products.search_products).
+        from database._helpers import norm_search, skeleton_search
+        raw.create_function("nrm", 1, lambda x: norm_search(x or ""))
+        raw.create_function("skl", 1, lambda x: skeleton_search(x or ""))
         raw.execute("PRAGMA foreign_keys = ON")
         raw.execute("PRAGMA journal_mode = WAL")
         raw.execute("PRAGMA synchronous = NORMAL")  # WAL bilan xavfsiz, tezroq

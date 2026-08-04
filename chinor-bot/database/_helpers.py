@@ -263,3 +263,32 @@ CREATE INDEX IF NOT EXISTS idx_search_found ON search_log(found_count);
 -- EMAS, _migrate() ichida yaratiladi — eski DB'larda 'category_id' /
 -- 'supplier_id' ustunlari hali bo'lmasligi mumkin.
 """
+
+
+# ─── Qidiruv normalizatsiyasi ────────────────────────────────────────────────
+# Bazadagi nomlar YesPOS'dan keladi va imlosi bir xil emas: samorez/samarez,
+# klyuch/kluch, shpatel/shipatel, troynik/traynik, stameska/stamiska,
+# chotka/cho'tka. Nomlarni TUZATIB bo'lmaydi — keyingi sinxron ustidan
+# yozadi. Shuning uchun ma'lumotga tegmasdan, QIDIRUVNI bardoshli qilamiz:
+# so'rov ham, nom ham bir xil ko'rinishga keltirilib solishtiriladi.
+
+import re as _re
+
+def norm_search(s: str) -> str:
+    """Yumshoq normalizatsiya — apostrof, q/k, x/h, ch/sh va yo'l-yo'lakay
+    tinish belgilari olib tashlanadi."""
+    s = (s or "").lower()
+    for ch in ("'", "\u2018", "\u2019", "`", "\u02bb", "\u02bc"):
+        s = s.replace(ch, "")
+    s = s.translate(str.maketrans("qxw", "khv"))
+    s = s.replace("ch", "c").replace("sh", "s")
+    s = s.replace("ya", "a").replace("yo", "o").replace("yu", "u")
+    return _re.sub(r"[^a-z0-9]+", "", s)
+
+
+def skeleton_search(s: str) -> str:
+    """Unlilarsiz "skelet" — imlo farqi asosan unlilarda bo'lgani uchun
+    samorez/samarez ikkalasi ham "smrz" ga tushadi. Faqat ZAXIRA sifatida
+    ishlatiladi: yumshoq qidiruv hech narsa topmasa. Aks holda ortiqcha
+    natija chiqarib yuborardi."""
+    return _re.sub(r"[aeiou]", "", norm_search(s))
