@@ -340,9 +340,45 @@
         // Shuning uchun login ekrani odatda umuman ko'rinmaydi; u faqat
         // zaxira sifatida qoladi (Telegramdan tashqarida ochilgan hollar va
         // ish stoli ilovalari uchun).
+        function _authSplash(text) {
+            // Login ekrani standart holatda ochiq turadi, avto-kirish esa
+            // asinxron — shu sabab bir lahza login formasi ko'rinib ketardi.
+            // Uning ustiga qatlam qo'yamiz, natija ma'lum bo'lgach olinadi.
+            let el = document.getElementById('authSplash');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'authSplash';
+                el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;' +
+                    'align-items:center;justify-content:center;text-align:center;' +
+                    'padding:24px;background:var(--bg,#fff);font-size:15px;line-height:1.6';
+                document.body.appendChild(el);
+            }
+            el.innerHTML = text;
+            return el;
+        }
+
+        function _authSplashOff() {
+            const el = document.getElementById('authSplash');
+            if (el) el.remove();
+        }
+
         async function autoAuth() {
+            _authSplash('⏳ Kirilmoqda…');
             const initData = (tg && tg.initData) || '';
-            if (!initData) return false;   // Telegram tashqarisida — login ekrani
+            if (!initData) {
+                // Telegram imzo bermadi. Odatda ilova Telegramdan tashqarida
+                // ochilgan; lekin eski Telegram versiyalarida ham bo'ladi.
+                _authSplash(
+                    '🔒 <b>Telegram imzosi kelmadi</b><br><br>' +
+                    'Mini App Telegram ichidan ochilishi kerak.<br>' +
+                    'Telegram yangilanganini tekshiring va botdagi ' +
+                    '«🌐 Mini App» tugmasidan qayta oching.<br><br>' +
+                    '<button onclick="document.getElementById(\'authSplash\').remove()" ' +
+                    'style="padding:10px 18px;border:none;border-radius:10px;' +
+                    'background:var(--primary,#2481cc);color:#fff;font-size:14px">' +
+                    'Login/parol bilan kirish</button>');
+                return false;
+            }
             try {
                 const resp = await fetch(`${API_BASE_URL}/api/auth/telegram`, {
                     method: 'POST',
@@ -354,16 +390,26 @@
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (resp.ok && data.ok) {
+                    _authSplashOff();
                     openPanelFor(data);
                     return true;
                 }
-                if (data && data.need_start) {
-                    showError(errorMessage,
-                        data.error || 'Avval botda raqamingizni tasdiqlang.');
-                }
-            } catch (_) {
-                // Tarmoq xatosi — login ekrani ko'rsatiladi, foydalanuvchi
-                // qo'lda kirishga urinib ko'ra oladi.
+                // Nosozlik JIM qolmasin — sababini ko'rsatamiz.
+                _authSplash(
+                    '⚠️ <b>Avtomatik kirish bo\'lmadi</b><br><br>' +
+                    ((data && data.error) || ('Server javobi: ' + resp.status)) +
+                    '<br><br><button onclick="document.getElementById(\'authSplash\').remove()" ' +
+                    'style="padding:10px 18px;border:none;border-radius:10px;' +
+                    'background:var(--primary,#2481cc);color:#fff;font-size:14px">' +
+                    'Login/parol bilan kirish</button>');
+            } catch (e) {
+                _authSplash(
+                    '📡 <b>Serverga ulanmadi</b><br><br>' +
+                    (API_BASE_URL) + '<br>' + ((e && e.message) || e) +
+                    '<br><br><button onclick="document.getElementById(\'authSplash\').remove()" ' +
+                    'style="padding:10px 18px;border:none;border-radius:10px;' +
+                    'background:var(--primary,#2481cc);color:#fff;font-size:14px">' +
+                    'Login/parol bilan kirish</button>');
             }
             return false;
         }
