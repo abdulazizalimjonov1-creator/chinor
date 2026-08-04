@@ -676,6 +676,7 @@
                 if (ok && data.ok && data.product) {
                     const p = data.product;
                     $('pfName').value = p.name || '';
+                    $('pfDisplayName').value = p.display_name || '';
                     $('pfSell').value = p.sell_price_sum || p.price_sum || '';
                     $('pfCost').value = p.cost_price_sum || '';
                     $('pfWhs').value  = p.wholesale_sum || '';
@@ -707,7 +708,8 @@
             const payload = {
                 id: _editingId,
                 name: name,
-                sell_price_sum: sell,
+                display_name: ($('pfDisplayName') || {}).value || '',
+                                sell_price_sum: sell,
                 cost_price_sum: parseFloat($('pfCost').value) || 0,
                 wholesale_sum: parseFloat($('pfWhs').value) || 0,
                 qty: parseFloat($('pfQty').value) || 0,

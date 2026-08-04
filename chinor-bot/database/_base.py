@@ -139,6 +139,11 @@ class BaseDB:
         # Bot esa image_file_id (Telegram) dan foydalanishda davom etadi.
         if "image_url" not in prod_cols:
             conn.execute("ALTER TABLE products ADD COLUMN image_url TEXT DEFAULT ''")
+        # products.display_name — MIJOZGA ko'rinadigan chiroyli nom.
+        # Asl `name` tegilmaydi: kassa va xodimlar tovarni o'sha nom bilan
+        # taniydi, imlosi qanday bo'lsa ham. Bo'sh bo'lsa `name` ishlatiladi.
+        if "display_name" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN display_name TEXT DEFAULT ''")
         # clients.client_type
         cli_info = conn.execute("PRAGMA table_info(clients)").fetchall()
         cli_cols = {r[1] for r in cli_info}

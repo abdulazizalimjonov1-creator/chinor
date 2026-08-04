@@ -398,9 +398,14 @@ def _price_pair(p: dict, ctype: str) -> tuple:
 
 def _product_json(p: dict, role: str, ctype: str) -> dict:
     usd, summ = _price_pair(p, ctype)
+    # Mijozga CHIROYLI nom (display_name), adminga ASL nom + ikkalasi ham.
+    # Sabab: bazadagi nomlar imlosi turlicha ("Zakllopka", "shipatel"), lekin
+    # ularni o'zgartirib bo'lmaydi — kassada xodimlar o'sha nom bilan taniydi.
+    real_name = p.get("name", "") or ""
+    disp = (p.get("display_name") or "").strip() or real_name
     out = {
         "id": p["id"],
-        "name": p.get("name", ""),
+        "name": disp if role == "client" else real_name,
         "description": p.get("description", ""),
         "qty": float(p.get("qty", 0) or 0),
         "unit": p.get("unit", "dona"),
@@ -420,6 +425,7 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         out["sell_price_usd"] = float(p.get("sell_price_usd", 0) or 0)
         # Biriktirilgan yetkazib beruvchi (0 = biriktirilmagan). Nomini admin UI
         # suppliers ro'yxatidan id bo'yicha topadi.
+        out["display_name"] = (p.get("display_name") or "").strip()
         out["supplier_id"] = int(p.get("supplier_id", 0) or 0)
         # Tahrirda saqlash to'liq obyektni qaytarib yuboradi — kategoriya
         # yo'qolib qolmasligi uchun uni ham beramiz.
@@ -669,6 +675,9 @@ async def api_product_save(request: web.Request):
         return err
 
     name = (body.get("name") or "").strip()
+    # Mijozga ko'rinadigan chiroyli nom (ixtiyoriy). Bo'sh bo'lsa asl nom
+    # ishlatiladi — ya'ni tegilmasa hech narsa o'zgarmaydi.
+    display_name = (body.get("display_name") or "").strip()[:120]
     if not name:
         return _err("Mahsulot nomi bo'sh")
     rate = _db.get_usd_rate()
@@ -697,7 +706,7 @@ async def api_product_save(request: web.Request):
         if not p:
             return _err("Mahsulot topilmadi", 404)
         await _db.update_product(
-            pid, name=name, description=desc,
+            pid, name=name, display_name=display_name, description=desc,
             sell_price_usd=sell_usd, cost_price_usd=cost_usd,
             wholesale_price_usd=whs_usd,
             qty=qty, unit=unit, barcode=barcode,

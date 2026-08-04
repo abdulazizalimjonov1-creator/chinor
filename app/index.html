@@ -236,6 +236,12 @@
                 <input type="file" id="prodImgInput" accept="image/*" style="display:none">
                 <input type="file" id="prodImgCam" accept="image/*" capture="environment" style="display:none">
                 <label>Nomi *</label><input type="text" id="pfName" placeholder="Mahsulot nomi">
+                <label>Mijozga ko'rinadigan nom</label>
+                <input type="text" id="pfDisplayName" placeholder="Bo'sh qoldirilsa — yuqoridagi nom">
+                <div style="font-size:12px;opacity:.7;margin:-6px 0 10px">
+                    Kassada va sizda yuqoridagi asl nom qoladi — xodimlar tovarni
+                    o'sha nom bilan taniydi. Mijoz esa shu nomni ko'radi.
+                </div>
                 <label>Sotish narxi (so'm) *</label><input type="number" id="pfSell" inputmode="decimal" placeholder="0">
                 <label>Tannarxi (so'm)</label><input type="number" id="pfCost" inputmode="decimal" placeholder="0">
                 <label>Optom narxi (so'm)</label><input type="number" id="pfWhs" inputmode="decimal" placeholder="0 (ixtiyoriy)">
@@ -415,6 +421,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
 </body>
 </html>

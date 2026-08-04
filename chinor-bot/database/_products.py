@@ -184,10 +184,13 @@ class ProductsMixin:
                     if rows:
                         return [self._row_to_product(r) for r in rows]
                 # 3) Nom bo'yicha — to'g'ridan-to'g'ri
+                # Ikkala nom bo'yicha ham: asl `name` (xodimlar taniydigan)
+                # va `display_name` (mijozga ko'rinadigan chiroyli nom).
                 rows = conn.execute(
-                    "SELECT * FROM products WHERE is_active=1 AND name LIKE ? "
+                    "SELECT * FROM products WHERE is_active=1 "
+                    "AND (name LIKE ? OR display_name LIKE ?) "
                     "ORDER BY name LIMIT ?",
-                    (f"%{q}%", limit)
+                    (f"%{q}%", f"%{q}%", limit)
                 ).fetchall()
                 if rows:
                     return [self._row_to_product(r) for r in rows]
@@ -199,8 +202,9 @@ class ProductsMixin:
                 if nq:
                     rows = conn.execute(
                         "SELECT * FROM products WHERE is_active=1 "
-                        "AND nrm(name) LIKE ? ORDER BY name LIMIT ?",
-                        (f"%{nq}%", limit)
+                        "AND (nrm(name) LIKE ? OR nrm(display_name) LIKE ?) "
+                        "ORDER BY name LIMIT ?",
+                        (f"%{nq}%", f"%{nq}%", limit)
                     ).fetchall()
                     if rows:
                         return [self._row_to_product(r) for r in rows]
@@ -213,8 +217,9 @@ class ProductsMixin:
                 if len(sq) >= 3:
                     rows = conn.execute(
                         "SELECT * FROM products WHERE is_active=1 "
-                        "AND skl(name) LIKE ? ORDER BY name LIMIT ?",
-                        (f"%{sq}%", limit)
+                        "AND (skl(name) LIKE ? OR skl(display_name) LIKE ?) "
+                        "ORDER BY name LIMIT ?",
+                        (f"%{sq}%", f"%{sq}%", limit)
                     ).fetchall()
                     return [self._row_to_product(r) for r in rows]
                 return []
@@ -241,7 +246,7 @@ class ProductsMixin:
     # Bu ro'yxatda yo'q kalitlar e'tiborsiz qoldiriladi — noto'g'ri nom
     # kelsa SQL crash bo'lmaydi (masalan eski 'sell' kabi xato kalitlar).
     _EDITABLE_COLUMNS = {
-        "name", "description",
+        "name", "display_name", "description",
         "sell_price", "wholesale_price", "cost_price",
         "sell_price_usd", "wholesale_price_usd", "cost_price_usd",
         "qty", "unit", "image_file_id", "image_url", "barcode", "is_active",
