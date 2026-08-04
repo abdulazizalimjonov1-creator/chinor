@@ -72,12 +72,50 @@ buzardi — uchalasi ham tuzatildi:
 `wholesale_price_usd` ustunlari nolga tushirilgan. Mijoz qarzi (`debt_usd`)
 tegilmagan — u boshqa masala.
 
-## Kunlik cron (DigitalOcean serverda)
+## Aylanani yopish (order_push)
+
+Sinxron o'z-o'zidan bir tomonlama: YesPOS → Chinor. Chinor'da chek urilsa,
+u faqat mahalliy `qty` ni kamaytiradi, keyingi ko'chirish esa uni YesPOS
+qiymati bilan ustidan yozadi — ya'ni sotuv qoldiqqa ta'sirsiz qolardi.
+
+`order_push.py` shuni yopadi: chek `/marketplace/order` orqali YesPOS'ga
+yuboriladi (`type 1` savdo, `type 2` qaytarish), YesPOS qoldiqni o'zi
+kamaytiradi, keyingi ko'chirish allaqachon to'g'ri raqamni olib keladi.
+
+```bash
+python -m marketplace.order_push            # ko'rsatadi (dry-run)
+python -m marketplace.order_push --apply    # yuboradi
+python -m marketplace.order_push --status   # holat
+```
+
+To'lov turi ajratilmaydi — hammasi `YESPOS_PAYMENT_ID` (standart 1) bilan
+ketadi. Naqd/karta/perechisleniye farqi Chinor tomonida, kassadagi pulni
+hisoblash uchun yuritiladi; YesPOS uchun faqat qoldiq muhim.
+
+**Xavfsizlik:** birinchi ishga tushirilganda hech narsa yuborilmaydi — faqat
+chegara (`push_state.watermark`) qo'yiladi. Busiz bazadagi barcha eski cheklar
+YesPOS'ga soxta savdo bo'lib tushardi.
+
+`items[].item` — YesPOS **product id**, sku emas. Moslik `marketplace.db`
+dagi katalogdan olinadi. Chinor'da bor-u YesPOS'da yo'q tovar bo'lsa, chek
+yuborilmaydi va sabab `pushed_sales.error` ga yoziladi.
+
+Gateway talabi bo'yicha `items` yig'indisi `payments` yig'indisiga teng
+bo'lishi shart, shuning uchun to'lov summasi qatorlardan hisoblanadi —
+chekning `total` maydonidan emas (chegirma bo'lsa ular farq qiladi).
+
+## Cron (DigitalOcean serverda, `chinor` foydalanuvchisi)
+
+Server UTC da ishlaydi (Toshkent = UTC+5):
 
 ```
-30 23 * * *  cd /opt/chinor && python -m marketplace.sync all >> data/sync.log 2>&1
-35 23 * * *  cd /opt/chinor && python -m marketplace.pos_bridge --apply >> data/sync.log 2>&1
+*/5 * * * *   marketplace.order_push --apply     # cheklarni YesPOS'ga
+15  * * * *   marketplace.sync stock             # qoldiq/narx (soatiga)
+25  * * * *   marketplace.pos_bridge --apply     # pos.db ga ko'chirish
+30 18 * * *   marketplace.sync catalog           # katalog (23:30 Toshkent)
 ```
+
+Log: `/var/lib/chinor/marketplace-sync.log`
 
 Kuniga bir marta yetadi: butun katalog **bitta** so'rovda keladi, qoldiq esa
 500 talik sahifalarda. 7000 tovar ≈ 14 sahifa — gateway limitiga (10/daqiqa)
@@ -93,6 +131,7 @@ klient o'zi moslashib kutadi.
 | `sync.py` | Katalog/qoldiqni tortib bazaga yozish (CLI) |
 | `analytics.py` | Muzlagan / tugagan-gap hisoblari (CLI) |
 | `pos_bridge.py` | YesPOS qoldiq/narxini `pos.db` ga ko'chirish (CLI) |
+| `order_push.py` | Chinor cheklarini YesPOS'ga savdo qilib yuborish (CLI) |
 
 ## Bilib qo'yish kerak bo'lgan narsalar
 
