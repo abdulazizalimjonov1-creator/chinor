@@ -73,11 +73,11 @@ async def _gemini_describe_image(fpath: str) -> str:
     # Cloudflare oddiy user-agent'ni bloklaydi (xato 1010) — shuning uchun
     # brauzer User-Agent qo'yamiz (VPS'dan ishlashi tekshirilgan).
     try:
-        from bot.config import GROQ_API_KEY
-        if GROQ_API_KEY:
+        from bot.config import GROQ_API_KEY, GROQ_VISION_MODEL
+        if GROQ_API_KEY and GROQ_VISION_MODEL:
             import json as _json2, urllib.request
             body = _json2.dumps({
-                "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                "model": GROQ_VISION_MODEL,
                 "max_tokens": 300,
                 "messages": [{"role": "user", "content": [
                     {"type": "image_url",

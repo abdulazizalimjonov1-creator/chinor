@@ -88,6 +88,12 @@ CORS_ALLOW_ORIGIN = os.getenv(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
+# Groq ko'rish (vision) modeli — kanal posti uchun rasmdan tavsif yozadi.
+# 2026-08-04: Groq `llama-4-scout` ni olib tashladi (404 model_not_found) va
+# hisobda birorta ham vision model qolmadi, shuning uchun STANDART BO'SH —
+# ya'ni Groq o'tkazib yuborilib, to'g'ridan-to'g'ri Gemini ishlatiladi.
+# Groq vision modelini qaytarsa, .env ga GROQ_VISION_MODEL yozib yoqiladi.
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "").strip()
 # Gemini 1.5 oilasi 2025-yil oxiriga kelib eskirgan ("404 not found" xatosi
 # kelib chiqadi). Hozirgi tavsiya — 2.5 flash (tez, arzon). Avtomatik
 # yangilanishini xohlasangiz, 'gemini-flash-latest' ishlatishingiz mumkin.
