@@ -132,6 +132,7 @@ klient o'zi moslashib kutadi.
 | `analytics.py` | Muzlagan / tugagan-gap hisoblari (CLI) |
 | `pos_bridge.py` | YesPOS qoldiq/narxini `pos.db` ga ko'chirish (CLI) |
 | `order_push.py` | Chinor cheklarini YesPOS'ga savdo qilib yuborish (CLI) |
+| `report.py` | Ombor kuzatuv hisoboti, ixtiyoriy Telegram'ga (CLI) |
 
 ## Bilib qo'yish kerak bo'lgan narsalar
 
