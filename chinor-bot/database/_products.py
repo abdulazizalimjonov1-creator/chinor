@@ -255,8 +255,15 @@ class ProductsMixin:
             await self._refresh_product(p)
 
     async def reprice_all_with_rate(self, rate: float = None):
-        """Barcha mahsulot narxlarini va mijoz qarzlarining so'mdagi keshini
-        joriy USD kurs bo'yicha qayta hisoblaydi. USD qiymatlari — kanonik."""
+        """Mijoz qarzlarining so'mdagi keshini joriy USD kurs bo'yicha qayta
+        hisoblaydi.
+
+        MAHSULOT NARXLARI ENDI TEGILMAYDI. Narx so'mda kanonik: sotuv narxi
+        va qoldiq YesPOS marketplace API'dan keladi (marketplace/pos_bridge.py).
+        Ilgari bu yerda `sell_price = sell_price_usd * kurs` qilinardi — kurs
+        bir marta o'zgarishi bilan barcha sinxronlangan narxlar eski qiymatga
+        qaytib ketardi. Qarz (debt_usd) esa USD'da yuritilaveradi.
+        """
         if rate is None:
             rate = self.get_usd_rate()
         if rate <= 0:
@@ -264,13 +271,6 @@ class ProductsMixin:
         with self._lock:
             conn = self._conn()
             try:
-                conn.execute("""
-                    UPDATE products
-                       SET sell_price = ROUND(COALESCE(sell_price_usd,0) * ?, 2),
-                           wholesale_price = ROUND(COALESCE(wholesale_price_usd,0) * ?, 2),
-                           cost_price = ROUND(COALESCE(cost_price_usd,0) * ?, 2)
-                     WHERE COALESCE(sell_price_usd,0) > 0
-                """, (rate, rate, rate))
                 conn.execute("""
                     UPDATE clients
                        SET debt = ROUND(COALESCE(debt_usd,0) * ?, 2)

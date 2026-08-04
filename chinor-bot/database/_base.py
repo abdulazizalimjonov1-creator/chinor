@@ -278,8 +278,13 @@ class BaseDB:
                 "INSERT INTO settings(key, value) VALUES(?, ?)",
                 ("usd_rate", str(USD_RATE_DEFAULT))
             )
-        # Eski mahsulotlarda USD narxlari yo'q bo'lsa — joriy kurs bo'yicha
-        # so'm narxidan hisoblab to'ldiramiz (tariximiz buzilmasin uchun bir martalik).
+        # ── Mahsulot USD narxlari ENDI TO'LDIRILMAYDI ────────────────────────
+        # Narx so'mda kanonik: qoldiq va sotuv narxi YesPOS marketplace API'dan
+        # keladi (marketplace/pos_bridge.py). Ilgari bu yerda bo'sh USD narxlar
+        # so'mdan hisoblab to'ldirilardi, keyin kurs o'zgarganda
+        # `reprice_all_with_rate()` so'm narxni USD'dan qayta hisoblab, YesPOS
+        # qiymatini bekor qilardi. Shu zanjirni uzish uchun to'ldirish olib
+        # tashlandi. Mijoz qarzi (debt_usd) — boshqa masala, u tegilmaydi.
         try:
             cur_rate = float(conn.execute(
                 "SELECT value FROM settings WHERE key='usd_rate'"
@@ -287,22 +292,6 @@ class BaseDB:
         except Exception:
             cur_rate = USD_RATE_DEFAULT
         if cur_rate > 0:
-            conn.execute("""
-                UPDATE products
-                   SET sell_price_usd = ROUND(sell_price / ?, 4)
-                 WHERE COALESCE(sell_price_usd, 0) = 0 AND COALESCE(sell_price, 0) > 0
-            """, (cur_rate,))
-            conn.execute("""
-                UPDATE products
-                   SET cost_price_usd = ROUND(cost_price / ?, 4)
-                 WHERE COALESCE(cost_price_usd, 0) = 0 AND COALESCE(cost_price, 0) > 0
-            """, (cur_rate,))
-            conn.execute("""
-                UPDATE products
-                   SET wholesale_price_usd = ROUND(wholesale_price / ?, 4)
-                 WHERE COALESCE(wholesale_price_usd, 0) = 0
-                   AND COALESCE(wholesale_price, 0) > 0
-            """, (cur_rate,))
             # Eski qarzni USDga aylantiramiz
             conn.execute("""
                 UPDATE clients

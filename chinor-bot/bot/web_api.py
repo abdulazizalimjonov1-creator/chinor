@@ -1725,9 +1725,15 @@ async def api_sale(request: web.Request):
         avail = float(p.get("qty", 0) or 0)
         if qty > avail:
             return _err(f"«{p['name']}» — faqat {avail:g} {p.get('unit','dona')} bor")
-        price_usd = float(p.get("sell_price_usd", 0) or 0)
-        if price_usd <= 0:
-            price_usd = round(sum_to_usd(float(p.get("sell_price", 0) or 0), rate), 4)
+        # Narx so'mda kanonik (YesPOS marketplace sinxroni — pos_bridge.py).
+        # Avval so'mdagi narx olinadi; USD faqat so'm bo'lmasa ishlatiladi.
+        # Ilgari teskarisi edi — shu sabab ekranda yangi narx turib, chek eski
+        # (USD'dan hisoblangan) narxda urilardi.
+        price_sum = float(p.get("sell_price", 0) or 0)
+        if price_sum > 0:
+            price_usd = round(sum_to_usd(price_sum, rate), 4)
+        else:
+            price_usd = float(p.get("sell_price_usd", 0) or 0)
         sale_items.append({"product_id": pid, "qty": qty, "price": price_usd})
 
     if not sale_items:

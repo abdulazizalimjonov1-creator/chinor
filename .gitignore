@@ -62,3 +62,8 @@ chinor-admin/dist/
 *.tgz
 *.exe
 *.blockmap
+
+# Marketplace integratsiyasi
+marketplace/.env
+data/marketplace.db*
+data/marketplace-images/
