@@ -1220,7 +1220,7 @@
                 const el = $('clTab' + t.charAt(0).toUpperCase() + t.slice(1));
                 if (el) el.style.display = (t === tab) ? '' : 'none';
             });
-            if (tab === 'catalog') loadClientCatalog();
+            if (tab === 'catalog') { loadClientCategories(); loadClientCatalog(); }
             if (tab === 'account') loadClientAccount();
         };
 
@@ -1252,6 +1252,32 @@
                 : '<div class="cl-loading">Hali yo\'q</div>';
         }
 
+        // ── Kategoriya tugmalari (mijoz katalogi) ────────────────────────
+        let _clCat = 0;          // 0 = hammasi
+
+        async function loadClientCategories() {
+            const box = $('clCatCips');
+            if (!box) return;
+            const { ok, data } = await apiFetch('/api/categories');
+            if (!ok || !data.ok) { box.innerHTML = ''; return; }
+            const cats = data.categories || [];
+            if (!cats.length) { box.innerHTML = ''; return; }
+            let html = `<button class="cl-cat-chip${_clCat ? '' : ' active'}"
+                          onclick="pickClientCat(0)">Hammasi</button>`;
+            cats.forEach(c => {
+                html += `<button class="cl-cat-chip${_clCat === c.id ? ' active' : ''}"
+                           onclick="pickClientCat(${c.id})">${escapeHtml(c.name)}` +
+                        `<span class="n">${c.count}</span></button>`;
+            });
+            box.innerHTML = html;
+        }
+
+        window.pickClientCat = function (id) {
+            _clCat = id;
+            loadClientCategories();
+            loadClientCatalog();
+        };
+
         window.loadClientCatalog = function() {
             _clCatalogPage = 0;
             _clCatalogQuery = ($('clCatalogSearch')||{value:''}).value.trim();
@@ -1263,7 +1289,9 @@
 
         async function _doLoadClientCatalog(reset) {
             if (reset) { _clCatalogPage = 0; $('clCatalogList').innerHTML = '<div class="cl-loading">Yuklanmoqda...</div>'; }
-            const { ok, data } = await apiFetch(`/api/products?page=${_clCatalogPage}&q=${encodeURIComponent(_clCatalogQuery)}`);
+            const { ok, data } = await apiFetch(`/api/products?page=${_clCatalogPage}`
+                + `&q=${encodeURIComponent(_clCatalogQuery)}`
+                + (_clCat ? `&category=${_clCat}` : ''));
             const el = $('clCatalogList');
             const more = $('clCatalogMore');
             if (!ok || !data.ok) { if(el) el.innerHTML = '<div class="cl-loading">Xato</div>'; return; }

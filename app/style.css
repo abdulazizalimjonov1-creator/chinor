@@ -991,3 +991,34 @@
     .rcpt-fbtn { background: #1c1c1e; border-color: #333; }
     .rcpt-sum, .rcpt-row { background: #1c1c1e; box-shadow: none; }
 }
+
+
+/* Mijoz katalogidagi kategoriya tugmalari — gorizontal siljiydigan tasma */
+.cl-cat-chips {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 0 0 10px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.cl-cat-chips::-webkit-scrollbar { display: none; }
+.cl-cat-chip {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border-radius: 16px;
+    border: 1px solid var(--border, #d8dbe0);
+    background: var(--card, #fff);
+    color: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.cl-cat-chip.active {
+    background: var(--primary, #2481cc);
+    border-color: var(--primary, #2481cc);
+    color: #fff;
+}
+.cl-cat-chip .n { opacity: .65; font-weight: 500; margin-left: 4px; }
+.cl-cat-chip.active .n { opacity: .85; }

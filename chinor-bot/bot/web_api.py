@@ -414,6 +414,7 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         "price_sum": summ,
         "image_url": p.get("image_url", "") or "",
         "has_image": bool(p.get("image_file_id") or p.get("image_url")),
+        "category_id": int(p.get("category_id") or 0),
     }
     if role == "admin":
         # Admin'ga tannarx va optom ham ko'rinadi
@@ -598,6 +599,14 @@ async def api_products(request: web.Request):
         # Mijozga faqat qoldig'i borlar; adminga hammasi
         if role == "client":
             prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
+
+    # Kategoriya bo'yicha saralash (qidiruvga ham qo'llanadi)
+    try:
+        cat_id = int(request.query.get("category", "") or 0)
+    except ValueError:
+        cat_id = 0
+    if cat_id:
+        prods = [p for p in prods if int(p.get("category_id") or 0) == cat_id]
 
     # Mahsulotlar SKU (id) raqami bo'yicha o'sish tartibida: 10000, 10001, ...
     prods.sort(key=lambda p: (p.get("id") or 0))
@@ -1699,12 +1708,40 @@ async def _need_admin(request, _db, perm: str = ""):
 
 @ROUTES.get("/api/categories")
 async def api_categories_list(request: web.Request):
+    """Kategoriyalar ro'yxati. Har qanday tizimga kirgan foydalanuvchiga
+    ochiq — kategoriya nomi maxfiy ma'lumot emas, mijoz katalogni shu
+    bo'yicha saralaydi. Tahrirlash esa (save/delete) admin huquqini talab
+    qiladi.
+
+    Mijozga faqat QOLDIG'I BOR tovarlar sanaladi va bo'sh kategoriya
+    umuman ko'rsatilmaydi — aks holda bosib kirgan mijoz bo'sh ro'yxat
+    ko'rardi.
+    """
     from database.channel_db import db as _db
-    auth, err = await _need_admin(request, _db, "categories")
-    if err is not None:
-        return err
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+
+    is_client = auth["role"] == "client"
     rows = await _db.get_all_categories()
-    return web.json_response({"ok": True, "categories": [dict(r) for r in rows]})
+    prods = await _db.get_all_products(active_only=True)
+    counts = {}
+    for p in prods:
+        if is_client and (p.get("qty", 0) or 0) <= 0:
+            continue
+        cid = int(p.get("category_id") or 0)
+        if cid:
+            counts[cid] = counts.get(cid, 0) + 1
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["count"] = counts.get(int(d["id"]), 0)
+        if is_client and d["count"] == 0:
+            continue
+        out.append(d)
+    out.sort(key=lambda x: -x["count"])
+    return web.json_response({"ok": True, "categories": out})
 
 
 @ROUTES.post("/api/category/save")
