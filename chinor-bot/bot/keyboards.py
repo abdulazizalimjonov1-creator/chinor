@@ -108,10 +108,8 @@ def glavniy_menu():
     kb = ReplyKeyboardBuilder()
     # Kategoriyalar, Yetkazib beruvchilar, Eksport, Past qoldiq va
     # AI Analitika Mini App'ga ko'chirildi (admin panelidagi kartalar).
-    # Reyting va Umumiy foyda hozircha botda qoldi — Mini App'da ularning
-    # ekrani topilmadi, ko'chirilgach bu ham ketadi.
-    kb.button(text="🏆 Reyting")
-    kb.button(text="💰 Umumiy foyda")
+    # Reyting (/api/clients/top) va Umumiy foyda (/api/stats profit_sum)
+    # ham ko'chirildi — endi bot menyusida faqat Mini App qoladi.
     if _feature_on("mini_app"):
         # «🔑 Login/parol» olib tashlandi — endi Mini App ichida
         # (Hisobim → Kassa uchun login/parol). Kassa va admin ilovalari

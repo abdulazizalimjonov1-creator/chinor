@@ -1181,7 +1181,7 @@
                     ${_cl_img(p)}
                     <div class="cl-card-body">
                         <div class="cl-card-name">${p.name}</div>
-                        <div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div>
+                        <div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                     </div></div>`).join('')
                 : '<div class="cl-loading">Ma\'lumot yo\'q</div>';
             if (newEl) newEl.innerHTML = (data.new||[]).length
@@ -1189,7 +1189,7 @@
                     ${_cl_img(p)}
                     <div class="cl-card-body">
                         <div class="cl-card-name">${p.name}</div>
-                        <div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div>
+                        <div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                     </div></div>`).join('')
                 : '<div class="cl-loading">Hali yo\'q</div>';
         }
@@ -1215,7 +1215,7 @@
                 <div class="cl-prod-info">
                     <div class="cl-prod-name">${p.name}</div>
                     ${p.description ? `<div class="cl-prod-desc">${p.description}</div>` : ''}
-                    <div class="cl-prod-price">${_fmt_sum_cl(p.sell_price)}</div>
+                    <div class="cl-prod-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                 </div>
             </div>`).join('');
             if (reset) el.innerHTML = html || '<div class="cl-loading">Mahsulot topilmadi</div>';
@@ -1235,7 +1235,7 @@
                 <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
                 ${url ? `<img class="cl-modal-img" src="${url}">` : '<div style="height:60px"></div>'}
                 <div class="cl-modal-name">${p.name}</div>
-                <div class="cl-modal-price">${_fmt_sum_cl(p.sell_price)}</div>
+                <div class="cl-modal-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                 ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
                 ${p.qty > 0 ? `<div style="color:var(--primary);font-size:13px;font-weight:600;margin-bottom:16px">✅ Mavjud: ${p.qty} ${p.unit||'dona'}</div>` : '<div style="color:#e57373;font-size:13px;margin-bottom:16px">❌ Sotib bo\'lindi</div>'}
                 <button style="width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:16px;font-size:15px;font-weight:700;cursor:pointer" onclick="this.closest('.cl-modal-overlay').remove()">Yopish</button>
@@ -1272,7 +1272,7 @@
                 if ((data.products||[]).length) {
                     const cards = (data.products).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})" style="min-width:120px">
                         ${_cl_img(p)}
-                        <div class="cl-card-body"><div class="cl-card-name">${p.name}</div><div class="cl-card-price">${_fmt_sum_cl(p.sell_price)}</div></div>
+                        <div class="cl-card-body"><div class="cl-card-name">${p.name}</div><div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div></div>
                     </div>`).join('');
                     box.innerHTML += `<div class="cl-msg-ai-products">${cards}</div>`;
                 }
@@ -1538,6 +1538,41 @@
             if (!out) return;
             if (ok && data.ok) out.innerHTML = data.answer || '—';
             else out.innerHTML = toolError(status, data);
+        };
+
+        // ── Reyting (top mijozlar) ───────────────────────────────────────
+        window.openTopClients = async function () {
+            openTool('🏆 Reyting');
+            const { ok, status, data } = await apiFetch('/api/clients/top');
+            if (!ok || !data.ok) return openTool('🏆 Reyting', toolError(status, data));
+            const list = data.clients || data.top || [];
+            let rows = '';
+            list.forEach((c, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                const sum = c.total_sum != null ? c.total_sum : (c.total || 0);
+                rows += `<div class="toprow"><span>${medal} ${escapeHtml(c.shop_name || c.name || '—')}</span>` +
+                        `<span class="val">${fmtSum(sum)} so'm</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Ma\'lumot yo\'q</div>';
+            openTool('🏆 Reyting', `<div class="stat-block"><h3>Eng ko'p xarid qilganlar</h3>${rows}</div>`);
+        };
+
+        // ── Umumiy foyda ─────────────────────────────────────────────────
+        window.openProfit = async function () {
+            openTool('💰 Umumiy foyda');
+            const { ok, status, data } = await apiFetch('/api/stats');
+            if (!ok || !data.ok) return openTool('💰 Umumiy foyda', toolError(status, data));
+            const rev = data.revenue_sum || 0, prof = data.profit_sum || 0;
+            const margin = rev > 0 ? ((prof / rev) * 100).toFixed(1) : '0';
+            openTool('💰 Umumiy foyda', `
+                <div class="stat-block">
+                    <div class="big-label">💰 Sof foyda</div>
+                    <div class="big-num">${fmtSum(prof)} so'm</div>
+                    <div class="stat-row"><span class="lbl">💵 Tushum</span><span class="val">${fmtSum(rev)} so'm</span></div>
+                    <div class="stat-row"><span class="lbl">📈 Foyda ulushi</span><span class="val val-green">${margin}%</span></div>
+                    <div class="stat-row"><span class="lbl">🧾 Sotuvlar</span><span class="val">${data.sale_count || 0}</span></div>
+                    <div class="stat-row"><span class="lbl">📋 Buyurtmalar</span><span class="val">${data.order_count || 0}</span></div>
+                </div>`);
         };
 
         // ================================================================
