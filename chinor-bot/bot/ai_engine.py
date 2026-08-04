@@ -150,6 +150,20 @@ def _text_chain() -> list:
     return _parse(os.getenv("AI_TEXT_CHAIN", "").strip() or _DEFAULT_TEXT_CHAIN)
 
 
+def _bump(st: dict, tag: str) -> None:
+    """Kunlik hisoblagich — qaysi model qancha ishlatilganini bilish uchun.
+
+    Bepul darajalarning kunlik limiti bor. Bu hisoblagichsiz "yetadimi yoki
+    yetmaydimi" degan savolga faqat taxmin bilan javob berish mumkin edi.
+    """
+    day = time.strftime("%Y-%m-%d")
+    u = st.setdefault("usage", {})
+    if u.get("day") != day:
+        u.clear()
+        u["day"] = day
+    u[tag] = int(u.get(tag, 0)) + 1
+
+
 def _cooldown_for(err: Exception) -> int:
     txt = str(err).lower()
     if isinstance(err, urllib.error.HTTPError):
@@ -282,6 +296,7 @@ def chat(prompt: str, system: str = "", timeout: float = None) -> str:
             out = _dispatch_text(provider, model, prompt, system, timeout)
             if out:
                 st["last_good_text"] = f"{provider}:{model}"
+                _bump(st, tag)
                 cooldown.pop(tag, None)
                 st["cooldown"] = cooldown
                 _save_state(st)
@@ -360,6 +375,7 @@ def describe(fpath: str, prompt: str, product_name: str = "") -> str:
             desc = _dispatch(provider, model, prompt, img_b64)
             if desc:
                 st["last_good"] = tag
+                _bump(st, tag)
                 cooldown.pop(tag, None)
                 st["cooldown"] = cooldown
                 _save_state(st)
@@ -461,5 +477,7 @@ def status() -> dict:
                  for p, m in _text_chain()],
         "last_good": st.get("last_good"),
         "last_good_text": st.get("last_good_text"),
+        "usage_today": {k: v for k, v in (st.get("usage") or {}).items()
+                        if k != "day"},
         "cooling": {k: int((v - now) / 60) for k, v in cd.items() if v > now},
     }
