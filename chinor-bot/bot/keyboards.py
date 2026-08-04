@@ -1,6 +1,6 @@
 import math
 
-from aiogram.types import WebAppInfo
+from aiogram.types import WebAppInfo, ReplyKeyboardRemove
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 
@@ -111,34 +111,15 @@ def client_type_kb():
 
 
 def glavniy_menu():
-    """Bosh admin menyusi — QISQARTIRILGAN.
+    """Bosh admin klaviaturasi — BO'SH (butunlay olib tashlanadi).
 
-    Olib tashlanganlar (Mini App qoplaydi): Adminlar → Xodimlar ekrani
-    (/api/admins), Statistika → /api/stats, USD kursi va Sozlamalar →
-    /api/settings.
-
-    Qolganlar Mini App'da HALI yo'q. Reyting va Umumiy foyda ham qoldirildi:
-    app.js `/api/client/top` ni chaqiradi, lekin interfeysda reyting yoki
-    foyda ekrani topilmadi — ishonch hosil qilinmaguncha olib tashlamaymiz,
-    aks holda funksiya jimgina yo'qolardi.
+    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
+    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
+    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
+    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
+    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
     """
-    kb = ReplyKeyboardBuilder()
-    # Kategoriyalar, Yetkazib beruvchilar, Eksport, Past qoldiq va
-    # AI Analitika Mini App'ga ko'chirildi (admin panelidagi kartalar).
-    # Reyting (/api/clients/top) va Umumiy foyda (/api/stats profit_sum)
-    # ham ko'chirildi — endi bot menyusida faqat Mini App qoladi.
-    if _feature_on("mini_app"):
-        # «🔑 Login/parol» olib tashlandi — endi Mini App ichida
-        # (Hisobim → Kassa uchun login/parol). Kassa va admin ilovalari
-        # uchun parolning o'zi baribir kerak, faqat joyi ko'chdi.
-        url = _mini_app_url()
-        if url:
-            kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
-        else:
-            kb.button(text="🌐 Mini App")
-    kb.adjust(2)
-    return kb.as_markup(resize_keyboard=True)
-
+    return ReplyKeyboardRemove()
 
 def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
     """Bosh admin uchun sozlamalar — dona va optom narxni alohida yoqish/o'chirish."""
@@ -155,39 +136,15 @@ def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
     return kb.as_markup()
 
 def admin_menu(perms: set = None):
-    """Admin menyusi.
-    perms=None → eski xulq-atvor (hammasi ko'rinadi).
-    perms berilgan bo'lsa — faqat ruxsat etilgan tugmalar chiqadi."""
-    # Tugma -> (kerakli ruxsat kaliti, funksiya kaliti yoki None)
-    # funksiya kaliti berilgan bo'lsa — o'sha funksiya o'chirilgan bo'lsa tugma chiqmaydi.
-    # Bot menyusi QISQARTIRILDI: Mini App qoplaydigan tugmalar olib tashlandi,
-    # chunki ular ikki joyda takrorlanib, chalg'itardi. Mini App'da bor:
-    #   Sotuv (/api/sale), Mahsulotlar (/api/products, /api/product/save),
-    #   Mijozlar (/api/clients), Buyurtmalar (/api/orders),
-    #   Statistika (/api/stats), Reyting (/api/client/top),
-    #   USD kursi va Sozlamalar (/api/settings), Xodimlar (/api/admins),
-    #   To'lov/qarz (/api/client/credit), Kassa harakati (/api/cash-movements).
-    #
-    # Quyidagilar QOLDI, chunki Mini App'da HALI YO'Q — olib tashlansa
-    # funksiya butunlay yo'qolardi. Mini App'ga ko'chirilgach bu ro'yxat
-    # yana qisqaradi.
-    BUTTONS = [
-        ("🌐 Mini App",             "",              "mini_app"),
-    ]
-    kb = ReplyKeyboardBuilder()
-    any_button = False
-    for text, perm, feat in BUTTONS:
-        if feat is not None and not _feature_on(feat):
-            continue
-        # perm "" — har bir adminga ochiq; perm "X" — faqat ruxsati borlarga
-        if perms is None or perm == "" or perm in perms:
-            kb.button(text=text)
-            any_button = True
-    if not any_button:
-        kb.button(text="ℹ️ Hech qanday ruxsat berilmagan")
-    kb.adjust(2)
-    return kb.as_markup(resize_keyboard=True)
+    """Admin klaviaturasi — BO'SH (butunlay olib tashlanadi).
 
+    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
+    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
+    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
+    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
+    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
+    """
+    return ReplyKeyboardRemove()
 
 def settings_main_kb(currency_mode: str):
     """Bosh admin uchun sozlamalar bosh menyusi (inline)."""
@@ -307,25 +264,15 @@ def admin_perms_kb(tg_id: int, granted: set):
 
 
 def client_menu():
-    """Mijoz menyusi — faqat Mini App.
+    """Mijoz klaviaturasi — BO'SH (butunlay olib tashlanadi).
 
-    Ilgari bu yerda 7-8 ta tugma bor edi (qidiruv, AI sotuvchi, buyurtma,
-    hisobot, qarz, ma'lumotlar, login/parol). Ularning hammasi Mini App
-    ichida bor, botda takrorlanishi esa mijozni chalg'itardi. Endi bot —
-    faqat kirish nuqtasi va AI suhbat: mijoz shunchaki yozadi, javob oladi;
-    to'liq ish uchun Mini App'ni ochadi.
+    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
+    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
+    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
+    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
+    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
     """
-    kb = ReplyKeyboardBuilder()
-    url = _mini_app_url()
-    if url:
-        kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
-    else:
-        kb.button(text="🌐 Mini App")
-    kb.adjust(1)
-    return kb.as_markup(resize_keyboard=True)
-
-
-# ── Mahsulot ─────────────────────────────────────────────────────────────────
+    return ReplyKeyboardRemove()
 
 def products_list_kb(products, mode="view", page=0):
     """Admin mahsulot ro'yxati — SAHIFALANGAN (6/sahifa).

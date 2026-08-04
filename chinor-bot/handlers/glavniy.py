@@ -39,24 +39,6 @@ async def _menu_for(uid: int):
     return await get_user_menu(db, uid)
 
 
-async def _send_mini_app_button(message):
-    """Kirish muvaffaqiyatli bo'lgach — Mini App uchun INLINE tugma.
-
-    Klaviaturadagi tugma Telegram tomonidan imzolanmaydi (u "oddiy" Mini App
-    hisoblanadi), shu sabab ilova foydalanuvchini tanimay parol so'raydi.
-    Inline tugma esa imzo bilan ochiladi — parol so'ralmaydi.
-    """
-    try:
-        kb = mini_app_inline_kb()
-        if kb is None:
-            return
-        await message.answer(
-            "👇 Do'konni ochish uchun bosing:", reply_markup=kb,
-        )
-    except Exception as e:
-        logger.warning(f"mini app inline tugmasi yuborilmadi: {e}")
-
-
 async def _sync_menu_button(bot: Bot, chat_id: int):
     """Foydalanuvchining doimiy «menu tugmasi»ni joriy MINI_APP_URL bilan
     yangilaydi. MUAMMO: tunnel (cloudflare/ngrok) URL'i o'zgarsa, Telegram'da
@@ -67,13 +49,20 @@ async def _sync_menu_button(bot: Bot, chat_id: int):
         from aiogram.types import (
             MenuButtonWebApp, MenuButtonDefault, WebAppInfo,
         )
-        # SKRIPKA YONIDAGI MENYU TUGMASI O'CHIRILDI. Mini App'ga kirish
-        # klaviaturadagi «🌐 Mini App» tugmasi orqali — u raqam
-        # tasdiqlangandan keyin chiqadi va foydalanuvchiga tanish. Ikkita
-        # bir xil kirish nuqtasi ortiqcha edi, menyu tugmasini esa
-        # foydalanuvchi o'zi o'chira olmaydi (bot uni /start da qayta
-        # o'rnatardi).
-        if False and MINI_APP_URL.startswith("https://") and db.is_mini_app_enabled():
+        # Mini App'ga YAGONA kirish nuqtasi — shu menyu tugmasi (matn
+        # maydoni yonida). Klaviatura tugmasi olib tashlandi, chunki
+        # Telegram undan ochilgan Mini App'ga imzo bermaydi va ilova
+        # foydalanuvchini tanimay parol so'rardi.
+        # FAQAT TANILGAN foydalanuvchiga. Begona odam /start bosganda
+        # tugma umuman chiqmaydi — avval raqamini tasdiqlashi kerak, shunda
+        # mijoz sifatida yaratiladi va tugma paydo bo'ladi. (Server tomoni
+        # ham himoyalangan: imzo tekshirilgach foydalanuvchi bazada
+        # topilmasa /api/auth/telegram 401 qaytaradi.)
+        known = (chat_id == GLAVNIY_ADMIN_ID
+                 or await db.is_admin(chat_id)
+                 or bool(await db.get_client_by_tg(chat_id)))
+        if (known and MINI_APP_URL.startswith("https://")
+                and db.is_mini_app_enabled()):
             await bot.set_chat_menu_button(
                 chat_id=chat_id,
                 menu_button=MenuButtonWebApp(
@@ -202,7 +191,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             "👑 <b>Bosh admin paneli</b>",
             reply_markup=glavniy_menu(), parse_mode="HTML"
         )
-        await _send_mini_app_button(message)
         return
     if await db.is_admin(uid):
         admin = await db.get_admin(uid)
@@ -213,7 +201,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             f"🎭 Rol: {role_label}",
             reply_markup=admin_menu(perms), parse_mode="HTML"
         )
-        await _send_mini_app_button(message)
         return
     client = await db.get_client_by_tg(uid)
     if client:
@@ -233,7 +220,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             f"{debt_line}",
             reply_markup=client_menu(), parse_mode="HTML"
         )
-        await _send_mini_app_button(message)
         return
     # Ro'yxatdan o'tmagan — kontakt orqali avtorizatsiya bosqichiga o'tamiz.
     await state.set_state(AuthByPhoneStates.waiting_contact)
@@ -298,7 +284,6 @@ async def auth_by_contact(message: Message, state: FSMContext):
                 f"Do'konni boshqarish uchun Mini App'ni oching.",
                 reply_markup=menu, parse_mode="HTML"
             )
-            await _send_mini_app_button(message)
             return
 
     # 2) Telefon bo'yicha mijozni qidirish (DB normalizatsiya bilan)
@@ -361,7 +346,6 @@ async def auth_by_contact(message: Message, state: FSMContext):
         f"{debt_line}",
         reply_markup=client_menu(), parse_mode="HTML"
     )
-    await _send_mini_app_button(message)
 
 
 @router.message(AuthByPhoneStates.waiting_contact)
