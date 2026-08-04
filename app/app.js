@@ -1265,7 +1265,7 @@
             const el = $('clCatalogList');
             const more = $('clCatalogMore');
             if (!ok || !data.ok) { if(el) el.innerHTML = '<div class="cl-loading">Xato</div>'; return; }
-            const items = data.products || [];
+            const items = data.items || data.products || [];
             const html = items.map(p => `<div class="cl-prod-row" onclick="clOpenProduct(${p.id})">
                 ${_cl_img_row(p)}
                 <div class="cl-prod-info">
@@ -1325,8 +1325,9 @@
             }
             if (box) {
                 box.innerHTML += `<div class="cl-msg-ai">${data.answer || '...'}</div>`;
-                if ((data.products||[]).length) {
-                    const cards = (data.products).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})" style="min-width:120px">
+                const _pl = data.items || data.products || [];
+                if (_pl.length) {
+                    const cards = _pl.map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})" style="min-width:120px">
                         ${_cl_img(p)}
                         <div class="cl-card-body"><div class="cl-card-name">${p.name}</div><div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div></div>
                     </div>`).join('');
@@ -1516,7 +1517,7 @@
             const { ok, status, data } = await apiFetch('/api/low-stock');
             if (!ok || !data.ok) return openTool('⚠️ Past qoldiq', toolError(status, data));
             let rows = '';
-            (data.products || []).forEach(p => {
+            (data.items || data.products || []).forEach(p => {
                 const cls = p.qty <= 0 ? 'val-red' : '';
                 rows += `<div class="toprow"><span>${escapeHtml(p.name)}</span>` +
                     `<span class="val ${cls}">${p.qty} ${escapeHtml(p.unit || '')}</span></div>`;
