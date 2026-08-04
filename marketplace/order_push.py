@@ -121,10 +121,19 @@ def build_payload(sale: dict, id_map: dict) -> tuple:
             missing.append(sku)
             continue
         qty = abs(float(it.get("qty") or 0))
-        price = abs(float(it.get("price") or 0))
+        # Narx BUTUN son bo'lishi shart. Kasr yuborilsa gateway
+        # {"error": -8, "error_note": "Error in request from client"} qaytaradi.
+        # (Chekdagi 1699.78 kabi qiymatlar create_sale'dagi USD aylanishidan
+        # qoladi — so'mda tiyin baribir ishlatilmaydi.)
+        price = round(abs(float(it.get("price") or 0)))
         if qty <= 0:
             continue
-        out.append({"item": ypid, "qty": qty, "price": price})
+        # Butun sonli qty ni int qilib yuboramiz (1.0 emas, 1).
+        out.append({
+            "item": ypid,
+            "qty": int(qty) if float(qty).is_integer() else qty,
+            "price": price,
+        })
 
     if missing:
         return None, f"YesPOS'da yo'q tovar(lar): {', '.join(missing[:5])}"
@@ -134,7 +143,9 @@ def build_payload(sale: dict, id_map: dict) -> tuple:
     # Gateway talabi: items yig'indisi payments yig'indisiga TENG bo'lishi shart.
     # Shuning uchun to'lov summasi qatorlardan hisoblanadi, chekning `total`
     # maydonidan emas — chegirma bo'lsa ular farq qiladi.
-    total = round(sum(i["qty"] * i["price"] for i in out), 2)
+    # payments yig'indisi items dan hisoblanadi (yaxlitlangan narxlar bilan),
+    # aks holda gateway "items != payments" deb rad etadi.
+    total = round(sum(i["qty"] * i["price"] for i in out))
     type_ = 2 if int(sale.get("is_return") or 0) else 1
     note = f"Chinor #{sale.get('receipt_no') or sale['id']}"
     if int(sale.get("is_internal") or 0):

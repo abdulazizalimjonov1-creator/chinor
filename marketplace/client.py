@@ -129,6 +129,10 @@ class YesposClient:
 
             if isinstance(data, dict) and "error" in data:
                 msg = str(data["error"])
+                # Gateway ba'zan izohni alohida maydonda beradi
+                # (masalan {"error": -8, "error_note": "Error in request from client"}).
+                if data.get("error_note"):
+                    msg = f"{msg} — {data['error_note']}"
                 # Limitga urildik — server aytgan sekundni kutib qayta urinamiz.
                 if "so‘rov" in msg or "so'rov" in msg:
                     m = _WAIT_RE.search(msg)
