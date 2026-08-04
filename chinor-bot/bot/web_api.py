@@ -61,7 +61,7 @@ async def _gemini_describe_image(fpath: str, product_name: str = "") -> str:
     provayderni ishlatadi va biri yiqilsa keyingisiga o'tadi. Birortasi
     ishlamasa '' qaytaradi — post baribir ketaveradi.
     """
-    from bot import ai_vision
+    from bot import ai_engine as ai_vision
     try:
         return await asyncio.get_event_loop().run_in_executor(
             None, lambda: ai_vision.describe(fpath, _IMG_PROMPT, product_name)

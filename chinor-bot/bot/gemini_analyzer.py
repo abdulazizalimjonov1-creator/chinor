@@ -13,7 +13,7 @@ Kalit sozlash:
     .env → GEMINI_API_KEY=...   (https://aistudio.google.com/app/apikey)
            GEMINI_MODEL=gemini-1.5-flash    (yoki gemini-1.5-pro)
 
-Agar `google-generativeai` paketi o'rnatilmagan bo'lsa yoki kalit yo'q —
+Agar birorta AI provayderining kaliti sozlanmagan bo'lsa —
 `is_available()` False qaytaradi va handlerga foydalanuvchi-do'st xato
 chiqarish imkonini beradi (botning qolgan qismi ishlamay qolmaydi).
 """
@@ -80,44 +80,25 @@ QUICK_QUESTIONS = {
 
 # ─── SDK mavjudligi ──────────────────────────────────────────────────────────
 
-def _try_import_sdk():
-    try:
-        import google.generativeai as genai  # type: ignore
-        return genai
-    except Exception:
-        return None
-
-
-_GENAI = _try_import_sdk()
-_CONFIGURED = False
-_MODEL_CACHE = None
-
+# Eskirgan `google.generativeai` SDK'si OLIB TASHLANDI — barcha chaqiruvlar
+# bot/ai_engine.py orqali, to'g'ridan-to'g'ri REST bilan ketadi (ko'p
+# provayderli zanjir, sovish, ogohlantirish). SDK rasman e'lon qilingan
+# darajada eskirgan edi va bizni bitta provayderga bog'lab qo'yardi.
 
 def is_available() -> tuple[bool, str]:
-    """(ishlaydimi, sabab) — handler foydalanuvchi-do'st xato chiqarish uchun."""
-    if _GENAI is None:
-        return False, ("⚠️ `google-generativeai` paketi o'rnatilmagan.\n"
-                       "Serverda: <code>pip install google-generativeai</code>")
-    if not GEMINI_API_KEY:
-        return False, ("⚠️ <b>GEMINI_API_KEY</b> sozlanmagan.\n"
-                       "Kalitni https://aistudio.google.com/app/apikey dan oling "
-                       "va <code>.env</code> ga qo'shing.")
-    return True, ""
+    """(ishlaydimi, sabab) — handler foydalanuvchi-do'st xato chiqarishi uchun.
 
-
-def _get_model():
-    """Modelni keshlab oladi (har chaqiriqda qaytadan yaratmaymiz)."""
-    global _CONFIGURED, _MODEL_CACHE
-    if _MODEL_CACHE is not None:
-        return _MODEL_CACHE
-    if not _CONFIGURED:
-        _GENAI.configure(api_key=GEMINI_API_KEY)
-        _CONFIGURED = True
-    _MODEL_CACHE = _GENAI.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_INSTRUCTION,
-    )
-    return _MODEL_CACHE
+    SDK'ga bog'liq EMAS: ish bot/ai_engine.py zanjiri orqali, to'g'ridan-to'g'ri
+    REST bilan bajariladi. Zanjirda kaliti bor bitta provayder bo'lsa — yetadi.
+    """
+    from bot import ai_engine
+    st = ai_engine.status()
+    if any("(kalit yo'q)" not in x for x in st["text"]):
+        return True, ""
+    return False, ("⚠️ Birorta AI provayderining kaliti sozlanmagan.\n"
+                   "<code>.env</code> ga kamida bittasini qo'shing: "
+                   "<code>GEMINI_API_KEY</code>, <code>GROQ_API_KEY</code>, "
+                   "<code>OPENROUTER_API_KEY</code>.")
 
 
 # ─── Promptga aylantirish ────────────────────────────────────────────────────
@@ -223,19 +204,13 @@ async def analyze(question: str, context: dict, timeout: float = 30.0) -> str:
     )
 
     try:
-        model = _get_model()
-        # SDK 0.7+: generate_content_async mavjud
-        coro = model.generate_content_async(user_prompt)
-        resp = await asyncio.wait_for(coro, timeout=timeout)
-        text = (getattr(resp, "text", None) or "").strip()
-        if not text:
-            # Ba'zan response.text bo'sh — candidates ichidan qaramiz
-            try:
-                cand = resp.candidates[0]
-                parts = [getattr(p, "text", "") for p in cand.content.parts]
-                text = "".join(parts).strip()
-            except Exception:
-                text = ""
+        from bot import ai_engine
+        text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: ai_engine.chat(user_prompt, SYSTEM_INSTRUCTION, timeout)
+            ),
+            timeout=timeout + 5,
+        )
         if not text:
             return "⚠️ Gemini bo'sh javob qaytardi. Keyinroq urinib ko'ring."
         return text
@@ -305,18 +280,13 @@ async def find_similar_products(query: str, products: list,
         f"vergul bilan ajratib qaytar."
     )
     try:
-        # Bu chaqiruvda alohida (kalit-tezkor) modeldan foydalanamiz —
-        # tizim yo'riqnomasi farq qilgani uchun keshlangan modelni emas,
-        # yangisini yaratamiz (kichik xarajat, lekin ifloslanmaydi).
-        model = _GENAI.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=_SIMILAR_SYSTEM,
+        from bot import ai_engine
+        text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: ai_engine.chat(prompt, _SIMILAR_SYSTEM, timeout)
+            ),
+            timeout=timeout + 5,
         )
-        if not _CONFIGURED:
-            _GENAI.configure(api_key=GEMINI_API_KEY)
-        coro = model.generate_content_async(prompt)
-        resp = await asyncio.wait_for(coro, timeout=timeout)
-        text = (getattr(resp, "text", None) or "").strip()
         if not text:
             return []
         # Faqat raqamlarni ajratib olamiz
@@ -384,48 +354,18 @@ async def expand_query_keywords(query: str, timeout: float = 8.0) -> list:
     if not q or len(q) > 100:
         return [q] if q else []
 
-    # 1) Groq
     try:
-        from bot.config import GROQ_API_KEY
-        if GROQ_API_KEY:
-            from groq import AsyncGroq
-            client = AsyncGroq(api_key=GROQ_API_KEY)
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": _EXPAND_SYSTEM},
-                        {"role": "user", "content": q},
-                    ],
-                    max_tokens=80,
-                ),
-                timeout=timeout
-            )
-            text = (resp.choices[0].message.content or "").strip()
-            if text:
-                return _parse_keywords(q, text)
-    except Exception as e:
-        print(f"[expand_query_keywords] Groq xato: {e}")
-
-    # 2) Gemini zaxira
-    ok, _ = is_available()
-    if not ok:
-        return [q]
-    try:
-        global _CONFIGURED
-        model = _GENAI.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=_EXPAND_SYSTEM,
+        from bot import ai_engine
+        text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: ai_engine.chat(q, _EXPAND_SYSTEM, timeout)
+            ),
+            timeout=timeout + 5,
         )
-        if not _CONFIGURED:
-            _GENAI.configure(api_key=GEMINI_API_KEY)
-        coro = model.generate_content_async(q)
-        resp = await asyncio.wait_for(coro, timeout=timeout)
-        text = (getattr(resp, "text", "") or "").strip()
         if text:
             return _parse_keywords(q, text)
     except Exception as e:
-        print(f"[expand_query_keywords] Gemini xato: {e}")
+        print(f"[expand_query_keywords] AI xato: {e}")
     return [q]
 
 
@@ -487,15 +427,13 @@ async def generate_product_pitch(product: dict, query: str = "",
         "bu nima ekanligi, qanday foydaliligi va u uchun nima yaxshi."
     )
     try:
-        model = _GENAI.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=_PITCH_SYSTEM,
+        from bot import ai_engine
+        text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: ai_engine.chat(user_prompt, _PITCH_SYSTEM, timeout)
+            ),
+            timeout=timeout + 5,
         )
-        if not _CONFIGURED:
-            _GENAI.configure(api_key=GEMINI_API_KEY)
-        coro = model.generate_content_async(user_prompt)
-        resp = await asyncio.wait_for(coro, timeout=timeout)
-        text = (getattr(resp, "text", "") or "").strip()
         return text or "⚠️ AI hech narsa qaytarmadi."
     except asyncio.TimeoutError:
         return "⏳ AI javob bermadi (timeout)."
@@ -575,53 +513,20 @@ async def consult_client(question: str, candidates: list,
         f"tanlab, ID sini #<id> ko'rinishida ayt."
     )
 
-    # 1) Groq — tez va bepul
+    # Ko'p provayderli zanjir (bot/ai_engine.py). Ilgari bu yerda `groq`
+    # SDK'si chaqirilardi — u serverda o'rnatilmagan, shuning uchun Groq yo'li
+    # HAR SAFAR jim yiqilib, hammasi bitta Gemini'ga tayanib qolgan edi.
+    from bot import ai_engine
     try:
-        from bot.config import GROQ_API_KEY
-        if GROQ_API_KEY:
-            from groq import AsyncGroq
-            client = AsyncGroq(api_key=GROQ_API_KEY)
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": _CONSULT_SYSTEM},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=800,
-                ),
-                timeout=timeout
-            )
-            text = (resp.choices[0].message.content or "").strip()
-            if text:
-                return text
-    except asyncio.TimeoutError:
-        pass
-    except Exception as e:
-        import logging as _log
-        _log.getLogger(__name__).warning(f"Groq consult xato: {e}")
-
-    # 2) Gemini — zaxira
-    ok, why = is_available()
-    if not ok:
-        return why
-    try:
-        global _CONFIGURED
-        model = _GENAI.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=_CONSULT_SYSTEM,
+        text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: ai_engine.chat(user_prompt, _CONSULT_SYSTEM, timeout)
+            ),
+            timeout=timeout + 5,
         )
-        if not _CONFIGURED:
-            _GENAI.configure(api_key=GEMINI_API_KEY)
-        coro = model.generate_content_async(user_prompt)
-        resp = await asyncio.wait_for(coro, timeout=timeout)
-        text = (getattr(resp, "text", "") or "").strip()
-        return text or "⚠️ AI hech narsa qaytarmadi. Qaytadan urinib ko'ring."
     except asyncio.TimeoutError:
-        return "⏳ AI javob bermadi (timeout). Internet aloqasini tekshiring."
-    except Exception as e:
-        err = str(e)[:200]
-        return f"⚠️ AI xatosi: <code>{err}</code>"
+        return "⏳ AI javob bermadi (timeout). Qaytadan urinib ko'ring."
+    return text or "⚠️ AI hech narsa qaytarmadi. Qaytadan urinib ko'ring."
 
 
 def extract_product_ids_from_text(text: str) -> list:

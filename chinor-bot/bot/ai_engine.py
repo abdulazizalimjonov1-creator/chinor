@@ -1,4 +1,8 @@
-"""Rasmdan tavsif yozish — ko'p provayderli, o'zi tiklanadigan zanjir.
+"""AI dvigateli — ko'p provayderli, o'zi tiklanadigan zanjir.
+
+Ikki ish qiladi: rasmdan tavsif (`describe`) va matnli suhbat (`chat`) —
+mijoz bilan gaplashish, mahsulot tavsiya qilish, analitika. Ikkalasi ham
+bir xil zanjir, sovish va ogohlantirish mexanizmidan foydalanadi.
 
 Nima uchun kerak: 2026-06 da Groq, 2026-08 da uning modeli o'ldi, Gemini'ning
 bepul kvotasi ham nolga tushdi. Har safar tanaffus **jimgina** bo'lgan — kod
@@ -162,7 +166,8 @@ def _cooldown_for(err: Exception) -> int:
 
 # ── Provayderlar (SDK ishlatilmaydi — to'g'ridan-to'g'ri REST) ──────────────
 
-def _call_gemini(model: str, prompt: str, img_b64: str = "") -> str:
+def _call_gemini(model: str, prompt: str, img_b64: str = "",
+                 system: str = "") -> str:
     key = os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY yo'q")
@@ -170,10 +175,13 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "") -> str:
     if img_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
     parts.append({"text": prompt})
-    body = json.dumps({
+    payload = {
         "contents": [{"parts": parts}],
-        "generationConfig": {"maxOutputTokens": 400},
-    }).encode()
+        "generationConfig": {"maxOutputTokens": 1200 if not img_b64 else 400},
+    }
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
         data=body, headers={"Content-Type": "application/json", "User-Agent": _UA},
@@ -183,7 +191,8 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "") -> str:
     return (d["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
 
 
-def _call_openai_compat(provider: str, model: str, prompt: str, img_b64: str = "") -> str:
+def _call_openai_compat(provider: str, model: str, prompt: str,
+                        img_b64: str = "", system: str = "") -> str:
     """OpenAI formatidagi har qanday provayder (groq, openrouter, github, ...)."""
     url, key_env = _OPENAI_COMPAT[provider]
     key = os.getenv(key_env, "").strip()
@@ -197,9 +206,14 @@ def _call_openai_compat(provider: str, model: str, prompt: str, img_b64: str = "
         ]
     else:
         content = prompt
+    msgs = []
+    if system:
+        msgs.append({"role": "system", "content": system})
+    msgs.append({"role": "user", "content": content})
     body = json.dumps({
-        "model": model, "max_tokens": 400,
-        "messages": [{"role": "user", "content": content}],
+        "model": model,
+        "max_tokens": 1200 if not img_b64 else 400,
+        "messages": msgs,
     }).encode()
     headers = {"Authorization": f"Bearer {key}",
                "Content-Type": "application/json", "User-Agent": _UA}
@@ -246,6 +260,67 @@ def _dispatch(provider: str, model: str, prompt: str, img_b64: str = "") -> str:
 
 
 
+# ── Matnli suhbat (mijoz bilan gaplashish, analitika, tavsiya) ─────────────
+
+def chat(prompt: str, system: str = "", timeout: float = None) -> str:
+    """Matnli so'rov — matn zanjiri bo'ylab, birinchi ishlagani qaytariladi.
+
+    Bloklovchi. Chaqiruvchi executor'da ishlatadi. Hech biri ishlamasa ''.
+    """
+    st = _load_state()
+    cooldown = st.get("cooldown", {})
+    now = time.time()
+
+    chain = _text_chain()   # har safar boshidan — yuqoridagi izohga qarang
+
+    tried = []
+    for provider, model in chain:
+        tag = f"text:{provider}:{model}"
+        if cooldown.get(tag, 0) > now:
+            continue
+        try:
+            out = _dispatch_text(provider, model, prompt, system, timeout)
+            if out:
+                st["last_good_text"] = f"{provider}:{model}"
+                cooldown.pop(tag, None)
+                st["cooldown"] = cooldown
+                _save_state(st)
+                return out
+            raise RuntimeError("bo'sh javob")
+        except _NoKey:
+            continue
+        except Exception as e:
+            cooldown[tag] = now + _cooldown_for(e)
+            tried.append(f"{tag} → {type(e).__name__}")
+            logger.warning("🤖 %s yiqildi: %s", tag, str(e)[:160])
+
+    st["cooldown"] = cooldown
+    _save_state(st)
+    logger.error("🤖 Matn AI: hamma provayder yiqildi. %s", "; ".join(tried) or "-")
+    _alert_admin(tried, [])
+    return ""
+
+
+def _dispatch_text(provider: str, model: str, prompt: str,
+                   system: str = "", timeout: float = None) -> str:
+    """Matn chaqiruvi — system ko'rsatmasi provayderga qarab joylashtiriladi."""
+    global _TIMEOUT
+    saved = _TIMEOUT
+    if timeout:
+        _TIMEOUT = int(timeout)
+    try:
+        if provider == "gemini":
+            return _call_gemini(model, prompt, "", system=system)
+        if provider == "cloudflare":
+            full = f"{system}\n\n{prompt}" if system else prompt
+            return _call_cloudflare(model, full, "")
+        if provider in _OPENAI_COMPAT:
+            return _call_openai_compat(provider, model, prompt, "", system=system)
+        raise _NoKey(f"noma'lum provayder: {provider}")
+    finally:
+        _TIMEOUT = saved
+
+
 # ── Asosiy funksiya ────────────────────────────────────────────────────────
 
 def describe(fpath: str, prompt: str, product_name: str = "") -> str:
@@ -265,11 +340,14 @@ def describe(fpath: str, prompt: str, product_name: str = "") -> str:
     cooldown = st.get("cooldown", {})
     now = time.time()
 
+    # ZANJIR HAR SAFAR BOSHIDAN aylanadi. Ilgari "oxirgi ishlagani birinchi"
+    # qoidasi bor edi — u tezlik uchun edi, lekin zanjirni qaytmaydigan qilib
+    # qo'yardi: 1-model kvotasi tugab 3-modelga o'tsak, ertaga 1-model
+    # tiklansa ham tizim 3-modelda qolib ketardi. Endi sovish muddati
+    # o'lik modellarni o'zi chetlab o'tadi (tarmoqqa chiqmasdan), shuning
+    # uchun boshidan boshlash tekin — va kvota tiklanishi bilan eng yaxshi
+    # modelga avtomatik qaytiladi.
     chain = _chain()
-    # Oxirgi ishlagani birinchi sinaladi — odatda u yana ishlaydi.
-    last_good = st.get("last_good")
-    if last_good:
-        chain.sort(key=lambda pm: 0 if f"{pm[0]}:{pm[1]}" == last_good else 1)
 
     tried, skipped = [], []
     for provider, model in chain:
@@ -382,5 +460,6 @@ def status() -> dict:
         "text": [f"{p}:{m}" + ("" if _has_key(p) else "  (kalit yo'q)")
                  for p, m in _text_chain()],
         "last_good": st.get("last_good"),
+        "last_good_text": st.get("last_good_text"),
         "cooling": {k: int((v - now) / 60) for k, v in cd.items() if v > now},
     }
