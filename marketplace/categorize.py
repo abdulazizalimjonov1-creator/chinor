@@ -176,8 +176,10 @@ def apply_to_db(pos_db: str, assign: dict) -> tuple:
             if r:
                 ids[cat] = r[0]
             else:
+                # `created_at` NOT NULL — bot bilan bir xil format ishlatamiz.
                 cur = conn.execute(
-                    "INSERT INTO categories (name) VALUES (?)", (cat,))
+                    "INSERT INTO categories (name, created_at) VALUES (?, ?)",
+                    (cat, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 ids[cat] = cur.lastrowid
                 made += 1
         for pid, cat in assign.items():
