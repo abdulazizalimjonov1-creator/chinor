@@ -272,20 +272,7 @@
                     try { localStorage.setItem('chinor_session', _sessionToken); } catch(_) {}
                 }
 
-                // --- Panelni ochamiz ---
-                const u = data.user || {};
-                const letter = (u.name || 'U').charAt(0).toUpperCase();
-                if (data.role === 'admin') {
-                    adminAvatar.textContent = letter;
-                    adminName.textContent = `Xush kelibsiz, ${u.name}!`;
-                    showScreen(screenAdmin);
-                    loadDashboardStats();
-                } else {
-                    clientAvatar.textContent = letter;
-                    clientName.textContent = u.name || 'Klient';
-                    showScreen(screenClient);
-                    initClientScreen();
-                }
+                openPanelFor(data);
             } catch (err) {
                 loginBtn.classList.remove('loading');
                 loginBtn.disabled = false;
@@ -320,6 +307,69 @@
                 rememberMe.checked = true;
             }
         } catch (_) {}
+
+        // ================================================================
+        // PANELNI OCHISH — login ham, avtomatik kirish ham shuni chaqiradi
+        // ================================================================
+        function openPanelFor(data) {
+            if (data && data.session_token) {
+                _sessionToken = data.session_token;
+                try { localStorage.setItem('chinor_session', _sessionToken); } catch(_) {}
+            }
+            const u = (data && data.user) || {};
+            const letter = (u.name || 'U').charAt(0).toUpperCase();
+            if (data && data.role === 'admin') {
+                adminAvatar.textContent = letter;
+                adminName.textContent = `Xush kelibsiz, ${u.name}!`;
+                showScreen(screenAdmin);
+                loadDashboardStats();
+            } else {
+                clientAvatar.textContent = letter;
+                clientName.textContent = u.name || 'Klient';
+                showScreen(screenClient);
+                initClientScreen();
+            }
+        }
+
+        // ================================================================
+        // AVTOMATIK KIRISH — Telegram initData orqali, parolsiz
+        // ================================================================
+        // Mini App Telegram ichida ochiladi, ya'ni Telegram uni bot tokeni
+        // bilan imzolangan initData bilan ta'minlaydi. Bu imzo login+paroldan
+        // ishonchliroq — soxtalashtirib bo'lmaydi va unutib ham qo'yilmaydi.
+        // Shuning uchun login ekrani odatda umuman ko'rinmaydi; u faqat
+        // zaxira sifatida qoladi (Telegramdan tashqarida ochilgan hollar va
+        // ish stoli ilovalari uchun).
+        async function autoAuth() {
+            const initData = (tg && tg.initData) || '';
+            if (!initData) return false;   // Telegram tashqarisida — login ekrani
+            try {
+                const resp = await fetch(`${API_BASE_URL}/api/auth/telegram`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': initData,
+                    },
+                    body: JSON.stringify({ initData: initData }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (resp.ok && data.ok) {
+                    openPanelFor(data);
+                    return true;
+                }
+                if (data && data.need_start) {
+                    showError(errorMessage,
+                        data.error || 'Avval botda raqamingizni tasdiqlang.');
+                }
+            } catch (_) {
+                // Tarmoq xatosi — login ekrani ko'rsatiladi, foydalanuvchi
+                // qo'lda kirishga urinib ko'ra oladi.
+            }
+            return false;
+        }
+
+        // Ilova ochilishi bilan urinib ko'ramiz.
+        autoAuth();
 
         // ================================================================
         // LOGOUT

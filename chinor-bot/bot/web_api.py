@@ -1545,6 +1545,52 @@ async def login(request: web.Request):
     })
 
 
+@ROUTES.post("/api/auth/telegram")
+async def auth_telegram(request: web.Request):
+    """Parolsiz kirish — faqat Telegram `initData` imzosi bo'yicha.
+
+    Mini App Telegram ichida ochiladi, ya'ni Telegram uni bot tokeni bilan
+    imzolangan `initData` bilan ta'minlaydi. Bu imzo login+paroldan kuchliroq:
+    uni foydalanuvchi soxtalashtira olmaydi va unutib ham qo'ymaydi. Shuning
+    uchun Mini App'da login ekrani ortiqcha edi.
+
+    `/api/login` TEGILMAYDI: kassa va admin ish stoli ilovalari
+    `/api/desktop/login` orqali login+parol bilan kiradi — ularda Telegram
+    initData yo'q, boshqa yo'li ham yo'q.
+    """
+    from database.channel_db import db as _db
+
+    auth = await _authenticate(request, _db)
+    if not auth:
+        # Imzo yaroqsiz, YOKI bu Telegram foydalanuvchisi tizimda yo'q.
+        # Ikkinchisi normal holat: odam avval botga /start berib raqamini
+        # tasdiqlashi kerak, shunda mijoz sifatida yaratiladi.
+        return web.json_response({
+            "ok": False,
+            "error": ("Sizni tanimadim. Avval botga qayting, /start bosing va "
+                       "«📱 Raqamni yuborish» tugmasi orqali raqamingizni "
+                       "tasdiqlang."),
+            "need_start": True,
+        }, status=401)
+
+    user = auth["user"] or {}
+    role = auth["role"]
+    display_name = (
+        user.get("full_name") if role == "admin" else user.get("shop_name")
+    ) or user.get("username") or "Foydalanuvchi"
+
+    return web.json_response({
+        "ok": True,
+        "role": role,
+        "session_token": _create_session(auth),
+        "user": {
+            "id": int(user.get("telegram_id") or user.get("id") or 0),
+            "name": display_name,
+            "username": user.get("username", ""),
+        },
+    })
+
+
 # ─── POS Sotuv (admin) ──────────────────────────────────────────────────────
 
 @ROUTES.post("/api/sale")
