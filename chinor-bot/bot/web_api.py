@@ -1652,6 +1652,157 @@ async def credentials_save(request: web.Request):
     return web.json_response({"ok": True, "username": username})
 
 
+# ─── Bot menyusidan Mini App'ga ko'chirilgan funksiyalar ────────────────────
+# Quyidagilar ilgari faqat botda edi. Endi Mini App ham chaqira oladi,
+# shu sababli bot menyusidan olib tashlandi (bir funksiya ikki joyda
+# turishi chalg'itardi va ikkalasini birga qo'llab-quvvatlash kerak bo'lardi).
+
+async def _need_admin(request, _db, perm: str = ""):
+    """(auth, xato_javobi) — admin ekanini va ruxsatini tekshiradi."""
+    from bot.permissions import has_permission
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return None, _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return None, _err("Faqat adminlar uchun", 403)
+    if perm and not await has_permission(_db, auth["tg_id"], perm):
+        return None, _err("Ruxsat yo'q", 403)
+    return auth, None
+
+
+@ROUTES.get("/api/categories")
+async def api_categories_list(request: web.Request):
+    from database.channel_db import db as _db
+    auth, err = await _need_admin(request, _db, "categories")
+    if err is not None:
+        return err
+    rows = await _db.get_all_categories()
+    return web.json_response({"ok": True, "categories": [dict(r) for r in rows]})
+
+
+@ROUTES.post("/api/category/save")
+async def api_category_save(request: web.Request):
+    from database.channel_db import db as _db
+    auth, err = await _need_admin(request, _db, "categories")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    name = (body.get("name") or "").strip()
+    cid = int(body.get("id") or 0)
+    if not name:
+        return _err("Nom bo'sh")
+    if len(name) > 64:
+        return _err("Nom juda uzun (64 belgigacha)")
+    if cid:
+        await _db.update_category(cid, name)
+        return web.json_response({"ok": True, "id": cid})
+    if await _db.category_exists(name):
+        return _err("Bunday kategoriya allaqachon bor", 409)
+    new_id = await _db.add_category(name)
+    return web.json_response({"ok": True, "id": new_id})
+
+
+@ROUTES.post("/api/category/delete")
+async def api_category_delete(request: web.Request):
+    from database.channel_db import db as _db
+    auth, err = await _need_admin(request, _db, "categories")
+    if err is not None:
+        return err
+    cid = int((await _read_json(request)).get("id") or 0)
+    if not cid:
+        return _err("ID yo'q")
+    await _db.delete_category(cid)
+    return web.json_response({"ok": True})
+
+
+@ROUTES.get("/api/low-stock")
+async def api_low_stock(request: web.Request):
+    """Qoldig'i ostonadan past tovarlar."""
+    from database.channel_db import db as _db
+    auth, err = await _need_admin(request, _db, "low_stock")
+    if err is not None:
+        return err
+    try:
+        threshold = float(request.query.get("threshold", "") or 0) or None
+    except ValueError:
+        threshold = None
+    rows = await _db.get_low_stock(threshold)
+    out = [{
+        "id": r["id"], "name": r["name"],
+        "qty": float(r["qty"] or 0), "unit": r.get("unit", "dona"),
+        "sell_price": float(r["sell_price"] or 0),
+    } for r in rows]
+    return web.json_response({"ok": True, "count": len(out), "products": out})
+
+
+@ROUTES.get("/api/export")
+async def api_export(request: web.Request):
+    """Excel hisobot: sales | clients | debtors. Faylni to'g'ridan qaytaradi."""
+    import os as _os
+    from database.channel_db import db as _db
+    from bot import exporter
+
+    auth, err = await _need_admin(request, _db, "export")
+    if err is not None:
+        return err
+
+    kind = (request.query.get("type") or "sales").strip().lower()
+    month = (request.query.get("month") or "").strip() or None
+    try:
+        if kind == "clients":
+            path = await exporter.export_clients()
+        elif kind == "debtors":
+            path = await exporter.export_debtors()
+        else:
+            path = await exporter.export_sales(month)
+    except Exception as e:
+        logger.warning(f"[api export] xato: {e}")
+        return _err("Hisobot tayyorlanmadi")
+
+    if not path or not _os.path.exists(path):
+        return _err("Fayl topilmadi")
+    return web.FileResponse(path, headers={
+        "Content-Disposition":
+            f'attachment; filename="{_os.path.basename(path)}"',
+    })
+
+
+@ROUTES.post("/api/ai/analyze")
+async def api_ai_analyze(request: web.Request):
+    """AI biznes-analitika (admin). Savol + do'kon konteksti → tahlil.
+
+    DIQQAT: bu yerda tashqi AI ga BIZNES KONTEKSTI yuboriladi (savdo,
+    foyda, top tovarlar). Mijoz suhbatidan farqli — u yerda faqat tovar
+    nomi va sotuv narxi ketadi. Bu ataylab shunday: admin aynan shu
+    ma'lumot ustida tahlil so'raydi.
+    """
+    from database.channel_db import db as _db
+    from bot.gemini_analyzer import analyze, QUICK_QUESTIONS, is_available
+
+    auth, err = await _need_admin(request, _db, "ai_analytics")
+    if err is not None:
+        return err
+
+    ok_ai, why = is_available()
+    if not ok_ai:
+        return _err(why, 503)
+
+    body = await _read_json(request)
+    preset = (body.get("preset") or "").strip()
+    question = (body.get("question") or "").strip()
+    if preset and preset in QUICK_QUESTIONS:
+        question = QUICK_QUESTIONS[preset]
+    if not question:
+        return _err("Savol bo'sh")
+    if len(question) > 500:
+        return _err("Savol juda uzun (500 belgigacha)")
+
+    ctx = await _db.gather_ai_context()
+    answer = await analyze(question, ctx)
+    return web.json_response({"ok": True, "answer": answer,
+                              "presets": list(QUICK_QUESTIONS.keys())})
+
+
 # ─── POS Sotuv (admin) ──────────────────────────────────────────────────────
 
 @ROUTES.post("/api/sale")

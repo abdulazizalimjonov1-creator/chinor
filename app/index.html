@@ -78,6 +78,11 @@
             <h3 class="section-title">⚙️ Boshqaruv paneli</h3>
             <div class="quick-grid">
                 <button class="quick-card card-red" onclick="handleAction('Foydalanuvchilar')"><span class="card-icon">👥</span><h4>Foydalanuvchilar</h4><p>Barcha foydalanuvchilar</p></button>
+                <button class="quick-card card-orange" onclick="openCategories()"><span class="card-icon">🗂</span><h4>Kategoriyalar</h4><p>Tovar guruhlari</p></button>
+                <button class="quick-card card-green" onclick="openSuppliers()"><span class="card-icon">🚚</span><h4>Yetkazib beruvchilar</h4><p>Ta'minotchilar ro'yxati</p></button>
+                <button class="quick-card card-red" onclick="openLowStock()"><span class="card-icon">⚠️</span><h4>Past qoldiq</h4><p>Tugab qolganlar</p></button>
+                <button class="quick-card card-orange" onclick="openExport()"><span class="card-icon">📥</span><h4>Eksport</h4><p>Excel hisobot</p></button>
+                <button class="quick-card card-green" onclick="openAiAnalytics()"><span class="card-icon">🤖</span><h4>AI Analitika</h4><p>Biznes tahlili</p></button>
                 <button class="quick-card card-orange" onclick="openProducts('admin')"><span class="card-icon">📦</span><h4>Mahsulotlar</h4><p>Katalogni boshqarish</p></button>
                 <button class="quick-card card-green" onclick="handleAction('Buyurtmalar')"><span class="card-icon">📋</span><h4>Buyurtmalar</h4><p>Barcha buyurtmalar</p></button>
                 <button class="quick-card card-purple" onclick="openStats()"><span class="card-icon">📊</span><h4>Hisobotlar</h4><p>Moliyaviy tahlil</p></button>
@@ -283,6 +288,14 @@
             <div id="cashBody"><div class="list-status">Yuklanmoqda...</div></div>
         </div>
 
+        <div class="screen" id="screenTool">
+            <div class="list-header">
+                <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
+                <h2 id="toolTitle">—</h2>
+            </div>
+            <div id="toolBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
         <div class="screen" id="screenAccount">
             <div class="list-header">
                 <button class="list-back" onclick="showScreen('screenClient')">← Orqaga</button>
@@ -400,6 +413,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=2"></script>
+    <script src="app.js?v=3"></script>
 </body>
 </html>

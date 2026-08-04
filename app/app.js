@@ -1353,6 +1353,194 @@
         };
 
         // ================================================================
+        // BOT MENYUSIDAN KO'CHIRILGAN 5 TA BO'LIM
+        // ================================================================
+        // Kategoriyalar, Yetkazib beruvchilar, Past qoldiq, Eksport va
+        // AI Analitika ilgari faqat botda edi. Beshalasi ham bitta umumiy
+        // ekranga (#screenTool) chiziladi — har biriga alohida ekran
+        // yasamaymiz, chunki tuzilishi bir xil: sarlavha + ro'yxat.
+        function openTool(title, html) {
+            const t = $('toolTitle'), b = $('toolBody');
+            if (t) t.textContent = title;
+            if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+            showScreen('screenTool');
+        }
+
+        function toolError(status, data) {
+            return '<div class="list-status">' +
+                (status === 401 ? '🔒 Qaytadan kiring.'
+                 : status === 403 ? '⛔ Bu bo\'lim uchun ruxsatingiz yo\'q.'
+                 : ('Xato: ' + ((data && data.error) || status))) + '</div>';
+        }
+
+        // ── Kategoriyalar ────────────────────────────────────────────────
+        window.openCategories = async function () {
+            openTool('🗂 Kategoriyalar');
+            const { ok, status, data } = await apiFetch('/api/categories');
+            if (!ok || !data.ok) return openTool('🗂 Kategoriyalar', toolError(status, data));
+            let rows = '';
+            (data.categories || []).forEach(c => {
+                rows += `<div class="toprow"><span>${escapeHtml(c.name)}</span>` +
+                    `<span><button class="more-btn" style="padding:4px 10px"
+                      onclick="deleteCategory(${c.id}, '${escapeHtml(c.name).replace(/'/g, "\\'")}')">🗑</button></span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Kategoriya yo\'q</div>';
+            openTool('🗂 Kategoriyalar', `
+                <div class="stat-block">
+                    <input type="text" id="catName" placeholder="Yangi kategoriya nomi"
+                           style="width:100%;padding:10px;border-radius:8px;margin-bottom:8px;
+                                  border:1px solid var(--border,#ccc)">
+                    <button class="more-btn" style="width:100%" onclick="saveCategory()">➕ Qo'shish</button>
+                    <div id="catMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block">${rows}</div>`);
+        };
+
+        window.saveCategory = async function () {
+            const name = (($('catName') || {}).value || '').trim();
+            const msg = $('catMsg');
+            if (!name) { if (msg) msg.textContent = 'Nom kiriting'; return; }
+            const { ok, data } = await apiFetch('/api/category/save', {
+                method: 'POST', body: JSON.stringify({ name })
+            });
+            if (ok && data.ok) openCategories();
+            else if (msg) msg.innerHTML = '<span class="val-red">' +
+                escapeHtml((data && data.error) || 'Saqlanmadi') + '</span>';
+        };
+
+        window.deleteCategory = async function (id, name) {
+            if (!confirm(`"${name}" kategoriyasi o'chirilsinmi?`)) return;
+            await apiFetch('/api/category/delete', {
+                method: 'POST', body: JSON.stringify({ id })
+            });
+            openCategories();
+        };
+
+        // ── Yetkazib beruvchilar ─────────────────────────────────────────
+        window.openSuppliers = async function () {
+            openTool('🚚 Yetkazib beruvchilar');
+            const { ok, status, data } = await apiFetch('/api/suppliers');
+            if (!ok || !data.ok) return openTool('🚚 Yetkazib beruvchilar', toolError(status, data));
+            let rows = '';
+            (data.suppliers || []).forEach(x => {
+                rows += `<div class="toprow"><span>${escapeHtml(x.name)}</span>` +
+                    `<span class="val">${escapeHtml(x.phone || '—')}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Ro\'yxat bo\'sh</div>';
+            openTool('🚚 Yetkazib beruvchilar', `
+                <div class="stat-block">
+                    <input type="text" id="supName" placeholder="Nomi"
+                           style="width:100%;padding:10px;border-radius:8px;margin-bottom:6px;
+                                  border:1px solid var(--border,#ccc)">
+                    <input type="text" id="supPhone" placeholder="Telefon (ixtiyoriy)"
+                           style="width:100%;padding:10px;border-radius:8px;margin-bottom:8px;
+                                  border:1px solid var(--border,#ccc)">
+                    <button class="more-btn" style="width:100%" onclick="saveSupplier()">➕ Qo'shish</button>
+                    <div id="supMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block">${rows}</div>`);
+        };
+
+        window.saveSupplier = async function () {
+            const name = (($('supName') || {}).value || '').trim();
+            const phone = (($('supPhone') || {}).value || '').trim();
+            const msg = $('supMsg');
+            if (!name) { if (msg) msg.textContent = 'Nom kiriting'; return; }
+            const { ok, data } = await apiFetch('/api/supplier/save', {
+                method: 'POST', body: JSON.stringify({ name, phone })
+            });
+            if (ok && data.ok) openSuppliers();
+            else if (msg) msg.innerHTML = '<span class="val-red">' +
+                escapeHtml((data && data.error) || 'Saqlanmadi') + '</span>';
+        };
+
+        // ── Past qoldiq ──────────────────────────────────────────────────
+        window.openLowStock = async function () {
+            openTool('⚠️ Past qoldiq');
+            const { ok, status, data } = await apiFetch('/api/low-stock');
+            if (!ok || !data.ok) return openTool('⚠️ Past qoldiq', toolError(status, data));
+            let rows = '';
+            (data.products || []).forEach(p => {
+                const cls = p.qty <= 0 ? 'val-red' : '';
+                rows += `<div class="toprow"><span>${escapeHtml(p.name)}</span>` +
+                    `<span class="val ${cls}">${p.qty} ${escapeHtml(p.unit || '')}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">✅ Hammasi yetarli</div>';
+            openTool('⚠️ Past qoldiq',
+                `<div class="stat-block"><h3>${data.count} ta tovar</h3>${rows}</div>`);
+        };
+
+        // ── Eksport ──────────────────────────────────────────────────────
+        window.openExport = function () {
+            openTool('📥 Eksport', `
+                <div class="stat-block">
+                    <div class="list-status" style="text-align:left">
+                        Excel fayl yuklab olinadi.
+                    </div>
+                    <button class="more-btn" style="width:100%;margin-top:8px"
+                            onclick="downloadExport('sales')">🧾 Sotuvlar</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="downloadExport('clients')">👤 Mijozlar</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="downloadExport('debtors')">💳 Qarzdorlar</button>
+                    <div id="expMsg" class="list-status"></div>
+                </div>`);
+        };
+
+        window.downloadExport = function (kind) {
+            const msg = $('expMsg');
+            if (msg) msg.textContent = 'Tayyorlanmoqda...';
+            // Faylni yangi oynada ochamiz; sessiya tokeni query orqali ketadi,
+            // chunki <a download> ga maxsus header qo'shib bo'lmaydi.
+            const url = `${API_BASE_URL}/api/export?type=${encodeURIComponent(kind)}` +
+                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
+            try {
+                if (tg && tg.openLink) tg.openLink(url);
+                else window.open(url, '_blank');
+                if (msg) msg.innerHTML = '<span class="val-green">✅ Yuklanmoqda…</span>';
+            } catch (e) {
+                if (msg) msg.innerHTML = '<span class="val-red">Ochilmadi</span>';
+            }
+        };
+
+        // ── AI Analitika ─────────────────────────────────────────────────
+        window.openAiAnalytics = function () {
+            openTool('🤖 AI Analitika', `
+                <div class="stat-block">
+                    <div class="list-status" style="text-align:left">
+                        Do'kon ma'lumotlari asosida tahlil. Tayyor savol tanlang
+                        yoki o'zingiznikini yozing.
+                    </div>
+                    <button class="more-btn" style="width:100%;margin-top:8px"
+                            onclick="askAi('top')">🔥 Nima yaxshi ketyapti?</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="askAi('misses')">🔍 Qidirilgan-u yo'q tovarlar</button>
+                    <input type="text" id="aiQ" placeholder="O'z savolingiz..."
+                           style="width:100%;padding:10px;border-radius:8px;margin-top:10px;
+                                  border:1px solid var(--border,#ccc)">
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="askAi('')">💬 So'rash</button>
+                </div>
+                <div id="aiOut" class="stat-block" style="display:none"></div>`);
+        };
+
+        window.askAi = async function (preset) {
+            const out = $('aiOut');
+            const question = (($('aiQ') || {}).value || '').trim();
+            if (!preset && !question) return;
+            if (out) {
+                out.style.display = '';
+                out.innerHTML = '<div class="list-status">⏳ AI o\'ylayapti…</div>';
+            }
+            const { ok, status, data } = await apiFetch('/api/ai/analyze', {
+                method: 'POST', body: JSON.stringify({ preset, question })
+            });
+            if (!out) return;
+            if (ok && data.ok) out.innerHTML = data.answer || '—';
+            else out.innerHTML = toolError(status, data);
+        };
+
+        // ================================================================
         // KASSA/ADMIN ILOVASI UCHUN LOGIN-PAROL
         // ================================================================
         // Mini App Telegram imzosi bilan kiradi — bu yerda parol kerak emas.

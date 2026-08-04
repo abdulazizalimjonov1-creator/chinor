@@ -106,16 +106,12 @@ def glavniy_menu():
     aks holda funksiya jimgina yo'qolardi.
     """
     kb = ReplyKeyboardBuilder()
-    if _feature_on("categories"):
-        kb.button(text="🗂 Kategoriyalar")
-    if _feature_on("suppliers"):
-        kb.button(text="🚚 Yetkazib beruvchilar")
+    # Kategoriyalar, Yetkazib beruvchilar, Eksport, Past qoldiq va
+    # AI Analitika Mini App'ga ko'chirildi (admin panelidagi kartalar).
+    # Reyting va Umumiy foyda hozircha botda qoldi — Mini App'da ularning
+    # ekrani topilmadi, ko'chirilgach bu ham ketadi.
     kb.button(text="🏆 Reyting")
     kb.button(text="💰 Umumiy foyda")
-    if _feature_on("ai_analytics"):
-        kb.button(text="🤖 AI Analitika")
-    kb.button(text="📥 Eksport")
-    kb.button(text="⚠️ Past qoldiq")
     if _feature_on("mini_app"):
         # «🔑 Login/parol» olib tashlandi — endi Mini App ichida
         # (Hisobim → Kassa uchun login/parol). Kassa va admin ilovalari
@@ -161,11 +157,6 @@ def admin_menu(perms: set = None):
     # funksiya butunlay yo'qolardi. Mini App'ga ko'chirilgach bu ro'yxat
     # yana qisqaradi.
     BUTTONS = [
-        ("🗂 Kategoriyalar",        "categories",    "categories"),
-        ("🚚 Yetkazib beruvchilar", "suppliers",     "suppliers"),
-        ("📥 Eksport",              "export",        None),
-        ("⚠️ Past qoldiq",          "low_stock",     None),
-        ("🤖 AI Analitika",         "ai_analytics",  "ai_analytics"),
         ("🌐 Mini App",             "",              "mini_app"),
     ]
     kb = ReplyKeyboardBuilder()
