@@ -49,7 +49,13 @@ async def _sync_menu_button(bot: Bot, chat_id: int):
         from aiogram.types import (
             MenuButtonWebApp, MenuButtonDefault, WebAppInfo,
         )
-        if MINI_APP_URL.startswith("https://") and db.is_mini_app_enabled():
+        # SKRIPKA YONIDAGI MENYU TUGMASI O'CHIRILDI. Mini App'ga kirish
+        # klaviaturadagi «🌐 Mini App» tugmasi orqali — u raqam
+        # tasdiqlangandan keyin chiqadi va foydalanuvchiga tanish. Ikkita
+        # bir xil kirish nuqtasi ortiqcha edi, menyu tugmasini esa
+        # foydalanuvchi o'zi o'chira olmaydi (bot uni /start da qayta
+        # o'rnatardi).
+        if False and MINI_APP_URL.startswith("https://") and db.is_mini_app_enabled():
             await bot.set_chat_menu_button(
                 chat_id=chat_id,
                 menu_button=MenuButtonWebApp(

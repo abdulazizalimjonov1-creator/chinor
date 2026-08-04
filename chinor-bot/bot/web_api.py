@@ -486,14 +486,32 @@ async def api_client_top(request: web.Request):
             try:
                 import datetime
                 dt = datetime.datetime.fromisoformat(p["created_at"].replace("Z",""))
-                if dt.timestamp() > cutoff and p.get("image_url"):
+                # RASM SHARTI OLIB TASHLANDI: 6664 tovardan atigi ~73 tasida
+                # rasm bor, shu sabab "Yangi" ro'yxati deyarli bo'sh chiqardi.
+                if dt.timestamp() > cutoff and (p.get("qty", 0) or 0) > 0:
                     new_prods.append(p)
             except Exception:
                 pass
         new_prods = new_prods[-12:]
         new_prods.reverse()
     except Exception:
-        new_prods = []
+        all_prods, new_prods = [], []
+
+    # Ikkala ro'yxat ham qisqa bo'lsa — mijoz bo'sh ekran ko'rmasin uchun
+    # qoldig'i bor tovarlar bilan to'ldiramiz. Bu ayniqsa savdo tarixi
+    # tozalangandan keyin muhim: `top_selling_products` bo'shab qoladi.
+    try:
+        # Har bir ro'yxat alohida to'ldiriladi: katalog eski bo'lsa "yangi"
+        # bo'sh chiqadi va mijoz bitta qator ko'radi.
+        if len(new_prods) < 6:
+            if not all_prods:
+                all_prods = await _db.get_all_products(active_only=True)
+            seen = {p["id"] for p in top} | {p["id"] for p in new_prods}
+            filler = [p for p in all_prods
+                      if (p.get("qty", 0) or 0) > 0 and p["id"] not in seen]
+            new_prods = new_prods + filler[:12 - len(new_prods)]
+    except Exception:
+        pass
     def _clip(lst):
         return [_product_json(p, "client", "dona") for p in lst]
     return web.json_response({"ok": True, "top": _clip(top), "new": _clip(new_prods)})
