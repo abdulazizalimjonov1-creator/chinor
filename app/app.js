@@ -368,11 +368,21 @@
             if (!initData) {
                 // Telegram imzo bermadi. Odatda ilova Telegramdan tashqarida
                 // ochilgan; lekin eski Telegram versiyalarida ham bo'ladi.
+                // TASHXIS: nima bor, nima yo'q — taxmin qilmaslik uchun.
+                const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null;
+                const diag =
+                    'tg: ' + (tg ? 'bor' : 'YO\'Q') +
+                    ' · versiya: ' + ((tg && tg.version) || '—') +
+                    ' · platforma: ' + ((tg && tg.platform) || '—') +
+                    '<br>initDataUnsafe.user: ' + (u ? ('bor, id=' + u.id) : 'yo\'q') +
+                    '<br>hash uzunligi: ' + (location.hash || '').length +
+                    '<br>tgWebAppData hash ichida: ' +
+                    ((location.hash || '').indexOf('tgWebAppData') >= 0 ? 'HA' : 'yo\'q');
                 _authSplash(
                     '🔒 <b>Telegram imzosi kelmadi</b><br><br>' +
-                    'Mini App Telegram ichidan ochilishi kerak.<br>' +
-                    'Telegram yangilanganini tekshiring va botdagi ' +
-                    '«🌐 Mini App» tugmasidan qayta oching.<br><br>' +
+                    '<div style="font-size:12px;opacity:.75;text-align:left;' +
+                    'background:rgba(128,128,128,.12);padding:10px;border-radius:8px">' +
+                    diag + '</div><br>' +
                     '<button onclick="document.getElementById(\'authSplash\').remove()" ' +
                     'style="padding:10px 18px;border:none;border-radius:10px;' +
                     'background:var(--primary,#2481cc);color:#fff;font-size:14px">' +

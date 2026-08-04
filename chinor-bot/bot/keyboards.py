@@ -4,6 +4,23 @@ from aiogram.types import WebAppInfo
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 
+def mini_app_inline_kb(text: str = "🌐 Mini App'ni ochish"):
+    """Mini App uchun INLINE tugma (xabar ostida chiqadi).
+
+    NEGA INLINE: Telegram klaviatura tugmasidan ochilgan Mini App'ni
+    "oddiy" deb hisoblaydi va unga `initData` imzosini BERMAYDI — ya'ni
+    ilova foydalanuvchini tanimaydi va parol so'rashga majbur bo'ladi.
+    Inline tugma, menyu tugmasi va havola esa imzo beradi. Shu sabab
+    parolsiz kirish uchun aynan shu tugma ishlatiladi.
+    """
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    url = _mini_app_url()
+    kb = InlineKeyboardBuilder()
+    if url:
+        kb.button(text=text, web_app=WebAppInfo(url=url))
+    return kb.as_markup() if url else None
+
+
 def _mini_app_url() -> str:
     """Mini App URL ni runtime'da olamiz (kerakli paytda kerak)."""
     try:

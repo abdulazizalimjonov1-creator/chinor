@@ -10,7 +10,7 @@ from bot.keyboards import (
     client_products_kb, _price_for, _price_pair_for, settings_kb,
     settings_main_kb, currency_mode_kb, admin_edit_kb, admin_role_pick_kb,
     admin_perms_kb, features_kb, FEATURE_TOGGLES, request_contact_kb,
-    mini_app_kb,
+    mini_app_kb, mini_app_inline_kb,
 )
 from bot.states import AddAdminStates, OrderStates, SetUsdRateStates, AuthByPhoneStates
 from bot.auth import (
@@ -37,6 +37,24 @@ def _is_glavniy(uid: int) -> bool:
 async def _menu_for(uid: int):
     # Markaziy helperga ko'prik
     return await get_user_menu(db, uid)
+
+
+async def _send_mini_app_button(message):
+    """Kirish muvaffaqiyatli bo'lgach — Mini App uchun INLINE tugma.
+
+    Klaviaturadagi tugma Telegram tomonidan imzolanmaydi (u "oddiy" Mini App
+    hisoblanadi), shu sabab ilova foydalanuvchini tanimay parol so'raydi.
+    Inline tugma esa imzo bilan ochiladi — parol so'ralmaydi.
+    """
+    try:
+        kb = mini_app_inline_kb()
+        if kb is None:
+            return
+        await message.answer(
+            "👇 Do'konni ochish uchun bosing:", reply_markup=kb,
+        )
+    except Exception as e:
+        logger.warning(f"mini app inline tugmasi yuborilmadi: {e}")
 
 
 async def _sync_menu_button(bot: Bot, chat_id: int):
@@ -184,6 +202,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             "👑 <b>Bosh admin paneli</b>",
             reply_markup=glavniy_menu(), parse_mode="HTML"
         )
+        await _send_mini_app_button(message)
         return
     if await db.is_admin(uid):
         admin = await db.get_admin(uid)
@@ -194,6 +213,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             f"🎭 Rol: {role_label}",
             reply_markup=admin_menu(perms), parse_mode="HTML"
         )
+        await _send_mini_app_button(message)
         return
     client = await db.get_client_by_tg(uid)
     if client:
@@ -213,6 +233,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             f"{debt_line}",
             reply_markup=client_menu(), parse_mode="HTML"
         )
+        await _send_mini_app_button(message)
         return
     # Ro'yxatdan o'tmagan — kontakt orqali avtorizatsiya bosqichiga o'tamiz.
     await state.set_state(AuthByPhoneStates.waiting_contact)
@@ -274,10 +295,10 @@ async def auth_by_contact(message: Message, state: FSMContext):
                 f"✅ <b>Tizimga kirdingiz!</b> (hodim sifatida)\n\n"
                 f"👨‍💼 <b>{promoted.get('full_name','')}</b>\n"
                 f"🎭 Rol: <b>{role_label}</b>\n\n"
-                f"Bot menyusidan to'liq ishlashingiz mumkin. Mini App uchun "
-                f"«🔑 Login/parol» tugmasidan login yarating.",
+                f"Do'konni boshqarish uchun Mini App'ni oching.",
                 reply_markup=menu, parse_mode="HTML"
             )
+            await _send_mini_app_button(message)
             return
 
     # 2) Telefon bo'yicha mijozni qidirish (DB normalizatsiya bilan)
@@ -340,6 +361,7 @@ async def auth_by_contact(message: Message, state: FSMContext):
         f"{debt_line}",
         reply_markup=client_menu(), parse_mode="HTML"
     )
+    await _send_mini_app_button(message)
 
 
 @router.message(AuthByPhoneStates.waiting_contact)
