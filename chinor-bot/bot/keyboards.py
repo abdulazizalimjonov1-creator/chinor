@@ -293,27 +293,21 @@ def admin_perms_kb(tg_id: int, granted: set):
 
 
 def client_menu():
+    """Mijoz menyusi — faqat Mini App.
+
+    Ilgari bu yerda 7-8 ta tugma bor edi (qidiruv, AI sotuvchi, buyurtma,
+    hisobot, qarz, ma'lumotlar, login/parol). Ularning hammasi Mini App
+    ichida bor, botda takrorlanishi esa mijozni chalg'itardi. Endi bot —
+    faqat kirish nuqtasi va AI suhbat: mijoz shunchaki yozadi, javob oladi;
+    to'liq ish uchun Mini App'ni ochadi.
+    """
     kb = ReplyKeyboardBuilder()
-    if _feature_on("client_search"):
-        kb.button(text="🔎 Mahsulot qidirish")
-    if _feature_on("ai_consult"):
-        kb.button(text="💬 AI sotuvchi")
-    # "🛒 Buyurtma berish" — faqat Mijoz buyurtmalari funksiyasi yoqilgan bo'lsa
-    if _feature_on("client_orders"):
-        kb.button(text="🛒 Buyurtma berish")
-    kb.button(text="📊 Hisobotim")
-    kb.button(text="💳 Qarzim")
-    kb.button(text="ℹ️ Ma'lumotlarim")
-    if _feature_on("mini_app"):
-        kb.button(text="🔑 Login/parol")
-        # web_app to'g'ridan-to'g'ri reply keyboard tugmasiga ulanadi —
-        # shunda tg.sendData() ishonchli ravishda ishlaydi.
-        url = _mini_app_url()
-        if url:
-            kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
-        else:
-            kb.button(text="🌐 Mini App")
-    kb.adjust(2)
+    url = _mini_app_url()
+    if url:
+        kb.button(text="🌐 Mini App", web_app=WebAppInfo(url=url))
+    else:
+        kb.button(text="🌐 Mini App")
+    kb.adjust(1)
     return kb.as_markup(resize_keyboard=True)
 
 

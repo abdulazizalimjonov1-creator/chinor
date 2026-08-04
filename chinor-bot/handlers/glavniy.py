@@ -277,15 +277,24 @@ async def auth_by_contact(message: Message, state: FSMContext):
     # 2) Telefon bo'yicha mijozni qidirish (DB normalizatsiya bilan)
     client = await db.get_client_by_phone(phone)
     if not client:
-        await message.answer(
-            f"❌ <b>Sizning raqamingiz tizimda topilmadi.</b>\n"
-            f"📱 Yuborilgan: <code>{phone}</code>\n\n"
-            f"Iltimos, admin bilan bog'laning — sizni shu raqam bilan "
-            f"tizimga qo'shsin.",
-            parse_mode="HTML"
+        # Ro'yxatda yo'q — AVTOMATIK oddiy (chakana) mijoz qilib yaratamiz.
+        # Ilgari bu yerda "admin bilan bog'laning" deb to'xtatilardi; endi
+        # yangi odam hech kimni kutmasdan darrov ishlay boshlaydi. Optom
+        # mijozlar oldindan admin tomonidan kiritiladi, shuning uchun
+        # ro'yxatda topilmagani — oddiy mijoz degani.
+        shop_name = (message.from_user.full_name or "").strip() or f"Mijoz {phone[-4:]}"
+        await db.add_client(
+            tg_id=sender_id, shop_name=shop_name, phone=phone,
+            registered_by=sender_id, client_type="dona",
         )
-        # State'da qoldiramiz — admin qo'shgach yana tugma bossa avtomatik o'tadi
-        return
+        client = await db.get_client_by_phone(phone)
+        if not client:
+            await message.answer(
+                "⚠️ Ro'yxatdan o'tkazib bo'lmadi. Birozdan keyin qaytadan "
+                "urinib ko'ring yoki admin bilan bog'laning.",
+                parse_mode="HTML"
+            )
+            return
 
     # 3) Mijoz allaqachon boshqa Telegram ID ga bog'lab qo'yilganmi?
     cur_tg = client.get("telegram_id")
