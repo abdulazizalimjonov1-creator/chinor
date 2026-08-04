@@ -54,111 +54,21 @@ _IMG_PROMPT = (
 )
 
 
-async def _gemini_describe_image(fpath: str) -> str:
-    """Rasmni AI orqali tahlil qilib IKKI TILLI (o'zbek + rus) jozibali tavsif
-    qaytaradi. Tartib: Groq (tez) → Gemini eski SDK (VPS'da o'rnatilgan) →
-    Gemini yangi SDK. Birortasi ishlamasa '' qaytaradi (post baribir ketadi)."""
-    prompt = _IMG_PROMPT
+async def _gemini_describe_image(fpath: str, product_name: str = "") -> str:
+    """Rasmdan tavsif — ko'p provayderli zanjir (bot/ai_vision.py).
+
+    Nomi tarixiy sababdan "gemini" bo'lib qolgan; aslida zanjirdagi istalgan
+    provayderni ishlatadi va biri yiqilsa keyingisiga o'tadi. Birortasi
+    ishlamasa '' qaytaradi — post baribir ketaveradi.
+    """
+    from bot import ai_vision
     try:
-        with open(fpath, "rb") as f:
-            img_bytes = f.read()
+        return await asyncio.get_event_loop().run_in_executor(
+            None, lambda: ai_vision.describe(fpath, _IMG_PROMPT, product_name)
+        )
     except Exception as e:
-        logger.warning(f"🤖 Rasm o'qilmadi: {e}")
+        logger.warning(f"🤖 AI tavsif xatosi: {e}")
         return ""
-    import base64
-    img_b64 = base64.b64encode(img_bytes).decode()
-
-    # 1) Groq vision (llama-4-scout) — to'g'ridan-to'g'ri REST chaqiruv.
-    # SDK SHART EMAS (o'rnatilmagan bo'lishi mumkin). Ba'zi serverlarda
-    # Cloudflare oddiy user-agent'ni bloklaydi (xato 1010) — shuning uchun
-    # brauzer User-Agent qo'yamiz (VPS'dan ishlashi tekshirilgan).
-    try:
-        from bot.config import GROQ_API_KEY, GROQ_VISION_MODEL
-        if GROQ_API_KEY and GROQ_VISION_MODEL:
-            import json as _json2, urllib.request
-            body = _json2.dumps({
-                "model": GROQ_VISION_MODEL,
-                "max_tokens": 300,
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
-                    {"type": "text", "text": prompt},
-                ]}],
-            }).encode()
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/chat/completions",
-                data=body,
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) "
-                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                   "Chrome/120 Safari/537.36"),
-                },
-            )
-
-            def _groq_call():
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    return _json2.load(r)
-
-            d = await asyncio.get_event_loop().run_in_executor(None, _groq_call)
-            desc = (d["choices"][0]["message"]["content"] or "").strip()
-            if desc:
-                logger.info(f"🤖 Groq tavsif: {desc[:80]}...")
-                return desc
-    except Exception as e:
-        logger.warning(f"🤖 Groq xato: {e}")
-
-    from bot.config import GEMINI_API_KEY, GEMINI_MODEL
-    _model = GEMINI_MODEL or "gemini-2.0-flash"
-
-    # 2) Gemini — ESKI SDK (google.generativeai) — VPS'da o'rnatilgan, ishonchli
-    try:
-        if GEMINI_API_KEY:
-            import google.generativeai as _genai_old
-            _genai_old.configure(api_key=GEMINI_API_KEY)
-            model = _genai_old.GenerativeModel(_model)
-            resp = await asyncio.get_event_loop().run_in_executor(None, lambda:
-                model.generate_content([
-                    prompt,
-                    {"mime_type": "image/jpeg", "data": img_bytes},
-                ])
-            )
-            desc = (getattr(resp, "text", "") or "").strip()
-            if desc:
-                logger.info(f"🤖 Gemini tavsif: {desc[:80]}...")
-                return desc
-    except ModuleNotFoundError:
-        pass
-    except Exception as e:
-        logger.warning(f"🤖 Gemini (eski SDK) xato: {e}")
-
-    # 3) Gemini — YANGI SDK (google.genai) — o'rnatilgan bo'lsa
-    try:
-        if GEMINI_API_KEY:
-            import importlib
-            genai = importlib.import_module("google.genai")
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            Part = genai.types.Part
-            response = await asyncio.get_event_loop().run_in_executor(None, lambda:
-                client.models.generate_content(
-                    model=_model,
-                    contents=[
-                        Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-                        prompt
-                    ]
-                )
-            )
-            desc = (response.text or "").strip()
-            if desc:
-                logger.info(f"🤖 Gemini (yangi SDK) tavsif: {desc[:80]}...")
-                return desc
-    except ModuleNotFoundError:
-        pass
-    except Exception as e:
-        logger.warning(f"🤖 Gemini (yangi SDK) xato: {e}")
-
-    return ""
 
 
 async def _post_product_to_channel(db, p: dict, pid: int):
@@ -185,7 +95,7 @@ async def _post_product_to_channel(db, p: dict, pid: int):
             return
 
         # Gemini bilan rasm tahlili
-        ai_desc = await _gemini_describe_image(fpath)
+        ai_desc = await _gemini_describe_image(fpath, p.get("name", "") or "")
 
         from database._formatters import _fmt_product
         cap = _fmt_product(p, ai_desc=ai_desc)
