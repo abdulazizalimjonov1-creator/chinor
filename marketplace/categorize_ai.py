@@ -79,21 +79,74 @@ def _ask(names: list) -> list:
               f"TOVAR NOMLARI:\n{listing}\n\n"
               f"Har bir raqam uchun kategoriya yoz.")
 
-    out = ai_engine.chat(prompt, _SYSTEM)
+    # Javob kamida uchdan bir tovarga tanish kategoriya bermasa — model
+    # ishlamayapti (bema'ni matn yoki noto'g'ri shakl). Shunda dvigatel
+    # keyingi modelga o'tadi, biz esa bo'sh natija bilan qolmaymiz.
+    need = max(1, len(names) // 3)
+
+    def _ok(text: str) -> bool:
+        return sum(1 for c in parse_answer(text, len(names)) if c) >= need
+
+    out = ai_engine.chat(prompt, _SYSTEM, validate=_ok)
     if not out:
         return []
+    return parse_answer(out, len(names))
 
-    # "1. Asboblar" / "1) Asboblar" / "1 - Asboblar" — hammasini qabul qilamiz.
-    got = {}
+
+def parse_answer(out: str, count: int) -> list:
+    """AI javobini raqamlangan kategoriyalar ro'yxatiga aylantiradi.
+
+    NIMA UCHUN BU QADAR EHTIYOT: modellar javobni turlicha bezaydi va
+    2026-08-05 da shu sababli 1900 ta tovar bo'limsiz qolib ketgan edi:
+
+      1) Ba'zi model avval BERILGAN kategoriyalar ro'yxatini raqamlab
+         qaytaradi ("1. Elektr asboblar … 17. Boshqalar"), keyin asl javobni
+         yozadi. Eski tahlilchi shu "aks-sado"ni javob deb qabul qilardi.
+      2) Ba'zisi "1. Tovar nomi — Kategoriya" ko'rinishida yozadi; eski
+         tahlilchi butun qatorni kategoriya deb olardi.
+      3) Ba'zisi javobdan keyin yana bir jadval chizadi (kategoriyasiz);
+         eski tahlilchi ("oxirgisi g'olib") o'sha bo'sh jadvalni olardi.
+
+    Yechim: qatordan FAQAT tanish kategoriya nomi qidiriladi (tire yoki
+    ikki nuqtadan keyingi bo'lak birinchi navbatda), tanilmagan qator
+    e'tiborsiz qoldiriladi, aks-sado bloki esa alohida aniqlanib tashlanadi.
+    """
+    hits = []          # (idx, kategoriya, aks-sadomi)
     for line in out.splitlines():
-        m = re.match(r"\s*(\d+)\s*[.):\-]\s*(.+)", line.strip())
+        m = re.match(r"\s*(\d+)\s*[.):\-–—]\s*(.+)", line.strip())
         if not m:
             continue
         idx = int(m.group(1)) - 1
-        cat = m.group(2).strip().strip("*_ ").rstrip(".")
-        if 0 <= idx < len(names):
-            got[idx] = cat
-    return [got.get(i, "") for i in range(len(names))]
+        if not (0 <= idx < count):
+            continue
+        body = m.group(2).strip().strip("*_ ").rstrip(".")
+        # "Nom — Kategoriya" / "Nom: Kategoriya" bo'lsa oxirgi bo'lak muhim
+        tail = re.split(r"\s+[—–-]\s+|:\s+", body)[-1].strip()
+        cat = _valid(tail) or _valid(body)
+        if not cat:
+            continue
+        # Aks-sado belgisi: qatorda kategoriyadan boshqa hech narsa yo'q VA
+        # u ro'yxatdagi aynan shu o'rindagi kategoriya.
+        echo = (body.lower() == cat.lower()
+                and idx < len(CATEGORIES)
+                and CATEGORIES[idx].lower() == cat.lower())
+        hits.append((idx, cat, echo))
+
+    # Ketma-ket 5 tadan ko'p "aks-sado" bo'lsa — bu ro'yxatning nusxasi,
+    # javob emas. (Bitta-ikkitasi tasodifan to'g'ri kelishi mumkin, ular
+    # haqiqiy javob bo'lishi ham ehtimol — shuning uchun chegara qo'yamiz.)
+    run = best = 0
+    for _, _, echo in hits:
+        run = run + 1 if echo else 0
+        best = max(best, run)
+    drop_echo = best >= 5
+
+    got = {}
+    for idx, cat, echo in hits:
+        if drop_echo and echo:
+            continue
+        got[idx] = cat          # keyingi bo'lim oldingisini yangilaydi
+    return [got.get(i, "") for i in range(count)]
 
 
 def _valid(cat: str) -> str:

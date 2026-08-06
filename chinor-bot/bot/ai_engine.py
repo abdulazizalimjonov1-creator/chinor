@@ -180,11 +180,64 @@ def _cooldown_for(err: Exception) -> int:
 
 # ── Provayderlar (SDK ishlatilmaydi — to'g'ridan-to'g'ri REST) ──────────────
 
+def _keys(env_name: str) -> list:
+    """Bitta provayderning BIR NECHTA kaliti.
+
+    Bepul kvota kalitga bog'liq: ikkinchi akkaunt = ikkinchi kvota. Shuning
+    uchun kalitlar ro'yxat bo'lib o'qiladi:
+        GEMINI_API_KEY=birinchi
+        GEMINI_API_KEY_2=ikkinchi          (…_3, …_4 ham bo'ladi)
+    yoki bitta o'zgaruvchida vergul bilan: GEMINI_API_KEY=bir,ikki
+    """
+    out = []
+    for name in [env_name] + [f"{env_name}_{i}" for i in range(2, 10)]:
+        for k in (os.getenv(name, "") or "").split(","):
+            k = k.strip()
+            if k and k not in out:
+                out.append(k)
+    return out
+
+
+def _call_with_keys(env_name: str, fn):
+    """Kalitlarni navbat bilan sinaydi: biri kvotani tugatgan bo'lsa keyingisi.
+
+    Har kalit ALOHIDA sovish muddatiga ega (`key:<env>:<n>`) — kvotasi tugagani
+    bir soat chetlab o'tiladi, qolganlari ishlayveradi. Hammasi sovishda
+    bo'lsa ham OXIRGISI baribir sinaladi: sovish muddati taxmin, aniq emas.
+    """
+    keys = _keys(env_name)
+    if not keys:
+        raise _NoKey(f"{env_name} yo'q")
+    st = _load_state()
+    cooldown = st.get("cooldown", {})
+    now = time.time()
+    live = [(i, k) for i, k in enumerate(keys, 1)
+            if cooldown.get(f"key:{env_name}:{i}", 0) <= now]
+    if not live:
+        live = [(len(keys), keys[-1])]
+
+    last = None
+    for i, key in live:
+        try:
+            return fn(key)
+        except Exception as e:
+            last = e
+            secs = _cooldown_for(e)
+            # Faqat kvota/limit uchun kalitni chetlab o'tamiz. Model yo'qligi
+            # yoki tarmoq xatosi kalitga bog'liq emas — boshqa kalit ham
+            # xuddi shunday yiqiladi, urinib o'tirish vaqtni yeydi.
+            if secs == _COOLDOWN_QUOTA and len(live) > 1:
+                cooldown[f"key:{env_name}:{i}"] = now + secs
+                st["cooldown"] = cooldown
+                _save_state(st)
+                logger.info("🔑 %s #%d kvotasi tugadi — keyingi kalitga", env_name, i)
+                continue
+            raise
+    raise last
+
+
 def _call_gemini(model: str, prompt: str, img_b64: str = "",
                  system: str = "") -> str:
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY yo'q")
     parts = []
     if img_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
@@ -204,21 +257,26 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
     body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-        data=body, headers={"Content-Type": "application/json", "User-Agent": _UA},
-    )
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-        d = json.load(r)
-    return (d["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+
+    def _once(key: str) -> str:
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent?key={key}",
+            data=body,
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
+        )
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            d = json.load(r)
+        return (d["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+
+    return _call_with_keys("GEMINI_API_KEY", _once)
 
 
 def _call_openai_compat(provider: str, model: str, prompt: str,
                         img_b64: str = "", system: str = "") -> str:
     """OpenAI formatidagi har qanday provayder (groq, openrouter, github, ...)."""
     url, key_env = _OPENAI_COMPAT[provider]
-    key = os.getenv(key_env, "").strip()
-    if not key:
+    if not _keys(key_env):
         raise _NoKey(f"{key_env} yo'q")
     if img_b64:
         content = [
@@ -237,37 +295,48 @@ def _call_openai_compat(provider: str, model: str, prompt: str,
         "max_tokens": 1200 if not img_b64 else 400,
         "messages": msgs,
     }).encode()
-    headers = {"Authorization": f"Bearer {key}",
-               "Content-Type": "application/json", "User-Agent": _UA}
-    if provider == "openrouter":
-        # OpenRouter bepul darajada shuni so'raydi.
-        headers["HTTP-Referer"] = "https://chinorpos.com"
-        headers["X-Title"] = "Chinor POS"
-    req = urllib.request.Request(url, data=body, headers=headers)
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-        d = json.load(r)
-    return (d["choices"][0]["message"]["content"] or "").strip()
+    def _once(key: str) -> str:
+        headers = {"Authorization": f"Bearer {key}",
+                   "Content-Type": "application/json", "User-Agent": _UA}
+        if provider == "openrouter":
+            # OpenRouter bepul darajada shuni so'raydi.
+            headers["HTTP-Referer"] = "https://chinorpos.com"
+            headers["X-Title"] = "Chinor POS"
+        req = urllib.request.Request(url, data=body, headers=headers)
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            d = json.load(r)
+        out = d.get("choices") or []
+        if not out:
+            # Ba'zi provayderlar 200 qaytarib, ichida xato yozadi.
+            raise RuntimeError(str(d.get("error") or d)[:200])
+        return (out[0]["message"]["content"] or "").strip()
+
+    return _call_with_keys(key_env, _once)
 
 
 def _call_cloudflare(model: str, prompt: str, img_b64: str = "") -> str:
     """Cloudflare Workers AI — o'z formati bor, OpenAI'ga mos emas."""
     acc = os.getenv("CF_ACCOUNT_ID", "").strip()
-    key = os.getenv("CF_API_TOKEN", "").strip()
-    if not acc or not key:
+    if not acc or not _keys("CF_API_TOKEN"):
         raise _NoKey("CF_ACCOUNT_ID/CF_API_TOKEN yo'q")
     payload = {"prompt": prompt, "max_tokens": 400}
     if img_b64:
         payload["image"] = list(base64.b64decode(img_b64))
-    req = urllib.request.Request(
-        f"https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/{model}",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}",
-                 "Content-Type": "application/json", "User-Agent": _UA},
-    )
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-        d = json.load(r)
-    return (d.get("result", {}).get("description")
-            or d.get("result", {}).get("response") or "").strip()
+    data = json.dumps(payload).encode()
+
+    def _once(key: str) -> str:
+        req = urllib.request.Request(
+            f"https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/{model}",
+            data=data,
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json", "User-Agent": _UA},
+        )
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            d = json.load(r)
+        return (d.get("result", {}).get("description")
+                or d.get("result", {}).get("response") or "").strip()
+
+    return _call_with_keys("CF_API_TOKEN", _once)
 
 
 def _dispatch(provider: str, model: str, prompt: str, img_b64: str = "") -> str:
@@ -284,8 +353,18 @@ def _dispatch(provider: str, model: str, prompt: str, img_b64: str = "") -> str:
 
 # ── Matnli suhbat (mijoz bilan gaplashish, analitika, tavsiya) ─────────────
 
-def chat(prompt: str, system: str = "", timeout: float = None) -> str:
+def chat(prompt: str, system: str = "", timeout: float = None,
+         validate=None) -> str:
     """Matnli so'rov — matn zanjiri bo'ylab, birinchi ishlagani qaytariladi.
+
+    `validate(javob) -> bool` berilsa, javob SHAKLI ham tekshiriladi: mos
+    kelmasa model yiqilgan hisoblanadi va zanjir keyingisiga o'tadi.
+
+    Nima uchun kerak: kuchsiz bepul modellar ba'zan bo'sh emas, lekin
+    ma'nosiz matn qaytaradi (2026-08-05: bitta model "Kategoriya nomlaridan
+    bitta yoz…" degan jumlani o'nlab marta takrorlab yubordi). Bunday javob
+    "muvaffaqiyat" deb qabul qilinsa, zanjir hech qachon ishlaydigan modelga
+    o'tmaydi.
 
     Bloklovchi. Chaqiruvchi executor'da ishlatadi. Hech biri ishlamasa ''.
     """
@@ -302,6 +381,8 @@ def chat(prompt: str, system: str = "", timeout: float = None) -> str:
             continue
         try:
             out = _dispatch_text(provider, model, prompt, system, timeout)
+            if out and validate is not None and not validate(out):
+                raise RuntimeError("javob shakli mos emas")
             if out:
                 st["last_good_text"] = f"{provider}:{model}"
                 _bump(st, tag)
@@ -346,8 +427,21 @@ def _dispatch_text(provider: str, model: str, prompt: str,
 
 # ── Asosiy funksiya ────────────────────────────────────────────────────────
 
-def describe(fpath: str, prompt: str, product_name: str = "") -> str:
+def describe(fpath: str, prompt: str, product_name: str = "",
+             validate=None, allow_text_fallback: bool = True) -> str:
     """Zanjir bo'ylab urinib, birinchi ishlagan tavsifni qaytaradi.
+
+    `validate(javob) -> bool` berilsa, javob SHAKLI ham tekshiriladi: mos
+    kelmasa model yiqilgan hisoblanadi va zanjir keyingisiga o'tadi.
+    Nima uchun: kuchsiz model ba'zan KO'RSATMANING O'ZINI qaytaradi
+    (2026-08-05 da kanalga "…o'zbekcha 1 ta qisqa tavsif yoz" degan matn
+    tavsif o'rnida chiqib ketdi). Bunday javob muvaffaqiyat emas.
+
+    `allow_text_fallback=False` — rasm modellari yiqilsa NOMDAN yozishga
+    o'tilmaydi, '' qaytariladi. Kanal tavsifi uchun aynan shu kerak:
+    nomdan yozilgan tavsif ko'pincha noto'g'ri chiqadi ("Shisha choynak"ni
+    ko'rmagan model unga "sifatli asbob" deb yozadi), tavsifsiz post esa
+    hech kimni chalg'itmaydi.
 
     Bloklovchi (sinxron) funksiya — chaqiruvchi uni executor'da ishlatadi.
     Hech biri ishlamasa '' qaytaradi (post baribir ketaveradi).
@@ -381,6 +475,8 @@ def describe(fpath: str, prompt: str, product_name: str = "") -> str:
             continue
         try:
             desc = _dispatch(provider, model, prompt, img_b64)
+            if desc and validate is not None and not validate(desc):
+                raise RuntimeError("javob shakli mos emas")
             if desc:
                 st["last_good"] = tag
                 _bump(st, tag)
@@ -402,7 +498,7 @@ def describe(fpath: str, prompt: str, product_name: str = "") -> str:
     _save_state(st)
 
     # ── Oxirgi chora: rasmsiz, faqat nomdan ───────────────────────────────
-    if product_name:
+    if product_name and allow_text_fallback:
         for provider, model in _text_chain():
             if cooldown.get(f"text:{provider}:{model}", 0) > now:
                 continue
@@ -410,6 +506,8 @@ def describe(fpath: str, prompt: str, product_name: str = "") -> str:
                 desc = _dispatch(
                     provider, model,
                     f"{prompt}\n\nMahsulot nomi: {product_name}", "")
+                if desc and validate is not None and not validate(desc):
+                    raise RuntimeError("javob shakli mos emas")
                 if desc:
                     logger.info("🤖 %s:%s — rasmsiz, nomdan tavsif berdi",
                                 provider, model)
@@ -469,20 +567,24 @@ def status() -> dict:
     st = _load_state()
     now = time.time()
     cd = st.get("cooldown", {})
-    def _has_key(prov: str) -> bool:
+    def _nkeys(prov: str) -> int:
         if prov == "gemini":
-            return bool(os.getenv("GEMINI_API_KEY", "").strip())
+            return len(_keys("GEMINI_API_KEY"))
         if prov == "cloudflare":
-            return bool(os.getenv("CF_ACCOUNT_ID", "").strip()
-                        and os.getenv("CF_API_TOKEN", "").strip())
+            return (len(_keys("CF_API_TOKEN"))
+                    if os.getenv("CF_ACCOUNT_ID", "").strip() else 0)
         env = _OPENAI_COMPAT.get(prov, (None, None))[1]
-        return bool(env and os.getenv(env, "").strip())
+        return len(_keys(env)) if env else 0
+
+    def _mark(prov: str) -> str:
+        n = _nkeys(prov)
+        if not n:
+            return "  (kalit yo'q)"
+        return f"  ({n} kalit)" if n > 1 else ""
 
     return {
-        "vision": [f"{p}:{m}" + ("" if _has_key(p) else "  (kalit yo'q)")
-                   for p, m in _chain()],
-        "text": [f"{p}:{m}" + ("" if _has_key(p) else "  (kalit yo'q)")
-                 for p, m in _text_chain()],
+        "vision": [f"{p}:{m}{_mark(p)}" for p, m in _chain()],
+        "text": [f"{p}:{m}{_mark(p)}" for p, m in _text_chain()],
         "last_good": st.get("last_good"),
         "last_good_text": st.get("last_good_text"),
         "usage_today": {k: v for k, v in (st.get("usage") or {}).items()

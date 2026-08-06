@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "frontend",
+      "name": "mini-app",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "5500", "--directory", "fronted"],
+      "runtimeArgs": ["-m", "http.server", "5500", "--directory", "app"],
       "port": 5500
+    },
+    {
+      "name": "chinor-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8790", "--directory", "site"],
+      "port": 8790
     }
   ]
 }

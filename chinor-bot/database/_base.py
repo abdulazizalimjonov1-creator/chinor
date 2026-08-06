@@ -139,6 +139,23 @@ class BaseDB:
         # Bot esa image_file_id (Telegram) dan foydalanishda davom etadi.
         if "image_url" not in prod_cols:
             conn.execute("ALTER TABLE products ADD COLUMN image_url TEXT DEFAULT ''")
+        # products.image_orig_url — ASL (foni kesilmagan) rasm. `image_url` esa
+        # brendlangan ko'rinish: foni kesilib, och yashil fonga qo'yilgan.
+        # Ikkalasi ham saqlanadi: mijoz katalogda chiroyli rasmni ko'radi,
+        # xohlasa "asl rasm"ni ochib tovar haqiqatda qanday ekanini tekshiradi.
+        if "image_orig_url" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN image_orig_url TEXT DEFAULT ''")
+        # products.channel_msg_ids — kanal posti ALBOM bo'lgani uchun bir nechta
+        # xabar id'si (JSON ro'yxat). Qayta e'lon qilishda hammasi o'chiriladi;
+        # `channel_msg_id` (bittasi) eski kod uchun saqlanib qoladi.
+        if "channel_msg_ids" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN channel_msg_ids TEXT DEFAULT ''")
+        # products.usage_tags — tovar QAYERDA ishlatiladi (1-3 qisqa so'z,
+        # vergul bilan). Rasm pastidagi lentaga, kanal postiga va Mini App
+        # kartochkasiga chiqadi: xaridor "bu menga keraKMI?" degan savolga
+        # darrov javob topsin.
+        if "usage_tags" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN usage_tags TEXT DEFAULT ''")
         # products.display_name — MIJOZGA ko'rinadigan chiroyli nom.
         # Asl `name` tegilmaydi: kassa va xodimlar tovarni o'sha nom bilan
         # taniydi, imlosi qanday bo'lsa ham. Bo'sh bo'lsa `name` ishlatiladi.

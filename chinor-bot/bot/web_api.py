@@ -34,7 +34,9 @@ from bot.auth import (
     verify_login, attempt_tracker, verify_telegram_init_data,
     LoginAttemptTracker,
 )
-from bot.config import BOT_TOKEN, CORS_ALLOW_ORIGIN, GLAVNIY_ADMIN_ID, CHANNEL_ID
+from bot.config import (BOT_TOKEN, CORS_ALLOW_ORIGIN, GLAVNIY_ADMIN_ID,
+                        CHANNEL_ID, CONTACT_PHONE_1, CONTACT_PHONE_2,
+                        SHOP_LOCATION)
 from bot import payment_relay
 
 logger = logging.getLogger(__name__)
@@ -44,36 +46,173 @@ ROUTES = web.RouteTableDef()
 
 # Mahsulot rasmiga AI yozadigan IKKI TILLI (o'zbek + rus) jozibali tavsif.
 # Faqat tovar haqida — narx/do'kon/raqam yozmaydi (ular footerda fiksir).
+# Ko'rsatma QISQA: uzun, raqamlangan ko'rsatmani kuchsiz modellar javob deb
+# qaytarib yuboradi (2026-08-05: kanalga aynan ko'rsatmaning o'zi chiqib ketdi).
 _IMG_PROMPT = (
-    "Bu — sotuvga qo'yilgan tovar rasmi. Aniq ikki qator qaytar (boshqa hech narsa):\n"
-    "1-qator: 🇺🇿 bilan boshla — o'zbekcha 1 ta qisqa, jozibali, sotuvchi uslubidagi "
-    "tavsif (1-2 mos emoji bilan).\n"
-    "2-qator: 🇷🇺 bilan boshla — xuddi shu tavsifning ruschasi (emoji bilan).\n"
-    "Faqat tovarning o'zi haqida yoz. Narx, do'kon nomi, telefon raqam YOZMA. "
-    "Har bir qator 1 jumladan oshmasin, sarlavha yoki izoh qo'shma."
+    "Sotuvdagi tovar rasmi. Ikki qator yoz:\n"
+    "🇺🇿 <o'zbekcha bitta qisqa reklama jumlasi>\n"
+    "🇷🇺 <shuning ruschasi>\n"
+    "O'zbekcha qator SOF O'ZBEK TILIDA, LOTIN yozuvida bo'lsin. "
+    "Turkcha so'z va harflar (ş, ç, ğ, ı, ü, ö) ISHLATMA, kirill yozma.\n"
+    "Narx, do'kon nomi, telefon yozma. Boshqa hech narsa qo'shma."
+)
+
+# Ko'rsatmaning o'zi qaytib kelganini bildiruvchi so'zlar.
+_ECHO_WORDS = ("qator yoz", "1-qator", "2-qator", "yozma", "qo'shma",
+               "shuning ruschasi", "reklama jumlasi", "sotuvchi uslubidagi",
+               "qisqa tavsif", "emoji bilan", "bilan boshla —")
+
+
+def _desc_sane(text: str) -> bool:
+    """Umumiy tekshiruv: bu matn tavsifga o'xshaydimi (til muhim emas)."""
+    t = (text or "").strip()
+    if len(t) < 12 or len(t) > 700:
+        return False
+    low = t.lower()
+    if any(w in low for w in _ECHO_WORDS):
+        return False
+    if "<" in t and ">" in t:          # to'ldirilmagan shablon: <...>
+        return False
+    return True
+
+
+# O'zbek lotin alifbosida YO'Q harflar — ular turkcha/nemischa matn belgisi.
+_TURKISH_CH = "şŞğĞıİçÇöÖüÜ"
+# Turkchada bor, o'zbekchada boshqacha yoziladigan aniq so'zlar.
+_TURKISH_WORDS = (" ürün", " için", " ile ", " çok", " daha ", "mükemmel",
+                  "kalite", "kullanım", "satın", "fiyat", "yüksek", "güçlü",
+                  " ve ", "temizleyici", "temizlik", " sizin ", " bir ürün")
+
+
+def _uzbek_line_ok(line: str) -> bool:
+    """O'zbekcha qator haqiqatan o'zbekcha (lotin) va toza yozilganmi.
+
+    Modellar o'zbekchani ba'zan TURKCHA aralashtirib yozadi ("peçetkalar",
+    "ürün için") yoki KIRILLDA qaytaradi ("Мистер Пропернинг…"). Kanal
+    lotin yozuvida, shuning uchun bunday javob rad etiladi va zanjir
+    keyingi modelga o'tadi.
+    """
+    if any(ch in line for ch in _TURKISH_CH):
+        return False
+    low = " " + line.lower() + " "
+    if any(w in low for w in _TURKISH_WORDS):
+        return False
+    # Kirill harflari o'zbekcha qatorda bo'lmasligi kerak (ruscha qator alohida)
+    cyr = sum(1 for ch in line if "Ѐ" <= ch <= "ӿ")
+    return cyr <= 2
+
+
+def _desc_ok(text: str) -> bool:
+    """Kanalga TAYYOR tavsifmi: ikki tilli (🇺🇿 + 🇷🇺), toza o'zbekcha, aks-sado emas.
+
+    Nima uchun bayroq talab qilinadi: kuchsiz model (llava) ko'rsatmani
+    tushunmay INGLIZCHA bitta jumla qaytaradi — 2026-08-05 da kanalga aynan
+    shunday chiqdi. Bayroq bo'lmasa zanjir keyingi modelga o'tadi, hech biri
+    uddasidan chiqmasa esa tavsif matnli model tomonidan qayta yoziladi.
+    """
+    if not _desc_sane(text):
+        return False
+    if "🇺🇿" not in text or "🇷🇺" not in text:
+        return False
+    uz = next((ln for ln in text.splitlines() if "🇺🇿" in ln), "")
+    ru = next((ln for ln in text.splitlines() if "🇷🇺" in ln), "")
+    if not _uzbek_line_ok(uz):
+        return False
+    # Ruscha qatorda kirill bo'lishi shart — aks holda tarjima qilinmagan.
+    return sum(1 for ch in ru if "Ѐ" <= ch <= "ӿ") >= 5
+
+
+# Model javob oldiga qo'yib yuboradigan yorliqlar ("O'zbekcha tavsif: …").
+_LABELS = _re_labels = (
+    r"o['‘’`]?zbekcha(\s+tavsif)?", r"uzbekcha(\s+tavsif)?", r"uzbek",
+    r"ruscha(\s+tavsif)?", r"russian", r"русское\s+описание", r"на\s+русском",
+    r"tavsif", r"описание", r"\d\s*[-–—.)]?\s*qator",
 )
 
 
+def _clean_desc(text: str) -> str:
+    """Tavsifni tozalaydi: yorliqlar, qator raqamlari, qo'shtirnoq, bo'sh joy."""
+    import re as _re
+    label_re = _re.compile(r"^\s*(?:" + "|".join(_LABELS) + r")\s*[:：-]\s*",
+                           _re.I)
+    out = []
+    for line in (text or "").strip().splitlines():
+        line = line.strip()
+        # Bayroq yorliqdan oldin turishi mumkin: "🇺🇿 O'zbekcha tavsif: ..."
+        flag = ""
+        if line[:2] in ("🇺", "🇷") or line.startswith(("🇺🇿", "🇷🇺")):
+            flag = line[:2] if not line.startswith(("🇺🇿", "🇷🇺")) else line[:2]
+        for pref in ("🇺🇿", "🇷🇺"):
+            if line.startswith(pref):
+                flag, line = pref, line[len(pref):].strip()
+                break
+        line = label_re.sub("", line)
+        line = _re.sub(r"^\s*[-*•]\s*", "", line).strip(' "\'`')
+        if line:
+            out.append((flag + " " + line).strip())
+    return "\n".join(out[:2])          # ko'pi bilan ikki qator (uz + ru)
+
+
 async def _gemini_describe_image(fpath: str, product_name: str = "") -> str:
-    """Rasmdan tavsif — ko'p provayderli zanjir (bot/ai_vision.py).
+    """Rasmdan tavsif — ko'p provayderli zanjir (bot/ai_engine.py).
 
     Nomi tarixiy sababdan "gemini" bo'lib qolgan; aslida zanjirdagi istalgan
     provayderni ishlatadi va biri yiqilsa keyingisiga o'tadi. Birortasi
-    ishlamasa '' qaytaradi — post baribir ketaveradi.
+    ishlamasa '' qaytaradi — post baribir ketaveradi (tavsifsiz).
     """
     from bot import ai_engine as ai_vision
+    loop = asyncio.get_event_loop()
     try:
-        return await asyncio.get_event_loop().run_in_executor(
-            None, lambda: ai_vision.describe(fpath, _IMG_PROMPT, product_name)
+        # 1) Rasm modeli to'g'ridan-to'g'ri ikki tilli tavsif yozsin.
+        # allow_text_fallback=False — RASMNI ko'rmagan model tavsif yozmasin.
+        raw = await loop.run_in_executor(
+            None, lambda: ai_vision.describe(fpath, _IMG_PROMPT, product_name,
+                                             validate=_desc_ok,
+                                             allow_text_fallback=False)
         )
+        desc = _clean_desc(raw)
+        if _desc_ok(desc):
+            return desc
+
+        # 2) Uddasidan chiqmadi (kuchsiz model ingliz tilida bitta jumla
+        #    yozadi). Undan RASMDA NIMA borligini so'raymiz, so'ng MATNLI
+        #    model uni o'zbekcha+ruscha reklama jumlasiga aylantiradi.
+        seen = await loop.run_in_executor(
+            None, lambda: ai_vision.describe(
+                fpath, "Describe this product in one short sentence.",
+                product_name, validate=_desc_sane,
+                allow_text_fallback=False))
+        seen = _clean_desc(seen)
+        if not _desc_sane(seen):
+            return ""
+        rewrite = (
+            f"Tovar: {product_name or '—'}\n"
+            f"Tavsif: {seen}\n\n"
+            "Shu tovar uchun do'kon kanaliga ikki qator yoz:\n"
+            "🇺🇿 <o'zbekcha bitta qisqa reklama jumlasi>\n"
+            "🇷🇺 <shuning ruschasi>\n"
+            "Narx, do'kon nomi, telefon yozma."
+        )
+        out = await loop.run_in_executor(
+            None, lambda: ai_vision.chat(rewrite, validate=_desc_ok))
+        out = _clean_desc(out)
+        if _desc_ok(out):
+            logger.info("🤖 Tavsif matnli model tomonidan qayta yozildi")
+            return out
+        return ""
     except Exception as e:
         logger.warning(f"🤖 AI tavsif xatosi: {e}")
         return ""
 
 
-async def _post_product_to_channel(db, p: dict, pid: int):
+async def _post_product_to_channel(db, p: dict, pid: int,
+                                   silent: bool = False):
     """Mahsulot saqlanganidan keyin kanalga post yuboradi.
-    Rasm bo'lmasa — yuklamaydi. Gemini bilan qisqa tavsif yozadi."""
+    Rasm bo'lmasa — yuklamaydi. AI bilan qisqa tavsif yozadi.
+
+    `silent=True` — obunachilarga ovozli bildirishnoma bormaydi. To'plamli
+    qayta e'lon qilishda (79 ta post) shu rejim ishlatiladi: kanal yangilanadi,
+    lekin odamlarning telefoni tinmay chirillamaydi."""
     try:
         if not db.is_channel_enabled():
             return
@@ -94,31 +233,71 @@ async def _post_product_to_channel(db, p: dict, pid: int):
             logger.warning(f"📢 Rasm fayli topilmadi: {fpath}")
             return
 
+        # Tavsif uchun ASL rasm (bo'lsa) — unda tovar atrofidagi kontekst ham
+        # bor, AI aniqroq yozadi. Kanalga esa BRENDLANGAN rasm ketadi.
+        desc_path = fpath
+        orig_url = p.get("image_orig_url", "") or ""
+        if orig_url:
+            op = os.path.join(
+                UPLOAD_DIR, orig_url.lstrip("/").replace("api/img/", "").lstrip("/"))
+            if os.path.exists(op):
+                desc_path = op
+
         # Gemini bilan rasm tahlili
-        ai_desc = await _gemini_describe_image(fpath, p.get("name", "") or "")
+        ai_desc = await _gemini_describe_image(desc_path, p.get("name", "") or "")
 
         from database._formatters import _fmt_product
-        cap = _fmt_product(p, ai_desc=ai_desc)
+        # Bo'lim nomi — kaptiondagi hashtag uchun (#santexnika kabi).
+        if p.get("category_id") and not p.get("category_name"):
+            try:
+                cat = await db.get_category(int(p["category_id"]))
+                p = dict(p, category_name=(cat or {}).get("name", ""))
+            except Exception:
+                pass
+        buy_url = (f"https://t.me/{db._bot_username}?start=buy_{pid}"
+                   if getattr(db, "_bot_username", "") else "")
+        cap = _fmt_product(p, ai_desc=ai_desc, buy_url=buy_url)
         markup = db._buy_markup(pid)
 
-        from aiogram.types import FSInputFile
-        # Eski kanal postini o'chirib, yangi yuboramiz
-        old_mid = p.get("channel_msg_id", 0)
-        if old_mid:
+        from aiogram.types import FSInputFile, InputMediaPhoto
+        # Eski kanal postini (albom bo'lsa — hammasini) o'chirib, yangisini
+        # yuboramiz. Eski postlarda faqat bitta id saqlangan.
+        old_ids = []
+        try:
+            old_ids = _json.loads(p.get("channel_msg_ids") or "[]")
+        except (ValueError, TypeError):
+            old_ids = []
+        if not old_ids and p.get("channel_msg_id"):
+            old_ids = [p["channel_msg_id"]]
+        for m in old_ids:
             try:
-                await bot.delete_message(CHANNEL_ID, old_mid)
+                await bot.delete_message(CHANNEL_ID, m)
             except Exception:
                 pass
 
-        msg = await bot.send_photo(
-            CHANNEL_ID,
-            FSInputFile(fpath),
-            caption=cap,
-            parse_mode="HTML",
-            reply_markup=markup,
-        )
+        # ASL rasm ham bo'lsa — IKKI rasmli albom: 1) katalog ko'rinishi
+        # (foni kesilgan), 2) tovarning haqiqiy surati. Telegram albomga
+        # tugma qo'yishga ruxsat bermaydi, shuning uchun "Sotib olish"
+        # havolasi kaptionning ichida (`buy_url`) beriladi.
+        second = desc_path if desc_path != fpath else ""
+        if second:
+            msgs = await bot.send_media_group(CHANNEL_ID, [
+                InputMediaPhoto(media=FSInputFile(fpath), caption=cap,
+                                parse_mode="HTML"),
+                InputMediaPhoto(media=FSInputFile(second)),
+            ], disable_notification=silent)
+            msg = msgs[0]
+            new_ids = [m.message_id for m in msgs]
+        else:
+            msg = await bot.send_photo(
+                CHANNEL_ID, FSInputFile(fpath), caption=cap,
+                parse_mode="HTML", reply_markup=markup,
+                disable_notification=silent,
+            )
+            new_ids = [msg.message_id]
         tg_file_id = msg.photo[-1].file_id
         mid = msg.message_id
+        ids_json = _json.dumps(new_ids)
         # _refresh_product ni chaqirmaslik uchun to'g'ridan SQL ga yozamiz
         # AI tavsifini description ga ham saqlaymiz (bo'sh bo'lsa)
         from database._helpers import DB_PATH
@@ -130,13 +309,15 @@ async def _post_product_to_channel(db, p: dict, pid: int):
                 ).fetchone() or [""])[0] or ""
                 if ai_desc and not cur_desc.strip():
                     conn.execute(
-                        "UPDATE products SET image_file_id=?, channel_msg_id=?, description=? WHERE id=?",
-                        (tg_file_id, mid, ai_desc, pid)
+                        "UPDATE products SET image_file_id=?, channel_msg_id=?, "
+                        "channel_msg_ids=?, description=? WHERE id=?",
+                        (tg_file_id, mid, ids_json, ai_desc, pid)
                     )
                 else:
                     conn.execute(
-                        "UPDATE products SET image_file_id=?, channel_msg_id=? WHERE id=?",
-                        (tg_file_id, mid, pid)
+                        "UPDATE products SET image_file_id=?, channel_msg_id=?, "
+                        "channel_msg_ids=? WHERE id=?",
+                        (tg_file_id, mid, ids_json, pid)
                     )
                 conn.commit()
             finally:
@@ -267,9 +448,9 @@ def _cors_headers(request: web.Request = None) -> dict:
     if request is not None:
         req_origin = request.headers.get("Origin", "") or ""
     
-    # /api/img/* endpoint'lar uchun public resource — CORS permissive
+    # /api/img/* va /api/shop/* — OCHIQ resurslar (sayt uchun), CORS erkin
     req_path = request.path if request else ""
-    if req_path.startswith("/api/img/"):
+    if req_path.startswith("/api/img/") or req_path.startswith("/api/shop/"):
         # Rasm public resource — barcha origin'lardan access
         allow = req_origin if req_origin else "*"
     elif _is_origin_allowed(req_origin, request):
@@ -302,6 +483,10 @@ async def cors_middleware(request: web.Request, handler):
         e.headers.update(_cors_headers(request))
         raise
     except Exception:
+        # Ilgari xato JIM yutilardi — 500 qaytardi-yu, logda hech nima yo'q edi.
+        # Nosozlikni topish uchun to'liq izni yozamiz (foydalanuvchiga baribir
+        # faqat umumiy xabar ketadi).
+        logger.exception("💥 So'rovda xato: %s %s", request.method, request.path)
         body = _json.dumps({"ok": False, "error": "server error"})
         return web.Response(
             status=500, body=body, content_type="application/json",
@@ -413,6 +598,12 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         "price_usd": usd,
         "price_sum": summ,
         "image_url": p.get("image_url", "") or "",
+        # ASL (foni kesilmagan) rasm — mijoz "asl rasm"ni ko'ra olishi uchun.
+        # Brendlanmagan eski tovarlarda bo'sh bo'ladi.
+        "image_orig_url": p.get("image_orig_url", "") or "",
+        # "Qayerda ishlatiladi" — Mini App kartochkasida ham ko'rsatiladi.
+        "usage_tags": [t.strip() for t in (p.get("usage_tags") or "").split(",")
+                       if t.strip()],
         "has_image": bool(p.get("image_file_id") or p.get("image_url")),
         "category_id": int(p.get("category_id") or 0),
     }
@@ -627,6 +818,103 @@ async def api_products(request: web.Request):
     })
 
 
+# ─── OCHIQ katalog (do'kon sayti uchun) ─────────────────────────────────────
+# Saytga login shart emas: bu ma'lumot allaqachon Telegram kanalida ochiq
+# (nom, narx, rasm, qoldiq). MAXFIY hech narsa berilmaydi — tannarx, optom
+# narx, yetkazib beruvchi, mijoz ma'lumotlari bu yerga TUSHMAYDI.
+
+_shop_cache = {"at": 0.0, "items": [], "cats": [],
+               "all_products": 0, "all_categories": 0}
+_SHOP_TTL = 60          # sekund: baza har so'rovda o'qilmasin
+
+
+async def _shop_data(db):
+    """Katalogni tayyorlaydi va 60 soniya keshda saqlaydi."""
+    now = time.time()
+    if now - _shop_cache["at"] < _SHOP_TTL and _shop_cache["items"]:
+        return _shop_cache["items"], _shop_cache["cats"]
+
+    prods = await db.get_all_products(active_only=True)
+    cat_rows = await db.get_all_categories()
+    cats = {c["id"]: c["name"] for c in cat_rows}
+    # Saytdagi "bo'limlar" ro'yxati — BUTUN do'kon bo'yicha (rasmlilar emas).
+    all_cats = [{"name": c["name"], "count": int(c.get("product_count") or 0)}
+                for c in cat_rows if int(c.get("product_count") or 0) > 0]
+    all_cats.sort(key=lambda x: -x["count"])
+    items = []
+    for p in prods:
+        if not (p.get("image_url") or ""):
+            continue                      # rasmsiz tovar saytda ko'rinmaydi
+        qty = float(p.get("qty", 0) or 0)
+        items.append({
+            "id": p["id"],
+            "name": (p.get("display_name") or p.get("name") or "").strip(),
+            "price": float(p.get("sell_price", 0) or 0),
+            "unit": p.get("unit", "dona"),
+            "qty": qty,
+            "image": p.get("image_url", ""),
+            "image_orig": p.get("image_orig_url", "") or "",
+            "category": cats.get(int(p.get("category_id") or 0), ""),
+            "tags": [t.strip() for t in (p.get("usage_tags") or "").split(",")
+                     if t.strip()],
+            "description": (p.get("description") or "").strip(),
+        })
+    items.sort(key=lambda x: (x["qty"] <= 0, -x["id"]))   # avval mavjudlari
+    used = {}
+    for it in items:
+        if it["category"]:
+            used[it["category"]] = used.get(it["category"], 0) + 1
+    cat_list = [{"name": n, "count": k} for n, k in
+                sorted(used.items(), key=lambda x: -x[1])]
+    # Saytdagi raqamlar butun do'kon bo'yicha bo'lsin: rasmli tovar 84 ta,
+    # lekin katalogda mingdan ortiq nom bor — "84 ta tovar" deyish do'konni
+    # kichraytirib ko'rsatadi.
+    _shop_cache.update({"at": now, "items": items, "cats": cat_list,
+                        "all_cats": all_cats,
+                        "all_products": len(prods),
+                        "all_categories": len(cats)})
+    return items, cat_list
+
+
+@ROUTES.get("/api/shop/catalog")
+async def api_shop_catalog(request: web.Request):
+    """Ochiq katalog: sayt shu manzildan tovarlarni oladi (login kerak emas)."""
+    from database.channel_db import db as _db
+    items, cats = await _shop_data(_db)
+
+    q = (request.query.get("q") or "").strip().lower()
+    cat = (request.query.get("category") or "").strip()
+    if q:
+        items = [i for i in items
+                 if q in i["name"].lower() or q in i["category"].lower()
+                 or any(q in t.lower() for t in i["tags"])]
+    if cat:
+        items = [i for i in items if i["category"] == cat]
+
+    try:
+        page = max(0, int(request.query.get("page", "0") or 0))
+        size = min(60, max(6, int(request.query.get("limit", "24") or 24)))
+    except ValueError:
+        page, size = 0, 24
+    total = len(items)
+    chunk = items[page * size:(page + 1) * size]
+    return web.json_response({
+        "ok": True, "total": total, "page": page,
+        "has_more": (page + 1) * size < total,
+        "categories": cats, "all_categories": _shop_cache.get("all_cats", []),
+        "items": chunk,
+        "stats": {"products": _shop_cache.get("all_products", 0),
+                  "categories": _shop_cache.get("all_categories", 0),
+                  "with_photo": len(_shop_cache.get("items") or [])},
+        "shop": {
+            "name": "Chinor",
+            "phones": [x for x in (CONTACT_PHONE_1, CONTACT_PHONE_2) if x],
+            "location": SHOP_LOCATION,
+            "bot": _db._bot_username or "",
+        },
+    })
+
+
 @ROUTES.get(r"/api/product/{pid:\d+}")
 async def api_product_detail(request: web.Request):
     from database.channel_db import db as _db
@@ -644,7 +932,15 @@ async def api_product_detail(request: web.Request):
     ctype = "dona"
     if role == "client":
         ctype = (auth["user"].get("client_type") or "dona").lower()
-    return web.json_response({"ok": True, "product": _product_json(p, role, ctype)})
+    out = _product_json(p, role, ctype)
+    # Bo'lim nomi — Mini App kartochkasida ko'rsatiladi (id o'zi hech nima demaydi).
+    if out.get("category_id"):
+        try:
+            cat = await _db.get_category(out["category_id"])
+            out["category_name"] = (cat or {}).get("name", "")
+        except Exception:
+            out["category_name"] = ""
+    return web.json_response({"ok": True, "product": out})
 
 
 # ─── Mahsulot CRUD (admin) ──────────────────────────────────────────────────
@@ -732,7 +1028,9 @@ async def api_product_save(request: web.Request):
     p = await _db.get_product_any(new_id)
 
     # Saqlashdan keyin kanalga yuborish (rasm bo'lsa)
-    asyncio.ensure_future(_post_product_to_channel(_db, p or {}, new_id))
+    # Rasm bo'lsa darrov e'lon qilamiz; rasm keyin yuklansa — `_enrich_product`
+    # o'zi yuboradi (takror bo'lmasligi uchun `_last_post` tekshiriladi).
+    asyncio.ensure_future(_post_debounced(_db, p or {}, new_id))
 
     return web.json_response({"ok": True, "id": new_id,
                               "product": _product_json(p, "admin", "dona")})
@@ -1259,7 +1557,8 @@ async def api_product_image(request: web.Request):
                 file_ext = ".jpg" if e == ".jpeg" else e
                 break
 
-    fname = f"prod_{pid or 'new'}_{int(time.time())}{file_ext}"
+    stamp = int(time.time())
+    fname = f"prod_{pid or 'new'}_{stamp}{file_ext}"
     fpath = os.path.join(UPLOAD_DIR, fname)
     try:
         os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -1270,18 +1569,295 @@ async def api_product_image(request: web.Request):
         logger.error(f"📸 Saqlanmadi: {e}")
         return _err(f"Saqlanmadi: {e}", 500)
 
-    url = f"/api/img/{fname}"
+    url = orig_url = f"/api/img/{fname}"
+
+    # ── Brendlash: fonni kesib, och yashil fonga + logotip ────────────────
+    # ASL rasm o'chirilmaydi — u `image_orig_url` bo'lib qoladi. Kesish
+    # yiqilsa (rembg yo'q / model yuklanmadi) asl rasm asosiy bo'lib qolaveradi.
+    brand_info = {"ok": False, "cut": False}
+    try:
+        from bot import imageproc
+        # Tovarda teg/bo'lim ALLAQACHON bo'lsa — darrov to'g'ri sahna va
+        # lenta bilan chizamiz (aks holda rasm avval "umumiy" fonda chiqib,
+        # keyin qayta chizilardi).
+        tags0, cat0 = [], ""
+        if pid:
+            p0 = await _db.get_product_any(pid)
+            if p0:
+                tags0 = [t.strip() for t in (p0.get("usage_tags") or "").split(",")
+                         if t.strip()]
+                if p0.get("category_id"):
+                    c0 = await _db.get_category(int(p0["category_id"]))
+                    cat0 = (c0 or {}).get("name", "")
+        bname = f"prod_{pid or 'new'}_{stamp}_br.jpg"
+        loop = asyncio.get_running_loop()
+        # ALOHIDA jarayonda: sifatli model (u2net) 400+ MB oladi, lekin
+        # jarayon tugashi bilan xotira qaytadi — bot 1 GB serverda yashaydi.
+        brand_info = await loop.run_in_executor(
+            None, lambda: imageproc.brand_file_isolated(
+                fpath, os.path.join(UPLOAD_DIR, bname), tags0, cat0))
+        if brand_info.get("ok"):
+            url = f"/api/img/{bname}"
+            if pid:
+                _drop_old_branded(pid, bname)   # eski nusxa disk egallamasin
+            logger.info(f"🖼 Brendlandi (fon kesildi: {brand_info.get('cut')}): {url}")
+    except Exception as e:
+        logger.warning(f"🖼 Brendlash o'tkazib yuborildi: {e}")
+
     if pid:
         try:
-            await _db.update_product(pid, image_url=url, image_file_id="")
+            await _db.update_product(pid, image_url=url,
+                                     image_orig_url=orig_url, image_file_id="")
             logger.info(f"📸 Database'ga saqland'i: pid={pid}, url={url}")
         except Exception as e:
             logger.error(f"📸 Bazaga yozilmadi: {e}")
             return _err(f"Bazaga yozilmadi: {e}", 500)
+        # Fon rejimida: bo'lim + "qayerda ishlatiladi" teglari aniqlanadi va
+        # rasm o'sha teglar bilan qayta chizib chiqiladi. Rasm yuklash javobi
+        # AI ni kutib turmasin (u 5-20 soniya olishi mumkin) — admin darrov
+        # brendlangan rasmni ko'radi, teglar bir necha soniyada qo'shiladi.
+        asyncio.ensure_future(_enrich_product(pid, fpath))
     else:
         logger.warning("📸 pid=0, rasm saqland'i lekin database'ga yozilmadi")
     logger.info(f"📸 Yuklash muvaffaqiyatli: {url}")
-    return web.json_response({"ok": True, "image_url": url})
+    return web.json_response({"ok": True, "image_url": url,
+                              "image_orig_url": orig_url,
+                              "branded": bool(brand_info.get("ok")),
+                              "bg_removed": bool(brand_info.get("cut"))})
+
+
+async def _auto_categorize(pid: int, image_path: str = "", force: bool = False):
+    """Fon vazifasi: kategoriyasi yo'q tovarga rasm bo'yicha kategoriya qo'yadi.
+
+    Jim ishlaydi — yiqilsa rasm yuklash baribir muvaffaqiyatli hisoblanadi.
+    """
+    from database.channel_db import db as _db
+    from bot import ai_category
+    try:
+        p = await _db.get_product_any(pid)
+        if not p:
+            return
+        if not force and int(p.get("category_id") or 0):
+            return          # admin qo'lda qo'ygan — AI ustidan yozmaydi
+        await ai_category.apply_to_product(
+            _db, pid, p.get("name", "") or "", image_path)
+    except Exception as e:
+        logger.warning(f"🏷 Avto-kategoriya bo'lmadi (#{pid}): {e}")
+
+
+async def _rebrand_with_tags(pid: int, tags: list) -> str:
+    """Rasmni "qayerda ishlatiladi" lentasi bilan qayta chizadi.
+
+    Har safar ASL rasmdan boshlanadi — qayta-qayta chizilsa ham sifat
+    pasaymaydi va lenta ikki marta tushmaydi.
+    """
+    from database.channel_db import db as _db
+    from bot import imageproc
+    p = await _db.get_product_any(pid)
+    if not p:
+        return ""
+    src = _img_path(p.get("image_orig_url") or p.get("image_url") or "")
+    if not src:
+        return ""
+    cat_name = ""
+    if p.get("category_id"):
+        cat = await _db.get_category(int(p["category_id"]))
+        cat_name = (cat or {}).get("name", "")
+    bname = f"prod_{pid}_{int(time.time())}_br.jpg"
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(
+        None, lambda: imageproc.brand_file_isolated(
+            src, os.path.join(UPLOAD_DIR, bname), tags, cat_name))
+    if not info.get("ok"):
+        return ""
+    url = f"/api/img/{bname}"
+    await _db.update_product(pid, image_url=url,
+                             image_orig_url=p.get("image_orig_url") or "")
+    _drop_old_branded(pid, bname)
+    return url
+
+
+_last_post: dict = {}          # pid → oxirgi kanal posti vaqti (takrorlanmasin)
+
+
+async def _post_debounced(db, p: dict, pid: int, gap: int = 30):
+    """Kanalga e'lon — yaqin oradagi takroriy chaqiruvni o'tkazib yuboradi.
+
+    Tovarni saqlash ham, rasm yuklash ham e'lon qilishi mumkin; ikkalasi
+    ketma-ket kelsa kanalda ikki marta post-o'chirish sodir bo'lardi.
+    """
+    now = time.time()
+    if now - _last_post.get(pid, 0) < gap:
+        return
+    _last_post[pid] = now
+    await _post_product_to_channel(db, p, pid)
+
+
+async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
+    """Rasm yuklangandan keyingi TO'LIQ oqim (fon rejimida):
+
+        bo'lim aniqlash → «qayerda ishlatiladi» teglari → rasmni sahnaga
+        qo'yib qayta chizish → KANALGA e'lon.
+
+    Kanalga e'lon aynan shu yerda, ENG OXIRIDA yuboriladi: shunda postga
+    tayyor rasm, to'g'ri bo'lim va teglar tushadi. (Ilgari post tovar
+    saqlanganda ketardi — o'shanda rasm hali yuklanmagan bo'lardi va yangi
+    tovar kanalga UMUMAN chiqmasdi.)
+
+    Jim ishlaydi: biror bosqich yiqilsa qolgani baribir bajariladi.
+    """
+    from database.channel_db import db as _db
+    from bot import ai_category
+    try:
+        await _auto_categorize(pid, image_path)
+    except Exception as e:
+        logger.warning(f"🏷 Avto-kategoriya bo'lmadi (#{pid}): {e}")
+
+    try:
+        p = await _db.get_product_any(pid)
+        if not p:
+            return
+        tags = [t.strip() for t in (p.get("usage_tags") or "").split(",")
+                if t.strip()]
+        if not tags:
+            cat_name = ""
+            if p.get("category_id"):
+                cat = await _db.get_category(int(p["category_id"]))
+                cat_name = (cat or {}).get("name", "")
+            loop = asyncio.get_running_loop()
+            tags = await loop.run_in_executor(
+                None, ai_category.usage_tags,
+                p.get("name", "") or "", image_path, cat_name)
+            if tags:
+                await _db.update_product(pid, usage_tags=", ".join(tags))
+                # Teglar YANGI aniqlandi — rasmni ular bilan qayta chizamiz.
+                if await _rebrand_with_tags(pid, tags):
+                    logger.info(f"🖼 Lenta+sahna (#{pid}): {', '.join(tags)}")
+    except Exception as e:
+        logger.warning(f"🏷 Teglar qo'shilmadi (#{pid}): {e}")
+
+    if not post:
+        return
+    # ── Kanalga e'lon (tayyor rasm bilan) ─────────────────────────────────
+    try:
+        now = time.time()
+        if now - _last_post.get(pid, 0) < 30:
+            return                       # yaqinda yuborilgan — takrorlamaymiz
+        p = await _db.get_product_any(pid)
+        if not p or not (p.get("image_url") or ""):
+            return
+        _last_post[pid] = now
+        await _post_product_to_channel(_db, p, pid)
+    except Exception as e:
+        logger.warning(f"📢 Kanalga yuborilmadi (#{pid}): {e}")
+
+
+def _drop_old_branded(pid: int, keep: str):
+    """Shu tovarning ESKI brendlangan nusxalarini o'chiradi (disk to'lmasin).
+
+    Faqat `prod_<pid>_*_br.jpg` naqshiga tushadigan fayllar o'chadi — ASL
+    rasmga hech qachon tegilmaydi, chunki brendlangani asldan istalgan vaqtda
+    qayta yasaladi, asl esa qayta tiklanmaydi.
+    """
+    keep = os.path.basename(keep or "")
+    try:
+        for f in os.listdir(UPLOAD_DIR):
+            if (f.startswith(f"prod_{pid}_") and f.endswith("_br.jpg")
+                    and f != keep):
+                try:
+                    os.remove(os.path.join(UPLOAD_DIR, f))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def _img_path(url: str) -> str:
+    """'/api/img/xxx.jpg' → diskdagi to'liq yo'l ('' — noto'g'ri/tashqi manzil)."""
+    name = os.path.basename((url or "").split("?")[0])
+    if not name:
+        return ""
+    p = os.path.realpath(os.path.join(UPLOAD_DIR, name))
+    return p if p.startswith(UPLOAD_DIR) and os.path.isfile(p) else ""
+
+
+@ROUTES.post("/api/product/categorize")
+async def api_product_categorize(request: web.Request):
+    """Bitta tovar bo'limini AI bilan (rasmga qarab) qayta aniqlaydi.
+
+    Admin Mini App'dan "🏷 Bo'limni aniqla" tugmasini bosganda ishlaydi —
+    noto'g'ri joyga tushgan tovarni bitta bosishda tuzatish uchun.
+    """
+    from database.channel_db import db as _db
+    from bot import ai_category
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    pid = int(body.get("id") or 0)
+    if not pid:
+        return _err("ID yo'q")
+    p = await _db.get_product_any(pid)
+    if not p:
+        return _err("Mahsulot topilmadi", 404)
+    # Kesilmagan ASL rasm AI uchun ma'lumotliroq (fon ham kontekst beradi).
+    img = _img_path(p.get("image_orig_url") or p.get("image_url") or "")
+    cat = await ai_category.apply_to_product(
+        _db, pid, p.get("name", "") or "", img)
+    if not cat:
+        return web.json_response({"ok": True, "category": "",
+                                  "msg": "AI aniq javob bermadi"})
+    # `image_sent` — rasm AI ga BERILDI degani. Rasm modellari yiqilgan bo'lsa
+    # ai_engine o'zi nomdan javob berishga o'tadi, buni bu yerdan bilib
+    # bo'lmaydi — shuning uchun "rasmga qarab aniqladi" deb va'da bermaymiz.
+    return web.json_response({"ok": True, "category": cat,
+                              "image_sent": bool(img)})
+
+
+@ROUTES.post("/api/product/rebrand")
+async def api_product_rebrand(request: web.Request):
+    """Mavjud rasmni qayta brendlaydi (fon kesish + och yashil fon + logotip).
+
+    Asl rasm saqlanib qoladi; qayta-qayta brendlansa ham sifat pasaymaydi,
+    chunki har safar ASLIDAN boshlanadi.
+    """
+    from database.channel_db import db as _db
+    from bot import imageproc
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    pid = int(body.get("id") or 0)
+    if not pid:
+        return _err("ID yo'q")
+    p = await _db.get_product_any(pid)
+    if not p:
+        return _err("Mahsulot topilmadi", 404)
+
+    src_url = p.get("image_orig_url") or p.get("image_url") or ""
+    src = _img_path(src_url)
+    if not src:
+        return _err("Rasm yo'q")
+
+    # Saqlangan "qayerda ishlatiladi" teglari va bo'lim (sahna uchun).
+    tags = [t.strip() for t in (p.get("usage_tags") or "").split(",") if t.strip()]
+    cat_name = ""
+    if p.get("category_id"):
+        cat = await _db.get_category(int(p["category_id"]))
+        cat_name = (cat or {}).get("name", "")
+    bname = f"prod_{pid}_{int(time.time())}_br.jpg"
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(
+        None, lambda: imageproc.brand_file_isolated(
+            src, os.path.join(UPLOAD_DIR, bname), tags, cat_name))
+    if not info.get("ok"):
+        return _err("Brendlash bo'lmadi: " + (info.get("error") or "noma'lum"))
+    url = f"/api/img/{bname}"
+    await _db.update_product(pid, image_url=url, image_orig_url=src_url)
+    _drop_old_branded(pid, bname)
+    return web.json_response({"ok": True, "image_url": url,
+                              "image_orig_url": src_url,
+                              "bg_removed": bool(info.get("cut"))})
 
 
 @ROUTES.get(r"/api/img/{name}")

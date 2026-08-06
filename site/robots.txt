@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://chinor-ag6.pages.dev/sitemap.xml

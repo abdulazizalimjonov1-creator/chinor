@@ -8,6 +8,14 @@ openpyxl==3.1.2
 pyzbar==0.1.9
 Pillow>=10.0.0
 
+# Rasm fonini kesish (katalog rasmlarini brendlash — bot/imageproc.py).
+# IXTIYORIY: o'rnatilmasa bot normal ishlaydi, faqat fon KESILMAYDI —
+# rasm shunchaki och yashil fon + logotip bilan kvadratga solinadi.
+# Model `u2netp` (~4.6 MB) birinchi ishlatishda DATA_DIR/.u2net ga yuklanadi.
+# DIQQAT: `rembg` paketi ISHLATILMAYDI — u aynan shu modelni chaqiradi, lekin
+# numba/scikit-image tortib 1 GB li serverda botni OOM qiladi.
+onnxruntime>=1.17
+
 # AI analitika (Google Gemini). Ixtiyoriy — kalit bo'lmasa, bot ushbu paket
 # o'rnatilmasa ham normal ishlaydi, faqat '🤖 AI Analitika' tugmasi o'chiq turadi.
 google-generativeai>=0.7.0

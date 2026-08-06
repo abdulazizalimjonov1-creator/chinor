@@ -618,6 +618,15 @@
         }
 
         let _curProduct = null;   // detal ekranida ko'rilayotgan mahsulot
+        let _catsMap = null;      // {id: nom} — bo'lim nomini ko'rsatish uchun
+
+        async function ensureCats() {
+            if (_catsMap) return _catsMap;
+            _catsMap = {};
+            const { ok, data } = await apiFetch('/api/categories');
+            if (ok && data.ok) (data.categories || []).forEach(c => _catsMap[c.id] = c.name);
+            return _catsMap;
+        }
 
         function showProductDetail(p) {
             _curProduct = p;
@@ -625,7 +634,13 @@
             const low = p.qty <= 0;
             let html = '';
             if (p.image_url) {
-                html += `<img class="detail-img" id="detailImg" alt="" style="display:none">`;
+                html += `<img class="detail-img" id="detailImg" alt="" style="display:none"
+                              onclick="clZoomImg(this.src)">`;
+                // Asl (foni kesilmagan) rasm ham bo'lsa — ko'rish tugmasi
+                if (p.image_orig_url && p.image_orig_url !== p.image_url) {
+                    html += `<button class="orig-img-btn"
+                        onclick="clZoomImg('${fullImg(p.image_orig_url)}')">📷 Asl rasmni ko'rish</button>`;
+                }
             }
             html += `<div class="stat-block">`;
             html += `<h3>${escapeHtml(p.name)}</h3>`;
@@ -636,6 +651,8 @@
             if (p.barcode)
                 html += `<div class="stat-row"><span class="lbl">🔖 Shtrix-kod</span><span class="val">${escapeHtml(p.barcode)}</span></div>`;
             html += `<div class="stat-row"><span class="lbl">🆔 ID</span><span class="val">${p.id}</span></div>`;
+            html += `<div class="stat-row"><span class="lbl">🗂 Bo'lim</span>
+                     <span class="val" id="detailCat">${p.category_id ? '…' : '—'}</span></div>`;
             if (isAdmin && p.cost_price_sum != null) {
                 html += `<div class="stat-row"><span class="lbl">🏷 Tannarx</span><span class="val">${fmtSum(p.cost_price_sum)} so'm</span></div>`;
                 if (p.wholesale_sum)
@@ -648,11 +665,57 @@
                     <button class="act-btn act-qty" onclick="prodQty(${p.id})">📦 Prixod</button>
                     <button class="act-btn act-del" onclick="prodDelete(${p.id})">🗑</button>
                 </div>`;
+                // AI amallari: bo'limni rasmga qarab aniqlash va rasmni qayta
+                // brendlash (fonni kesish). Ikkalasi ham asl rasmni saqlab qoladi.
+                html += `<div class="detail-actions" style="margin-top:8px">
+                    <button class="act-btn act-qty" id="btnAiCat"
+                        onclick="prodCategorize(${p.id})">🏷 Bo'limni aniqla (AI)</button>`;
+                if (p.image_url)
+                    html += `<button class="act-btn act-qty" id="btnRebrand"
+                        onclick="prodRebrand(${p.id})">🖼 Rasmni tozalash</button>`;
+                html += `</div>`;
             }
             $('prodDetailBody').innerHTML = html;
             if (p.image_url) setImgSrc($('detailImg'), p.image_url);
+            if (p.category_id) ensureCats().then(m => {
+                const el = $('detailCat');
+                if (el) el.textContent = m[p.category_id] || '—';
+            });
             showScreen('screenProdDetail');
         }
+
+        // Bo'limni AI bilan aniqlash — rasm bo'lsa RASMGA qarab, bo'lmasa nomdan.
+        window.prodCategorize = async function (id) {
+            const btn = $('btnAiCat');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ AI ko\'ryapti...'; }
+            const { ok, data } = await apiFetch('/api/product/categorize', {
+                method: 'POST', body: JSON.stringify({ id })
+            });
+            if (btn) { btn.disabled = false; btn.textContent = '🏷 Bo\'limni aniqla (AI)'; }
+            if (!ok || !data.ok) { toast('❌ ' + ((data||{}).error || 'Xato')); return; }
+            if (!data.category) { toast('🤔 AI aniq javob bermadi'); return; }
+            _catsMap = null;                       // yangi bo'lim qo'shilgan bo'lishi mumkin
+            const el = $('detailCat');
+            if (el) el.textContent = data.category;
+            toast((data.image_sent ? '📷 ' : '🏷 ') + data.category);
+        };
+
+        // Rasmni qayta brendlash — har safar ASL rasmdan boshlanadi.
+        window.prodRebrand = async function (id) {
+            const btn = $('btnRebrand');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Tozalanmoqda...'; }
+            const { ok, data } = await apiFetch('/api/product/rebrand', {
+                method: 'POST', body: JSON.stringify({ id })
+            });
+            if (btn) { btn.disabled = false; btn.textContent = '🖼 Rasmni tozalash'; }
+            if (!ok || !data.ok) { toast('❌ ' + ((data||{}).error || 'Xato')); return; }
+            if (_curProduct && _curProduct.id === id) {
+                _curProduct.image_url = data.image_url;
+                _curProduct.image_orig_url = data.image_orig_url;
+            }
+            setImgSrc($('detailImg'), data.image_url + '?t=' + Date.now());
+            toast(data.bg_removed ? '✅ Fon kesildi' : '✅ Fon qo\'yildi (kesilmadi)');
+        };
 
         // ====== Mahsulot formasi (qo'shish / tahrirlash) ======
         let _editingId = 0;
@@ -781,8 +844,15 @@
                 // Mavjud mahsulot — darrov serverga yuklaymiz
                 $('pfStatus').textContent = '⏳ Rasm yuklanmoqda...';
                 const r = await _uploadProductImage(_editingId, file);
+                if (r.ok) {
+                    // Server fonni kesib, brend fonga qo'ygan bo'lishi mumkin —
+                    // shuni ko'rsatamiz, admin natijani darrov ko'rsin.
+                    setImgSrc($('prodImgPreview'), r.url + '?t=' + Date.now());
+                    $('prodImgPlaceholder').style.display = 'none';
+                }
                 $('pfStatus').textContent = r.ok
-                    ? '✅ Rasm yuklandi'
+                    ? (r.bgRemoved ? '✅ Rasm yuklandi — foni kesildi'
+                                   : '✅ Rasm yuklandi')
                     : ('❌ Rasm yuklanmadi: ' + r.error);
             } else {
                 // Yangi mahsulot — saqlashdan keyin yuklash uchun saqlab qo'yamiz
@@ -839,7 +909,9 @@
                 console.log('🟢 API javob:', {status: resp.status, statusText: resp.statusText});
                 const data = await resp.json().catch(() => ({}));
                 console.log('📦 API ma\'lumot:', data);
-                if (data && data.ok) return { ok: true, url: data.image_url };
+                if (data && data.ok) return { ok: true, url: data.image_url,
+                                              origUrl: data.image_orig_url || '',
+                                              bgRemoved: !!data.bg_removed };
                 return { ok: false, error: (data && data.error) || ('HTTP ' + resp.status) };
             } catch (e) {
                 console.error('❌ Rasm yuklash xatosi:', e);
@@ -1310,16 +1382,42 @@
             if (more) more.style.display = (data.has_more) ? '' : 'none';
         }
 
+        // Rasmni to'liq ekranda ochish (kartochkadagi rasm kichik — yorliqdagi
+        // yozuvni o'qish uchun kattalashtirish kerak bo'ladi).
+        window.clZoomImg = function(src) {
+            if (!src) return;
+            const z = document.createElement('div');
+            z.className = 'cl-zoom';
+            z.innerHTML = `<img src="${src}">`;
+            z.addEventListener('click', () => z.remove());
+            document.body.appendChild(z);
+        };
+
         window.clOpenProduct = async function(pid) {
             const { ok, data } = await apiFetch(`/api/product/${pid}`);
             if (!ok || !data.ok) return;
             const p = data.product;
             const url = p.image_url ? API_BASE_URL + p.image_url : '';
+            // Asl rasm — foni kesilmagani. Ikkalasi bor bo'lsa o'tkazgich chiqadi:
+            // mijoz tovar haqiqatda qanday ekanini ko'ra olsin.
+            const origUrl = (p.image_orig_url && p.image_orig_url !== p.image_url)
+                ? API_BASE_URL + p.image_orig_url : '';
             const overlay = document.createElement('div');
             overlay.className = 'cl-modal-overlay';
             overlay.innerHTML = `<div class="cl-modal" style="position:relative">
                 <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
-                ${url ? `<img class="cl-modal-img" src="${url}">` : '<div style="height:60px"></div>'}
+                ${url ? `<img class="cl-modal-img" id="clModalImg" src="${url}"
+                              onclick="clZoomImg(this.src)">`
+                      : '<div style="height:60px"></div>'}
+                ${(url && origUrl) ? `<div class="cl-img-tabs">
+                    <button class="cl-img-tab active" onclick="clSwitchImg(this,'${url}')">🖼 Katalog rasmi</button>
+                    <button class="cl-img-tab" onclick="clSwitchImg(this,'${origUrl}')">📷 Asl rasm</button>
+                </div>` : ''}
+                ${p.category_name ? `<div style="display:inline-block;background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;margin-bottom:8px">🗂 ${escapeHtml(p.category_name)}</div>` : ''}
+                ${(p.usage_tags && p.usage_tags.length) ? `<div class="cl-usage">
+                    <span class="cl-usage-lbl">🔧 Qayerda ishlatiladi</span>
+                    <span>${p.usage_tags.map(t => `<b>${escapeHtml(t)}</b>`).join(' · ')}</span>
+                </div>` : ''}
                 <div class="cl-modal-name">${p.name}</div>
                 <div class="cl-modal-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                 ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
@@ -1328,6 +1426,13 @@
             </div>`;
             overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
             document.body.appendChild(overlay);
+        };
+
+        window.clSwitchImg = function(btn, src) {
+            const img = $('clModalImg');
+            if (img) img.src = src;
+            btn.parentNode.querySelectorAll('.cl-img-tab')
+               .forEach(b => b.classList.toggle('active', b === btn));
         };
 
         // AI Chat

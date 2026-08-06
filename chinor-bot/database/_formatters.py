@@ -1,5 +1,7 @@
 """Kanalga yuboriladigan chiroyli postlar uchun format funksiyalari."""
 
+import os
+
 from database._helpers import fmt_usd, fmt_sum
 
 
@@ -24,11 +26,66 @@ def _channel_footer() -> str:
         lines.append(f"📞 {CONTACT_PHONE_2}")
     if SHOP_LOCATION:
         lines.append(f"📍 {SHOP_LOCATION}")
+    # Sayt havolasi — mijoz do'kon haqida to'liq ma'lumotni ko'radi, qidiruv
+    # tizimlari uchun esa bu ishonchli havola (saytning o'rni ko'tariladi).
+    site = os.getenv("SHOP_SITE", "https://chinor-ag6.pages.dev").strip()
+    if site:
+        lines.append(f"🌐 {site}")
     lines.append("#chinor #chinormarket")
     return "\n".join(lines)
 
 
-def _fmt_product(p: dict, ai_desc: str = "") -> str:
+# Bo'lim → emoji. Postning birinchi belgisi bo'lim nimaligini bir qarashda
+# aytadi; kanal lentasi bir xil "🛍" bilan bir xil bo'lib ketmaydi.
+_CAT_EMOJI = {
+    "elektr asboblar": "🔌", "elektr mollari": "💡", "santexnika": "🚿",
+    "bo'yoq va lak": "🎨", "qurilish aralashmasi": "🧱",
+    "sochma material": "⛏", "mahkamlagichlar": "🔩", "asboblar": "🛠",
+    "eshik va deraza": "🚪", "isitish va gaz": "🔥", "maishiy texnika": "🔋",
+    "oshxona buyumlari": "🍽", "uy-ro'zg'or": "🏠",
+    "tozalash vositalari": "🧴", "shaxsiy parvarish": "🧼",
+    "ish kiyimi va himoya": "🦺",
+}
+
+
+def _cat_emoji(p: dict) -> str:
+    return _CAT_EMOJI.get((p.get("category_name") or "").strip().lower(), "🛍")
+
+
+def _cat_tag(p: dict) -> str:
+    """Bo'lim nomidan hashtag — kanalda qidirish/filtrlash uchun.
+
+    Telegram hashtagida bo'shliq va apostrof bo'lmaydi, shuning uchun
+    "Bo'yoq va lak" → #boyoq_va_lak.
+    """
+    name = (p.get("category_name") or "").strip().lower()
+    if not name:
+        return ""
+    tr = str.maketrans({"'": "", "‘": "", "’": "", "`": "", "-": "_", " ": "_"})
+    tag = name.translate(tr)
+    tag = "".join(ch for ch in tag if ch.isalnum() or ch == "_")
+    return f" #{tag}" if tag else ""
+
+
+def _stock_line(p: dict) -> str:
+    """Qoldiq holati — xaridorni shoshiltiradigan qator.
+
+    "Oxirgi 3 ta" yozuvi tovarni bugun olishga undaydi; tugagan tovarga esa
+    behuda telefon qilinmasin.
+    """
+    try:
+        qty = float(p.get("qty", 0) or 0)
+    except (TypeError, ValueError):
+        qty = 0
+    unit = p.get("unit", "dona")
+    if qty <= 0:
+        return "\n⛔️ <b>Hozircha tugagan</b> · нет в наличии"
+    if qty <= 3:
+        return f"\n🔥 <b>Oxirgi {qty:g} {unit}!</b> · осталось мало"
+    return f"\n✅ Mavjud: <b>{qty:g} {unit}</b>"
+
+
+def _fmt_product(p: dict, ai_desc: str = "", buy_url: str = "") -> str:
     """Kanalga yuboriladigan mahsulot postining kaptioni.
     Faqat so'm narxi ko'rsatiladi. AI tavsifi (o'zbek + rus) bo'lsa qo'shiladi.
     Pastiga doimo aloqa/marketing bloki (_channel_footer) qo'shiladi.
@@ -55,9 +112,27 @@ def _fmt_product(p: dict, ai_desc: str = "") -> str:
     pid = p.get("id", "")
     pid_line = f"\n🆔 #{pid}" if pid else ""
 
+    # Albomga (ikki rasmli post) Telegram tugma qo'yishga ruxsat bermaydi —
+    # shuning uchun "Sotib olish" havolasi kaptionning ichida beriladi.
+    buy_line = (f"\n\n🛒 <a href=\"{buy_url}\">Sotib olish / Купить</a>"
+                if buy_url else "")
+
+    # "Qayerda ishlatiladi" — xaridor tovar o'ziga keraKMI, shuni darrov biladi.
+    tags = [t.strip() for t in (p.get("usage_tags") or "").split(",") if t.strip()]
+    usage_line = f"\n🔧 Qayerda: <b>{' · '.join(tags[:3])}</b>" if tags else ""
+
+    # Mini App — butun katalogni ochadi (kanal postidan do'konga yo'l).
+    try:
+        from bot.config import MINI_APP_URL
+    except Exception:
+        MINI_APP_URL = ""
+    app_line = (f"\n🔎 <a href=\"{MINI_APP_URL}\">Butun katalog / Весь каталог</a>"
+                if MINI_APP_URL else "")
+
     return (
-        f"🛍 <b>{p['name']}</b>{desc_line}\n\n"
-        f"{price_line}{barcode_line}{pid_line}{active}"
+        f"{_cat_emoji(p)} <b>{p['name']}</b>{_cat_tag(p)}{desc_line}\n\n"
+        f"{price_line}{usage_line}{_stock_line(p)}{barcode_line}{pid_line}{active}"
+        f"{buy_line}{app_line}"
         f"{_channel_footer()}"
     )
 
