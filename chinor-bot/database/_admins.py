@@ -278,6 +278,65 @@ class AdminsMixin:
             finally:
                 conn.close()
 
+    async def add_staff_by_phone(self, phone: str, full_name: str, role: str,
+                                  added_by: int) -> Tuple[bool, str, Optional[dict]]:
+        """Xodimni telefon orqali qo'shadi va IMKONI BO'LSA darrov faollashtiradi.
+
+        Nima uchun: raqam bazada MIJOZ sifatida bo'lsa, uning telegram_id'si
+        allaqachon bizda bor — u holda "botga kirib kontakt yuborsin" deb
+        kutishning ma'nosi yo'q. Ilgari shunday holatda ham xodim
+        `pending_staff` da osilib turardi va odam nima qilishini bilmasdi.
+
+        Qaytaradi: (ok, sabab, admin)
+            sabab: 'promoted' — darrov faollashdi (admin dict qaytadi)
+                   'pending'  — raqam notanish, xodim botga kirishi kerak
+                   yoki xato kodi ('exists_admin', 'exists_pending', 'bad_phone')
+        """
+        ok, why = await self.add_pending_staff(phone, full_name, role, added_by)
+        if not ok:
+            return False, why, None
+        try:
+            client = await self.get_client_by_phone(phone)
+        except Exception:
+            client = None
+        tg_id = int((client or {}).get("telegram_id") or 0)
+        if not tg_id:
+            return True, "pending", None
+        admin = await self.promote_pending_staff(
+            phone, tg_id, full_name or (client or {}).get("shop_name") or "")
+        if not admin:
+            return True, "pending", None
+        await self._notify_new_staff(tg_id, admin)
+        return True, "promoted", admin
+
+    async def _notify_new_staff(self, tg_id: int, admin: dict) -> None:
+        """Yangi xodimga «siz xodim bo'ldingiz» xabarini yuboradi.
+
+        Nima uchun kerak: hisob jimgina ochilsa, odam bundan bexabar qoladi.
+        Telegram menyusi ham faqat /start bosilganda qayta chiziladi — shuning
+        uchun xabarda aynan shu aytiladi. Yuborilmasa (odam botni bloklagan
+        bo'lsa) — jim o'tkazib yuboriladi, xodim baribir qo'shilgan.
+        """
+        bot = getattr(self, "_bot", None)
+        if not bot or not tg_id:
+            return
+        try:
+            from bot.permissions import ROLE_LABELS
+            role_txt = ROLE_LABELS.get(admin.get("role", "full"), "🔰 Xodim")
+        except Exception:
+            role_txt = "🔰 Xodim"
+        try:
+            await bot.send_message(
+                int(tg_id),
+                "🎉 <b>Sizga Chinor tizimida xodim huquqi berildi</b>\n\n"
+                f"🎭 Rol: <b>{role_txt}</b>\n\n"
+                "📲 Menyuni yangilash uchun <b>/start</b> bosing — "
+                "yangi bo'limlar shundan keyin ko'rinadi.",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"[staff] xabar yuborilmadi ({tg_id}): {e}")
+
     async def get_pending_staff_by_phone(self, phone: str) -> Optional[dict]:
         norm = normalize_phone(phone)
         if not norm:

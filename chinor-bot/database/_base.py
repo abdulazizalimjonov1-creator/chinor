@@ -156,6 +156,17 @@ class BaseDB:
         # darrov javob topsin.
         if "usage_tags" not in prod_cols:
             conn.execute("ALTER TABLE products ADD COLUMN usage_tags TEXT DEFAULT ''")
+        # products.usage_info — «qanday ishlatiladi» qo'llanmasi (uz + ru).
+        # Internetdan (Google) izlab topilib, AI qisqartirgan matn. Kanal
+        # postiga javob xabar bo'lib ilinadi va Mini App kartochkasida chiqadi.
+        # Bir marta yoziladi va saqlanadi — har postda qayta izlanmaydi.
+        if "usage_info" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN usage_info TEXT DEFAULT ''")
+        # products.usage_comment — o'sha qo'llanma muhokama guruhida qaysi
+        # xabar bo'lib turgani ("chat_id:msg_id"). Post qayta e'lon qilinganda
+        # eski izoh o'chiriladi, aks holda guruh egasiz izohlarga to'lib ketadi.
+        if "usage_comment" not in prod_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN usage_comment TEXT DEFAULT ''")
         # products.display_name — MIJOZGA ko'rinadigan chiroyli nom.
         # Asl `name` tegilmaydi: kassa va xodimlar tovarni o'sha nom bilan
         # taniydi, imlosi qanday bo'lsa ham. Bo'sh bo'lsa `name` ishlatiladi.

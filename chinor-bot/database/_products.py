@@ -250,7 +250,7 @@ class ProductsMixin:
         "sell_price", "wholesale_price", "cost_price",
         "sell_price_usd", "wholesale_price_usd", "cost_price_usd",
         "qty", "unit", "image_file_id", "image_url", "image_orig_url",
-        "usage_tags", "barcode", "is_active",
+        "usage_tags", "usage_info", "usage_comment", "barcode", "is_active",
         "category_id", "supplier_id", "channel_msg_id",
     }
 

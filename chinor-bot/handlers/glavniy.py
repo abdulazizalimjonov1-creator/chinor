@@ -805,12 +805,24 @@ async def add_admin_phone(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     full_name = data.get("new_admin_name", "")
-    ok, reason = await db.add_pending_staff(
+    ok, reason, _admin = await db.add_staff_by_phone(
         phone=phone_txt, full_name=full_name,
         role="full", added_by=message.from_user.id
     )
     await state.clear()
-    if ok:
+    if ok and reason == "promoted":
+        # Raqam bazada mijoz sifatida bor edi — kutish shart bo'lmadi.
+        await message.answer(
+            f"✅ <b>Hodim qo'shildi va DARROV faollashdi</b>\n\n"
+            f"👨‍💼 <b>{full_name}</b>\n"
+            f"📱 {phone_txt}\n"
+            f"🎭 Rol: <b>👑 To'liq admin</b>\n\n"
+            f"<i>Bu raqam bazada mijoz sifatida bor edi, shuning uchun "
+            f"kontakt yuborish talab qilinmadi. Hodim botda <b>/start</b> "
+            f"bossa yangi menyuni ko'radi.</i>",
+            reply_markup=glavniy_menu(), parse_mode="HTML"
+        )
+    elif ok:
         await message.answer(
             f"✅ <b>Hodim qo'shildi (kutilmoqda)</b>\n\n"
             f"👨‍💼 <b>{full_name}</b>\n"

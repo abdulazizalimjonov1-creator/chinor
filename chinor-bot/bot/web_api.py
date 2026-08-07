@@ -297,6 +297,32 @@ async def _post_product_to_channel(db, p: dict, pid: int,
             new_ids = [msg.message_id]
         tg_file_id = msg.photo[-1].file_id
         mid = msg.message_id
+
+        # «Qanday ishlatiladi» — post ostiga IZOH bo'lib yoziladi (kanal
+        # lentasida alohida xabar bo'lib turmaydi). Izoh muhokama guruhi
+        # orqali ketadi: `comments` moduli guruhdagi nusxa kelishini kutadi.
+        # Kerak bo'lmasa .env da POST_USAGE_GUIDE=0 — qo'llanma bazada
+        # qolaveradi (Mini App va saytda ko'rinadi), lekin kanalga chiqmaydi.
+        info_txt = (p.get("usage_info") or "").strip()
+        if info_txt and os.getenv("POST_USAGE_GUIDE", "1").strip() != "0":
+            from bot import comments
+            await comments.drop(bot, p.get("usage_comment") or "")
+
+            def _save_ref(chat_id, msg_id, _pid=pid):
+                # `update_product` EMAS: u kanal kaptionini qayta yozib
+                # yuboradi (AI tavsifi va "Sotib olish" havolasi yo'qoladi).
+                from database._helpers import DB_PATH
+                conn = sqlite3.connect(DB_PATH, timeout=10)
+                try:
+                    conn.execute(
+                        "UPDATE products SET usage_comment=? WHERE id=?",
+                        (f"{chat_id}:{msg_id}", _pid))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            await comments.queue(bot, mid, info_txt, _save_ref)
+
         ids_json = _json.dumps(new_ids)
         # _refresh_product ni chaqirmaslik uchun to'g'ridan SQL ga yozamiz
         # AI tavsifini description ga ham saqlaymiz (bo'sh bo'lsa)
@@ -581,6 +607,13 @@ def _price_pair(p: dict, ctype: str) -> tuple:
     return float(p.get("sell_price_usd", 0) or 0), float(p.get("sell_price", 0) or 0)
 
 
+def _plain(html_text: str) -> str:
+    """Telegram HTML → oddiy matn (Mini App uni matn sifatida ko'rsatadi)."""
+    import html as _html
+    import re as _re
+    return _html.unescape(_re.sub(r"<[^>]+>", "", html_text or "")).strip()
+
+
 def _product_json(p: dict, role: str, ctype: str) -> dict:
     usd, summ = _price_pair(p, ctype)
     # Mijozga CHIROYLI nom (display_name), adminga ASL nom + ikkalasi ham.
@@ -604,6 +637,9 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         # "Qayerda ishlatiladi" — Mini App kartochkasida ham ko'rsatiladi.
         "usage_tags": [t.strip() for t in (p.get("usage_tags") or "").split(",")
                        if t.strip()],
+        # «Qanday ishlatiladi» qo'llanmasi — kanal posti uchun Telegram HTML
+        # shaklida saqlanadi; Mini App'ga oddiy matn bo'lib beriladi.
+        "usage_info": _plain(p.get("usage_info") or ""),
         "has_image": bool(p.get("image_file_id") or p.get("image_url")),
         "category_id": int(p.get("category_id") or 0),
     }
@@ -858,6 +894,8 @@ async def _shop_data(db):
             "tags": [t.strip() for t in (p.get("usage_tags") or "").split(",")
                      if t.strip()],
             "description": (p.get("description") or "").strip(),
+            # «Qanday ishlatiladi» — kanal postidagi bilan bir xil qo'llanma.
+            "usage_info": _plain(p.get("usage_info") or ""),
         })
     items.sort(key=lambda x: (x["qty"] <= 0, -x["id"]))   # avval mavjudlari
     used = {}
@@ -1678,6 +1716,7 @@ async def _rebrand_with_tags(pid: int, tags: list) -> str:
 
 
 _last_post: dict = {}          # pid → oxirgi kanal posti vaqti (takrorlanmasin)
+_enriching: set = set()        # pid → hozir boyitilyapti (post kutib tursin)
 
 
 async def _post_debounced(db, p: dict, pid: int, gap: int = 30):
@@ -1686,6 +1725,15 @@ async def _post_debounced(db, p: dict, pid: int, gap: int = 30):
     Tovarni saqlash ham, rasm yuklash ham e'lon qilishi mumkin; ikkalasi
     ketma-ket kelsa kanalda ikki marta post-o'chirish sodir bo'lardi.
     """
+    # Rasm hozirgina yuklangan va boyitish (bo'lim → teglar → lenta+sahna →
+    # qo'llanma) hali tugamagan bo'lsa — POST KUTADI. Aks holda admin
+    # "Saqlash"ni bosishi bilan kanalga YARIM tayyor post ketardi: rasmda
+    # "qayerda ishlatiladi" lentasi yo'q, kaptionda bo'lim hashtagi yo'q
+    # (2026-08-06, #15681 — post 12:31:29 da ketdi, teglar 12:31:31 da
+    # tayyor bo'ldi). Boyitish o'zi tugagach e'lon qiladi.
+    if pid in _enriching:
+        logger.info(f"📢 Post kutmoqda — boyitish tugamagan (#{pid})")
+        return
     now = time.time()
     if now - _last_post.get(pid, 0) < gap:
         return
@@ -1697,44 +1745,25 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
     """Rasm yuklangandan keyingi TO'LIQ oqim (fon rejimida):
 
         bo'lim aniqlash → «qayerda ishlatiladi» teglari → rasmni sahnaga
-        qo'yib qayta chizish → KANALGA e'lon.
+        qo'yib qayta chizish → qo'llanmani internetdan topish → KANALGA e'lon.
 
     Kanalga e'lon aynan shu yerda, ENG OXIRIDA yuboriladi: shunda postga
     tayyor rasm, to'g'ri bo'lim va teglar tushadi. (Ilgari post tovar
     saqlanganda ketardi — o'shanda rasm hali yuklanmagan bo'lardi va yangi
     tovar kanalga UMUMAN chiqmasdi.)
 
+    Boyitish davomida `_enriching` da turadi — shu payt "Saqlash" bosilsa
+    post yuborilmaydi, bu yerdagi e'lonni kutadi.
+
     Jim ishlaydi: biror bosqich yiqilsa qolgani baribir bajariladi.
     """
     from database.channel_db import db as _db
     from bot import ai_category
+    _enriching.add(pid)
     try:
-        await _auto_categorize(pid, image_path)
-    except Exception as e:
-        logger.warning(f"🏷 Avto-kategoriya bo'lmadi (#{pid}): {e}")
-
-    try:
-        p = await _db.get_product_any(pid)
-        if not p:
-            return
-        tags = [t.strip() for t in (p.get("usage_tags") or "").split(",")
-                if t.strip()]
-        if not tags:
-            cat_name = ""
-            if p.get("category_id"):
-                cat = await _db.get_category(int(p["category_id"]))
-                cat_name = (cat or {}).get("name", "")
-            loop = asyncio.get_running_loop()
-            tags = await loop.run_in_executor(
-                None, ai_category.usage_tags,
-                p.get("name", "") or "", image_path, cat_name)
-            if tags:
-                await _db.update_product(pid, usage_tags=", ".join(tags))
-                # Teglar YANGI aniqlandi — rasmni ular bilan qayta chizamiz.
-                if await _rebrand_with_tags(pid, tags):
-                    logger.info(f"🖼 Lenta+sahna (#{pid}): {', '.join(tags)}")
-    except Exception as e:
-        logger.warning(f"🏷 Teglar qo'shilmadi (#{pid}): {e}")
+        await _enrich_steps(pid, image_path, _db, ai_category)
+    finally:
+        _enriching.discard(pid)
 
     if not post:
         return
@@ -1750,6 +1779,71 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
         await _post_product_to_channel(_db, p, pid)
     except Exception as e:
         logger.warning(f"📢 Kanalga yuborilmadi (#{pid}): {e}")
+
+
+async def _enrich_steps(pid: int, image_path: str, _db, ai_category):
+    """`_enrich_product` ning bosqichlari — har biri alohida himoyalangan."""
+    try:
+        await _auto_categorize(pid, image_path)
+    except Exception as e:
+        logger.warning(f"🏷 Avto-kategoriya bo'lmadi (#{pid}): {e}")
+
+    async def _cat_name() -> str:
+        p = await _db.get_product_any(pid)
+        if p and p.get("category_id"):
+            cat = await _db.get_category(int(p["category_id"]))
+            return (cat or {}).get("name", "")
+        return ""
+
+    # AI birinchi urinishda "ishonchim komil emas" deyishi mumkin — o'shanda
+    # bo'lim qo'yilmaydi va postda hashtag (#tozalash_vositalari) chiqmaydi.
+    # Bir marta qayta so'raymiz: zanjir boshqa modelga tushishi mumkin va
+    # amalda o'sha tovar ikkinchi urinishda aniqlanadi (#15681 shunday bo'ldi).
+    try:
+        if not await _cat_name():
+            await _auto_categorize(pid, image_path)
+    except Exception as e:
+        logger.warning(f"🏷 Bo'lim qayta aniqlanmadi (#{pid}): {e}")
+
+    tags = []
+    try:
+        p = await _db.get_product_any(pid)
+        if not p:
+            return
+        tags = [t.strip() for t in (p.get("usage_tags") or "").split(",")
+                if t.strip()]
+        if not tags:
+            loop = asyncio.get_running_loop()
+            tags = await loop.run_in_executor(
+                None, ai_category.usage_tags,
+                p.get("name", "") or "", image_path, await _cat_name())
+            if tags:
+                await _db.update_product(pid, usage_tags=", ".join(tags))
+                # Teglar YANGI aniqlandi — rasmni ular bilan qayta chizamiz.
+                if await _rebrand_with_tags(pid, tags):
+                    logger.info(f"🖼 Lenta+sahna (#{pid}): {', '.join(tags)}")
+    except Exception as e:
+        logger.warning(f"🏷 Teglar qo'shilmadi (#{pid}): {e}")
+
+    # ── «Qanday ishlatiladi» qo'llanmasi (internetdan) ────────────────────
+    # Bir marta topiladi va bazada qoladi; keyingi e'lonlarda qayta izlanmaydi.
+    try:
+        p = await _db.get_product_any(pid)
+        if p and not (p.get("usage_info") or "").strip():
+            from bot import product_info
+            name = (p.get("display_name") or "").strip() or p.get("name", "")
+            cat = await _cat_name()
+            loop = asyncio.get_running_loop()
+            # ASL rasm (foni kesilmagan) — unda qadoqdagi yozuv to'liq
+            # ko'rinadi, AI tovarni aniqroq taniydi.
+            img = image_path or _img_path(
+                p.get("image_orig_url") or p.get("image_url") or "")
+            txt = await loop.run_in_executor(
+                None, lambda: product_info.usage_guide(name, cat, tags, img))
+            if txt:
+                await _db.update_product(pid, usage_info=txt)
+    except Exception as e:
+        logger.warning(f"📖 Qo'llanma topilmadi (#{pid}): {e}")
 
 
 def _drop_old_branded(pid: int, keep: str):
@@ -3666,10 +3760,16 @@ async def api_staff_add(request: web.Request):
         role = "full"
     if len("".join(ch for ch in phone if ch.isdigit())) < 7:
         return _err("Telefon raqami noto'g'ri (kamida 7 raqam)")
-    ok, why = await _db.add_pending_staff(phone, full_name, role, auth["tg_id"])
+    ok, why, admin = await _db.add_staff_by_phone(phone, full_name, role,
+                                                  auth["tg_id"])
     if not ok:
         return _err(why or "Qo'shilmadi", 409)
-    return web.json_response({"ok": True})
+    # `promoted` — raqam mijoz sifatida tanish edi, xodim DARROV faollashdi.
+    return web.json_response({
+        "ok": True,
+        "promoted": 1 if why == "promoted" else 0,
+        "name": (admin or {}).get("full_name", "") if admin else "",
+    })
 
 
 @ROUTES.post("/api/staff/role")

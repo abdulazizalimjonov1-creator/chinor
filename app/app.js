@@ -821,16 +821,98 @@
         const prodImgCam   = $('prodImgCam');     // kamera (capture=environment)
 
         // mode: 'camera' → kamerani ochadi, aks holda galereya/fayl.
-        // Android'da bitta input ba'zan to'g'ridan galereyani ochadi — shuning
-        // uchun kamera uchun alohida input ('capture') ishlatamiz.
+        //
+        // Android + Telegram: file-input'dagi `capture="environment"` atributi
+        // E'TIBORSIZ qoldiriladi — WebView baribir galereyani ochadi. Shuning
+        // uchun kamera uchun o'z oynamizni ochamiz (skanerdagi kabi jonli
+        // oqim). Kamera ochilmasa — eski usulga qaytamiz.
         window.pickProductImage = function (mode) {
-            const el = (mode === 'camera') ? prodImgCam : prodImgInput;
-            if (el) el.click();
+            if (mode === 'camera') { openPhotoCam(); return; }
+            if (prodImgInput) prodImgInput.click();
         };
 
-        async function _onProductImageChosen() {
+        // ── O'z kameramiz ────────────────────────────────────────────────
+        let _camStream = null, _camVideo = null, _camFacing = 'environment';
+
+        window.openPhotoCam = async function () {
+            const ov = $('camOverlay');
+            if (!ov || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                if (prodImgCam) prodImgCam.click();     // eski usul
+                return;
+            }
+            ov.classList.add('active');
+            const box = $('camView');
+            try { box.innerHTML = ''; } catch(_) {}
+            try {
+                _camStream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { facingMode: { ideal: _camFacing },
+                             width: { ideal: 1920 }, height: { ideal: 1080 } }
+                });
+            } catch (e) {
+                ov.classList.remove('active');
+                // Ruxsat berilmagan yoki kamera yo'q — file-input bilan urinamiz
+                if (prodImgCam) prodImgCam.click();
+                return;
+            }
+            const v = document.createElement('video');
+            v.setAttribute('playsinline', ''); v.muted = true;
+            v.srcObject = _camStream;
+            box.appendChild(v);
+            _camVideo = v;
+            try { await v.play(); } catch(_) {}
+        };
+
+        window.closePhotoCam = function () {
+            const ov = $('camOverlay');
+            if (_camStream) {
+                try { _camStream.getTracks().forEach(t => t.stop()); } catch(_) {}
+                _camStream = null;
+            }
+            if (_camVideo) {
+                try { _camVideo.pause(); } catch(_) {}
+                try { _camVideo.srcObject = null; } catch(_) {}
+                _camVideo = null;
+            }
+            const box = $('camView');
+            try { if (box) box.innerHTML = ''; } catch(_) {}
+            if (ov) ov.classList.remove('active');
+        };
+
+        window.flipPhotoCam = async function () {
+            _camFacing = (_camFacing === 'environment') ? 'user' : 'environment';
+            closePhotoCam();
+            await openPhotoCam();
+        };
+
+        window.takePhoto = function () {
+            if (!_camVideo || _camVideo.readyState < 2) return;
+            const w = _camVideo.videoWidth || 1280;
+            const h = _camVideo.videoHeight || 720;
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(_camVideo, 0, 0, w, h);
+            if (tg && tg.HapticFeedback) {
+                try { tg.HapticFeedback.impactOccurred('medium'); } catch(_){}
+            }
+            cv.toBlob(function (blob) {
+                if (!blob) { toast('❌ Surat olinmadi'); return; }
+                const file = new File([blob], 'photo_' + Date.now() + '.jpg',
+                                      { type: 'image/jpeg' });
+                closePhotoCam();
+                _handleProductImage(file);
+            }, 'image/jpeg', 0.92);
+        };
+
+        // Fayl (galereyadan yoki kameradan) — bitta yo'l bilan qayta ishlanadi
+        function _onProductImageChosen() {
             const input = this;
             const file = input.files && input.files[0];
+            input.value = '';        // bir xil faylni qayta tanlash mumkin bo'lsin
+            if (file) _handleProductImage(file);
+        }
+
+        async function _handleProductImage(file) {
             if (!file) return;
             // Darrov preview
             const reader = new FileReader();
@@ -859,8 +941,6 @@
                 _pendingImageFile = file;
                 $('pfStatus').textContent = '🖼 Rasm tanlandi (saqlashda yuklanadi)';
             }
-            // Bir xil faylni qayta tanlash mumkin bo'lsin (change qayta ishlasin)
-            input.value = '';
         }
 
         if (prodImgInput) prodImgInput.addEventListener('change', _onProductImageChosen);
@@ -1326,6 +1406,7 @@
 
         // ── Kategoriya tugmalari (mijoz katalogi) ────────────────────────
         let _clCat = 0;          // 0 = hammasi
+        let _clScanOpen = false; // skanerdan keyin bitta tovar topilsa ochiladi
 
         async function loadClientCategories() {
             const box = $('clCatCips');
@@ -1380,6 +1461,14 @@
             else el.innerHTML += html;
             _clCatalogPage++;
             if (more) more.style.display = (data.has_more) ? '' : 'none';
+
+            // Skanerdan keyin aynan bitta tovar topilsa — kartochkasini
+            // darrov ochamiz. Mijoz kodni o'qitganda ro'yxatni emas, o'sha
+            // tovarning narxi va ma'lumotini ko'rmoqchi bo'ladi.
+            if (_clScanOpen) {
+                _clScanOpen = false;
+                if (items.length === 1) clOpenProduct(items[0].id);
+            }
         }
 
         // Rasmni to'liq ekranda ochish (kartochkadagi rasm kichik — yorliqdagi
@@ -1421,6 +1510,10 @@
                 <div class="cl-modal-name">${p.name}</div>
                 <div class="cl-modal-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
                 ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
+                ${p.usage_info ? `<details class="cl-usage-info">
+                    <summary>📖 Qanday ishlatiladi / Как использовать</summary>
+                    <div>${escapeHtml(p.usage_info)}</div>
+                </details>` : ''}
                 ${p.qty > 0 ? `<div style="color:var(--primary);font-size:13px;font-weight:600;margin-bottom:16px">✅ Mavjud: ${p.qty} ${p.unit||'dona'}</div>` : '<div style="color:#e57373;font-size:13px;margin-bottom:16px">❌ Sotib bo\'lindi</div>'}
                 <button style="width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:16px;font-size:15px;font-weight:700;cursor:pointer" onclick="this.closest('.cl-modal-overlay').remove()">Yopish</button>
             </div>`;
@@ -2190,11 +2283,19 @@
         let _scanBusy = false;
         let _starting = false;   // ikki marta ochilishdan saqlaydi
 
-        window.scanInto = function (target) {
+        window.scanInto = async function (target) {
             _scanTarget = target || 'product';
             if (_starting) return;   // allaqachon ishga tushmoqda
+            // 1) QURILMANING O'Z skaneri (BarcodeDetector) — eng tezi.
+            //    U tizim darajasida ishlaydi, kodni deyarli bir zumda o'qiydi
+            //    va nazorat raqamini (checksum) o'zi tekshiradi. Shuning uchun
+            //    JS kutubxonalaridagidek "ikki marta bir xil o'qilsin" degan
+            //    kutish ham kerak emas.
+            if (typeof window.BarcodeDetector === 'function') {
+                if (await startNativeScan()) return;
+            }
             if (window.Quagga) {
-                startQuaggaScan();           // tezkor 1D (web-worker)
+                startQuaggaScan();           // zaxira: 1D (web-worker)
             } else if (window.Html5Qrcode) {
                 startCameraScan();           // zaxira: html5-qrcode
             } else if (tg && tg.showScanQrPopup) {
@@ -2204,13 +2305,164 @@
             }
         };
 
+        // Kod o'qilgach — hamma skanerlar uchun BITTA yakuniy yo'l.
+        function _acceptScan(code) {
+            if (_scanBusy) return;
+            _scanBusy = true;
+            if (tg && tg.HapticFeedback) {
+                try { tg.HapticFeedback.impactOccurred('medium'); } catch(_){}
+            }
+            $('scanHint').textContent = '✅ O\'qildi: ' + code;
+            _applyScan(code);
+            stopScan();
+        }
+
+        // ================================================================
+        // BarcodeDetector — brauzerga o'rnatilgan skaner (Android/Chrome)
+        // ================================================================
+        let _natStream = null, _natTimer = null, _natVideo = null;
+
+        // Qaysi formatlarni o'qiymiz. Do'kondagi tovarlarda asosan EAN-13
+        // bo'ladi, lekin ichki kodlar Code-128/ITF bo'lishi mumkin.
+        const _NAT_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128',
+                              'code_39', 'code_93', 'itf', 'codabar', 'qr_code'];
+
+        async function startNativeScan() {
+            _starting = true;
+            _scanBusy = false;
+            let detector;
+            try {
+                let formats = _NAT_FORMATS;
+                if (window.BarcodeDetector.getSupportedFormats) {
+                    const have = await BarcodeDetector.getSupportedFormats();
+                    formats = _NAT_FORMATS.filter(f => have.indexOf(f) >= 0);
+                    if (!formats.length) throw new Error('format qo\'llanmaydi');
+                }
+                detector = new BarcodeDetector({ formats: formats });
+            } catch (_) {
+                _starting = false;
+                return false;            // zaxira usulga o'tiladi
+            }
+
+            const overlay = $('scanOverlay');
+            overlay.classList.add('active');
+            $('scanHint').textContent = 'Kamera ishga tushmoqda...';
+            const reader = document.getElementById('reader');
+            try { if (reader) reader.innerHTML = ''; } catch(_) {}
+
+            try {
+                _natStream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        facingMode: { ideal: 'environment' },
+                        width:  { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+            } catch (e) {
+                _starting = false;
+                _stopNative();
+                // Kameraga ruxsat berilmagan bo'lsa boshqa skaner ham
+                // ochilmaydi — sababni darrov aytamiz.
+                if (/permission|NotAllowed/i.test((e && e.name) + (e && e.message))) {
+                    $('scanHint').textContent = '⚠️ ' + _scanErrMsg(e);
+                    return true;
+                }
+                overlay.classList.remove('active');
+                return false;
+            }
+
+            const video = document.createElement('video');
+            video.setAttribute('playsinline', '');   // iOS to'liq ekranga o'tmasin
+            video.setAttribute('muted', '');
+            video.muted = true;
+            video.srcObject = _natStream;
+            reader.appendChild(video);
+            _natVideo = video;
+            try { await video.play(); } catch(_) {}
+            _applyTrackTuning();                     // uzluksiz fokus
+            _starting = false;
+            $('scanHint').textContent = 'Kodni ramka ichiga joylang';
+
+            // 100 ms — sekundiga ~10 marta o'qish urinishi. Bundan tez-tez
+            // chaqirish foyda bermaydi (kamera kadri baribir shuncha keladi),
+            // lekin batareyani yeydi.
+            _natTimer = setInterval(async () => {
+                if (_scanBusy || !_natVideo || _natVideo.readyState < 2) return;
+                try {
+                    const found = await detector.detect(_natVideo);
+                    if (found && found.length) {
+                        const code = (found[0].rawValue || '').trim();
+                        if (code) _acceptScan(code);
+                    }
+                } catch (_) { /* kadr o'qilmadi — keyingisida urinamiz */ }
+            }, 100);
+            return true;
+        }
+
+        function _stopNative() {
+            if (_natTimer) { clearInterval(_natTimer); _natTimer = null; }
+            if (_natVideo) {
+                try { _natVideo.pause(); } catch(_) {}
+                try { _natVideo.srcObject = null; } catch(_) {}
+                _natVideo = null;
+            }
+            if (_natStream) {
+                try { _natStream.getTracks().forEach(t => t.stop()); } catch(_) {}
+                _natStream = null;
+            }
+        }
+
         // ================================================================
         // QUAGGA2 — tezkor 1D shtrix-kod skaneri (ko'p-yadroli web-worker)
         // ================================================================
         let _quaggaOn = false;
         let _lastCode = null, _lastCount = 0;
 
+        // Do'konda ikki xil kod ishlatiladi:
+        //   • zavod kodi — 2071 tasining HAMMASI 13 xonali (EAN-13)
+        //   • o'z yorlig'i — 5 xonali SKU (= tovar id'si; 6902/6904 tovar)
+        // Qolgan 6 xil o'qigich har kadrda bekorga ishlab, tahlilni
+        // sekinlashtirardi. Endi ikkitasi qoladi. Agar kod 6 soniyada
+        // o'qilmasa (boshqa turdagi yorliq bo'lishi mumkin) — skaner o'zi
+        // to'liq ro'yxatga o'tadi, ya'ni hech qanday kod "o'qilmay qolmaydi".
+        // Code-39 ham shu yerda: yorliq turini ko'z bilan 100% ajratib
+        // bo'lmaydi (Code-128 ga juda o'xshaydi). Uchtasi bilan ham tahlil
+        // 8 tasidagidan ancha yengil, lekin "umuman o'qimadi" holati bo'lmaydi.
+        //
+        // DIQQAT: ro'yxat SKANER ISHLAYOTGANDA o'zgartirilmaydi. Ilgari
+        // "4 soniyada o'qilmasa qolgan turlarni ham qo'shamiz" degan qoida
+        // bor edi va u kutubxonani QAYTA ishga tushirardi — ekran bir zumga
+        // qorayib, kamera o'zidan o'zi qayta ochilardi. Foydasidan ko'ra
+        // xalaqiti ko'p bo'ldi (2026-08-07, foydalanuvchi shikoyati).
+        const _FAST_READERS = ["ean_reader", "code_128_reader", "code_39_reader"];
+        let _widenTimer = null;   // endi faqat MASLAHAT matni uchun
+
+        // Skaner har kadrda kanvasdan piksellarni o'qiydi (`getImageData`).
+        // Brauzer kanvasni odatda videokartada saqlaydi va har o'qishda uni
+        // xotiraga qaytarib olish KATTA sekinlik beradi (ayniqsa Safari —
+        // iPhone). `willReadFrequently` bayrog'i brauzerga "bu kanvas tez-tez
+        // o'qiladi" deb aytadi va u xotirada saqlanadi.
+        //
+        // Kutubxona ichidagi kanvaslarga bayroqni bevosita qo'ya olmaymiz,
+        // shuning uchun `getContext` ni bir marta o'raymiz.
+        let _canvasPatched = false;
+        function _speedUpCanvasReads() {
+            if (_canvasPatched) return;
+            _canvasPatched = true;
+            try {
+                const orig = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+                    if (type === '2d' && (attrs === undefined || attrs === null)) {
+                        return orig.call(this, type, { willReadFrequently: true });
+                    }
+                    return orig.call(this, type, attrs);
+                };
+            } catch (_) {}
+        }
+
         function startQuaggaScan() {
+            _speedUpCanvasReads();
             if (_starting) return;
             _starting = true;
             _scanBusy = false;
@@ -2231,20 +2483,18 @@
                         width:  { ideal: 1280 },
                         height: { ideal: 720 }
                     },
-                    // Faqat markaziy tasma skanerlanadi — tezroq va aniqroq
-                    area: { top: "25%", right: "8%", left: "8%", bottom: "25%" }
+                    // Faqat markaziy tasma skanerlanadi — tezroq va aniqroq.
+                    // Tasma past bo'lsa kamroq piksel tahlil qilinadi; EAN-13
+                    // uchun balandlik shart emas, kenglik muhim.
+                    area: { top: "30%", right: "6%", left: "6%", bottom: "30%" }
                 },
                 locator: { patchSize: "medium", halfSample: true },
                 numOfWorkers: Math.max(2, (navigator.hardwareConcurrency || 4)),
-                frequency: 10,
-                decoder: {
-                    readers: [
-                        "ean_reader", "ean_8_reader",
-                        "upc_reader", "upc_e_reader",
-                        "code_128_reader", "code_39_reader",
-                        "i2of5_reader", "codabar_reader"
-                    ]
-                },
+                // Sekundiga necha marta tahlil. 10 — kutubxonaning standarti;
+                // bitta o'qigich bilan telefon 25 tasini ham bemalol tortadi,
+                // ya'ni kod kadrga tushishi bilan o'qiladi.
+                frequency: 25,
+                decoder: { readers: _FAST_READERS },
                 locate: true
             }, function (err) {
                 if (err) {
@@ -2258,32 +2508,71 @@
                 _quaggaOn = true;
                 _starting = false;
                 $('scanHint').textContent = 'Kodni ramka ichiga joylang';
+                // FOKUS: buni qo'ymasak kamera yaqindagi kodni xira olib
+                // turaveradi va u HECH QACHON o'qilmaydi — "skaner sekin"
+                // degan tuyg'uning asosiy sababi shu edi.
+                setTimeout(_applyTrackTuning, 350);
+                setTimeout(_applyTrackTuning, 1200);   // ba'zi qurilmalar kech tayyor
             });
 
             Quagga.offDetected(_onQuaggaDetected);
             Quagga.onDetected(_onQuaggaDetected);
+
+            // Uzoq o'qilmasa — kamerani QAYTA ISHGA TUSHIRMAYMIZ, faqat
+            // maslahat beramiz. Amalda kod o'qilmasligining sababi deyarli
+            // doim masofa yoki yorug'lik bo'ladi.
+            clearTimeout(_widenTimer);
+            _widenTimer = setTimeout(function () {
+                if (_scanBusy || !_quaggaOn) return;
+                $('scanHint').textContent =
+                    '💡 Kodni 10-15 sm masofada, yorug\'roq joyda tuting';
+            }, 5000);
+        }
+
+        // EAN-13 / EAN-8 / UPC-A nazorat raqami (mod-10). To'g'ri chiqsa kod
+        // deyarli aniq to'g'ri o'qilgan — tasodifiy xato o'qishda bu raqam
+        // mos kelmaydi.
+        //
+        // Nima uchun kerak: iPhone'da qurilmaning o'z skaneri (BarcodeDetector)
+        // YO'Q, shuning uchun Quagga ishlaydi. Uning xato o'qishidan saqlanish
+        // uchun "bir xil kod ikki marta o'qilsin" deb kutilardi — aynan shu
+        // sekinlik sezilardi. Nazorat raqami to'g'ri bo'lsa kutish shart emas.
+        function _checksumOk(code) {
+            if (!/^\d+$/.test(code)) return false;
+            if (code.length !== 13 && code.length !== 8 && code.length !== 12)
+                return false;
+            const d = code.split('').map(Number);
+            const check = d.pop();
+            let sum = 0;
+            // Oxiridan boshlab: 3, 1, 3, 1 ... koeffitsiyentlar
+            for (let i = d.length - 1, k = 3; i >= 0; i--, k = (k === 3 ? 1 : 3)) {
+                sum += d[i] * k;
+            }
+            return ((10 - (sum % 10)) % 10) === check;
         }
 
         function _onQuaggaDetected(result) {
             if (_scanBusy) return;
             const code = result && result.codeResult && result.codeResult.code;
             if (!code) return;
-            // Ishonchlilik: bir xil kod 2 marta ketma-ket o'qilsa qabul qilamiz
-            // (Quagga ba'zan xato o'qishi mumkin — bu xatoliklarni kamaytiradi).
+            // Darrov qabul qilinadigan holatlar (kutmasdan):
+            //   • nazorat raqami to'g'ri EAN/UPC
+            //   • do'konning O'Z yorlig'i — 5 xonali SKU (tovar id'si).
+            //     Code-128 ning o'z nazorat belgisi bor va uni kutubxona
+            //     allaqachon tekshirib bergan, shuning uchun ikkinchi
+            //     o'qishni kutish shart emas.
+            if (_checksumOk(code) || /^\d{5}$/.test(code)) {
+                _acceptScan(code); return;
+            }
+            // Aks holda (Code-128, ITF va h.k.) eskicha: bir xil kod 2 marta
+            // ketma-ket o'qilsa qabul qilinadi.
             if (code === _lastCode) {
                 _lastCount += 1;
             } else {
                 _lastCode = code; _lastCount = 1;
             }
             if (_lastCount < 2) return;
-
-            _scanBusy = true;
-            if (tg && tg.HapticFeedback) {
-                try { tg.HapticFeedback.impactOccurred('medium'); } catch(_){}
-            }
-            $('scanHint').textContent = '✅ O\'qildi: ' + code;
-            _applyScan(code);
-            stopScan();
+            _acceptScan(code);
         }
 
         function _applyScan(code) {
@@ -2296,6 +2585,19 @@
                 const fid = _scanTarget.slice(6);
                 const el = $(fid);
                 if (el) el.value = cleaned;
+            } else if (_scanTarget === 'client') {
+                // Mijoz katalogi — kodni qidiruvga qo'yib, ro'yxatni yangilaymiz.
+                const inp = $('clCatalogSearch');
+                if (inp) inp.value = cleaned;
+                // Kategoriya filtri O'CHIRILADI. Aks holda mijoz biror bo'limni
+                // tanlab qo'ygan bo'lsa, boshqa bo'limdagi tovar skanerlanganda
+                // ro'yxat BO'SH chiqadi: server tovarni topadi, lekin filtr uni
+                // olib tashlaydi (2026-08-07 da aynan shunday bo'ldi — "Oyna
+                // shvabra" topilgan, ammo ekranda ko'rinmagan).
+                _clCat = 0;
+                if (typeof loadClientCategories === 'function') loadClientCategories();
+                _clScanOpen = true;      // bitta tovar topilsa — kartochkani ochamiz
+                if (typeof loadClientCatalog === 'function') loadClientCatalog();
             } else if (_scanTarget === 'pos') {
                 posSearch.value = cleaned;
                 posSearchClear.style.display = 'block';
@@ -2392,16 +2694,7 @@
             overlay.classList.add('active');
             $('scanHint').textContent = 'Kamera ishga tushmoqda...';
 
-            const onOk = (decodedText) => {
-                if (_scanBusy) return;
-                _scanBusy = true;
-                if (tg && tg.HapticFeedback) {
-                    try { tg.HapticFeedback.impactOccurred('medium'); } catch(_){}
-                }
-                $('scanHint').textContent = '✅ O\'qildi: ' + decodedText;
-                _applyScan(decodedText);
-                stopScan();
-            };
+            const onOk = (decodedText) => { _acceptScan(decodedText); };
 
             const config = {
                 fps: 20,
@@ -2453,18 +2746,41 @@
             }
         }
 
+        // Kamerani HAR QANDAY holatda bo'shatadi.
+        //
+        // Nima uchun alohida kerak: `#reader` ichini `innerHTML=''` bilan
+        // tozalash video elementini olib tashlaydi, lekin KAMERA OQIMINI
+        // to'xtatmaydi — oqimga endi hech kim ishora qilmaydi, u esa ishlab
+        // turaveradi va telefonda kamera chirog'i yonib qolaveradi.
+        // Shuning uchun avval treklar to'xtatiladi, keyin element olinadi.
+        function _releaseCameras() {
+            try {
+                document.querySelectorAll('#reader video').forEach(function (v) {
+                    const s = v.srcObject;
+                    if (s && s.getTracks) {
+                        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch(_) {}
+                    }
+                    try { v.pause(); } catch(_) {}
+                    try { v.srcObject = null; } catch(_) {}
+                });
+            } catch (_) {}
+        }
+
         window.stopScan = function () {
             const overlay = $('scanOverlay');
             const inst = _html5qr;
             _starting = false;
+            clearTimeout(_widenTimer);
+            _stopNative();          // qurilma skaneri ishlayotgan bo'lsa
             // Quagga2 ni to'xtatamiz (agar ishlayotgan bo'lsa)
             if (_quaggaOn && window.Quagga) {
                 try { Quagga.offDetected(_onQuaggaDetected); } catch(_) {}
                 try { Quagga.stop(); } catch(_) {}
                 _quaggaOn = false;
-                const r = document.getElementById('reader');
-                try { if (r) r.innerHTML = ''; } catch(_) {}
             }
+            _releaseCameras();
+            const r = document.getElementById('reader');
+            try { if (r) r.innerHTML = ''; } catch(_) {}
             const finish = () => {
                 _html5qr = null;
                 overlay.classList.remove('active');
@@ -2484,6 +2800,34 @@
                 finish();
             }
         };
+
+        // Ilova fonga o'tsa yoki yopilsa — kamerani o'chiramiz.
+        //
+        // Nima uchun: foydalanuvchi skanerni ochib, "Yopish"ni bosmasdan
+        // Mini App'dan chiqib ketishi mumkin (orqaga surish, boshqa ilovaga
+        // o'tish). O'shanda kamera ishlab turaverardi va telefonda kamera
+        // chirog'i yonib qolardi.
+        function _scanOpen() {
+            const ov = document.getElementById('scanOverlay');
+            return !!(ov && ov.classList.contains('active'));
+        }
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) return;
+            if (_scanOpen()) {
+                try { stopScan(); } catch (_) { _releaseCameras(); }
+            }
+            // Surat olish oynasi ham ochiq qolmasin
+            const cam = document.getElementById('camOverlay');
+            if (cam && cam.classList.contains('active')) {
+                try { closePhotoCam(); } catch (_) {}
+            }
+        });
+        // `pagehide` — sahifa butunlay yopilganda (visibilitychange
+        // ba'zi brauzerlarda kelmaydi).
+        window.addEventListener('pagehide', function () {
+            _releaseCameras();
+            try { closePhotoCam(); } catch (_) {}
+        });
 
         function tgQrFallback() {
             try {
@@ -2596,29 +2940,148 @@
             if (!(data.items||[]).length) html += '<div class="list-status">Buyurtmalar yo\'q</div>';
             body.innerHTML = html;
         };
+        // Xodim rollari — server qabul qiladigan qiymatlar bilan bir xil.
+        const STAFF_ROLES = [
+            ['full',     '👑 To\'liq admin'],
+            ['products', '📦 Mahsulotlar'],
+            ['cashier',  '💵 Kassir'],
+            ['stats',    '📊 Hisobotlar'],
+        ];
+        const _roleLabel = r =>
+            (STAFF_ROLES.find(x => x[0] === r) || ['', '🔰 Cheklangan'])[1];
+
         window.openStaff = async function () {
             showScreen('screenStats');
             const body = $('statsBody');
             body.innerHTML = '<div class="list-status">Yuklanmoqda...</div>';
-            const { ok, status, data } = await apiFetch('/api/admins');
+            const { ok, status, data } = await apiFetch('/api/staff');
             if (!ok || !data.ok) {
                 body.innerHTML = '<div class="list-status">' + (status===403?'Ruxsat yo\'q':status===401?'🔒 Qaytadan kiring.':'Xato: '+(data.error||status)) + '</div>';
                 return;
             }
+            const items = data.items || [];
+            const canManage = !!data.can_manage;
+            const active = items.filter(a => !a.pending);
+            const pending = items.filter(a => a.pending);
+
             let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
                 <button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button>
-                <h2 style="font-size:18px;font-weight:800;">👔 Xodimlar (${data.total})</h2>
+                <h2 style="font-size:18px;font-weight:800;">👔 Xodimlar (${active.length})</h2>
             </div>`;
-            (data.items || []).forEach(a => {
-                const roleTxt = a.role === 'full' ? '👑 To\'liq' : '🔰 Cheklangan';
+
+            // ── Qo'shish formasi (faqat to'liq adminlarga) ──────────────
+            if (canManage) {
                 html += `<div class="stat-block">
-                    <div class="stat-row"><span class="lbl">👤 ${escapeHtml(a.full_name||'')}</span><span class="val">${roleTxt}</span></div>
-                    <div class="stat-row"><span class="lbl">🔑 Login</span><span class="val">${escapeHtml(a.username||'—')}</span></div>
-                    <div class="stat-row"><span class="lbl">📅 Qo'shilgan</span><span class="val">${a.created_at}</span></div>
+                    <div class="stat-row"><span class="lbl">➕ Yangi xodim</span></div>
+                    <input type="tel" id="stPhone" placeholder="Telefon: +998 90 123 45 67"
+                           inputmode="tel" autocomplete="off"
+                           style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;">
+                    <input type="text" id="stName" placeholder="Ism (ixtiyoriy)"
+                           autocomplete="off"
+                           style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;">
+                    <select id="stRole"
+                            style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;background:#fff;">
+                        ${STAFF_ROLES.map(r => `<option value="${r[0]}">${r[1]}</option>`).join('')}
+                    </select>
+                    <button class="save-btn" style="margin-top:10px" onclick="addStaff()">➕ Qo'shish</button>
+                    <div style="font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5">
+                        Raqamni yozib qo'shasiz. Xodim botga kirib
+                        «📱 Raqamni yuborish» tugmasini bossa — hisobi
+                        o'zi faollashadi.
+                    </div>
                 </div>`;
+            }
+
+            // ── Kutilayotganlar ─────────────────────────────────────────
+            if (pending.length) {
+                html += `<div class="stat-block">
+                    <div class="stat-row"><span class="lbl">⏳ Kutilmoqda (${pending.length})</span>
+                    <span class="val" style="font-size:12px;color:var(--muted)">botga kirmagan</span></div>`;
+                pending.forEach(p => {
+                    html += `<div class="stat-row">
+                        <span class="lbl">📱 ${escapeHtml(p.phone)}${p.full_name ? ' · ' + escapeHtml(p.full_name) : ''}</span>
+                        <span class="val">${_roleLabel(p.role)}${canManage
+                            ? ` <button onclick="removeStaff(0, ${p.pending_id})"
+                                   style="border:none;background:#fee;color:#c00;border-radius:8px;padding:4px 9px;margin-left:6px;cursor:pointer;">✕</button>`
+                            : ''}</span>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            // ── Faol xodimlar ───────────────────────────────────────────
+            active.forEach(a => {
+                const nomi = escapeHtml(a.full_name || a.username || ('ID ' + a.telegram_id));
+                html += `<div class="stat-block">
+                    <div class="stat-row"><span class="lbl">👤 ${nomi}${a.is_glavniy ? ' ⭐' : ''}</span>
+                        <span class="val">${_roleLabel(a.role)}</span></div>
+                    ${a.phone ? `<div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${escapeHtml(a.phone)}</span></div>` : ''}
+                    <div class="stat-row"><span class="lbl">📅 Qo'shilgan</span><span class="val">${a.created_at || '—'}</span></div>`;
+                if (canManage && !a.is_glavniy) {
+                    html += `<div class="stat-row"><span class="lbl">🔑 Rol</span><span class="val">
+                        <select onchange="setStaffRole(${a.telegram_id}, this.value)"
+                                style="border:1px solid #e5e7eb;border-radius:9px;padding:6px 8px;font-size:13.5px;background:#fff;">
+                            ${STAFF_ROLES.map(r => `<option value="${r[0]}"${r[0]===a.role?' selected':''}>${r[1]}</option>`).join('')}
+                        </select>
+                        <button onclick="removeStaff(${a.telegram_id}, 0)"
+                                style="border:none;background:#fee;color:#c00;border-radius:8px;padding:6px 10px;margin-left:6px;cursor:pointer;">🗑</button>
+                    </span></div>`;
+                }
+                html += '</div>';
             });
-            if (!(data.items||[]).length) html += '<div class="list-status">Xodimlar yo\'q</div>';
+            if (!active.length) html += '<div class="list-status">Xodimlar yo\'q</div>';
             body.innerHTML = html;
+        };
+
+        window.addStaff = async function () {
+            const phone = ($('stPhone') || {value:''}).value.trim();
+            const name  = ($('stName')  || {value:''}).value.trim();
+            const role  = ($('stRole')  || {value:'full'}).value;
+            if (phone.replace(/\D/g, '').length < 7) {
+                toast('❌ Telefon raqamini to\'liq yozing'); return;
+            }
+            const { ok, data } = await apiFetch('/api/staff/add', {
+                method: 'POST',
+                body: JSON.stringify({ phone: phone, full_name: name, role: role })
+            });
+            if (ok && data.ok) {
+                $('stPhone').value = ''; $('stName').value = '';
+                // `promoted` — raqam bazada mijoz sifatida bor edi, shuning
+                // uchun xodim kontakt yubormasdan darrov faollashdi.
+                toast(data.promoted
+                    ? '✅ Faollashdi — hisob darrov ochildi'
+                    : '✅ Qo\'shildi — xodim botga kirsin');
+                openStaff();
+                return;
+            }
+            // Server texnik kodlar qaytaradi — ularni tushunarli qilamiz.
+            const kod = (data && data.error) || '';
+            const izoh = {
+                'exists_admin':  'Bu raqam allaqachon xodim sifatida qo\'shilgan',
+                'exists_pending':'Bu raqam allaqachon ro\'yxatda — xodim botga kirishi kerak',
+                'bad_phone':     'Telefon raqami noto\'g\'ri'
+            }[kod] || kod || 'Qo\'shilmadi';
+            toast('❌ ' + izoh);
+        };
+
+        window.setStaffRole = async function (tgId, role) {
+            const { ok, data } = await apiFetch('/api/staff/role', {
+                method: 'POST',
+                body: JSON.stringify({ telegram_id: tgId, role: role })
+            });
+            if (ok && data.ok) toast('✅ Rol o\'zgardi');
+            else { toast('❌ ' + ((data && data.error) || 'Xato')); openStaff(); }
+        };
+
+        window.removeStaff = async function (tgId, pendingId) {
+            if (!confirm('Xodim o\'chirilsinmi?')) return;
+            const { ok, data } = await apiFetch('/api/staff/remove', {
+                method: 'POST',
+                body: JSON.stringify(pendingId ? { pending_id: pendingId }
+                                               : { telegram_id: tgId })
+            });
+            if (ok && data.ok) { toast('✅ O\'chirildi'); openStaff(); }
+            else toast('❌ ' + ((data && data.error) || 'Xato'));
         };
         window.openSettings = async function () {
             showScreen('screenStats');

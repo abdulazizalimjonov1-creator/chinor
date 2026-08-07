@@ -555,10 +555,46 @@
             background:rgba(116,198,157,0.20); color:#d8f3dc; border:none;
             border-radius:11px; padding:9px 15px; font-size:15px; cursor:pointer;
         }
-        #reader { width:100%; height:46vh; margin-top:4px; overflow:hidden; position:relative; }
+        .scan-stage { position:relative; width:100%; height:46vh; margin-top:4px; }
+        #reader { width:100%; height:100%; overflow:hidden; position:relative; }
         #reader video { width:100% !important; height:100% !important; object-fit:cover; }
         #reader canvas.drawingBuffer { display:none; }
         #reader canvas { position:absolute; top:0; left:0; }
+
+        /* Skanerlash ramkasi — o'lchamlari Quagga o'qiydigan maydon bilan
+           bir xil (yon 8%, tepa/past 25%): foydalanuvchi kodni AYNAN
+           o'qiladigan joyga tutadi. Tashqarisi biroz qoraytiriladi. */
+        .scan-frame {
+            position:absolute; top:25%; bottom:25%; left:8%; right:8%;
+            border-radius:14px; pointer-events:none;
+            box-shadow: 0 0 0 100vmax rgba(6,20,12,0.45);
+        }
+        .scan-corner {
+            position:absolute; width:26px; height:26px;
+            border:3px solid var(--primary-mid); border-radius:3px;
+        }
+        .scan-corner.tl { top:-2px; left:-2px;  border-right:none; border-bottom:none; }
+        .scan-corner.tr { top:-2px; right:-2px; border-left:none;  border-bottom:none; }
+        .scan-corner.bl { bottom:-2px; left:-2px;  border-right:none; border-top:none; }
+        .scan-corner.br { bottom:-2px; right:-2px; border-left:none;  border-top:none; }
+        /* Yuqoridan pastga, pastdan yuqoriga yuruvchi chiziq */
+        .scan-laser {
+            position:absolute; left:6px; right:6px; top:0; height:2px;
+            border-radius:2px;
+            background:linear-gradient(90deg,
+                rgba(116,198,157,0) 0%, #74c69d 18%, #b7e4c7 50%,
+                #74c69d 82%, rgba(116,198,157,0) 100%);
+            box-shadow:0 0 12px 2px rgba(116,198,157,0.75);
+            animation: scanSweep 1.7s ease-in-out infinite alternate;
+        }
+        @keyframes scanSweep {
+            from { top:4px; }
+            to   { top:calc(100% - 6px); }
+        }
+        /* Animatsiya bosh og'rig'i bo'lgan foydalanuvchilar uchun */
+        @media (prefers-reduced-motion: reduce) {
+            .scan-laser { animation:none; top:50%; }
+        }
         .scan-hint { color:#b7e4c7; text-align:center; padding:14px 18px; font-size:14px; opacity:.85; }
 
         /* ================================================================
@@ -982,6 +1018,54 @@
     color: var(--primary-dark);
 }
 .cl-usage-lbl { font-size: 10px; letter-spacing: .04em; opacity: .75; text-transform: uppercase; }
+
+/* «Qanday ishlatiladi» — yopiq turadi, xohlagan odam ochib o'qiydi */
+.cl-usage-info {
+    background: var(--card-bg); border: 1.5px solid var(--accent2);
+    border-radius: 12px; padding: 8px 12px; margin-bottom: 12px;
+    font-size: 13px; text-align: left;
+}
+.cl-usage-info summary {
+    cursor: pointer; font-weight: 700; color: var(--primary-dark);
+    font-size: 13px; list-style: none;
+}
+.cl-usage-info summary::-webkit-details-marker { display: none; }
+.cl-usage-info summary::after { content: " ▾"; opacity: .6; }
+.cl-usage-info[open] summary::after { content: " ▴"; }
+.cl-usage-info > div {
+    margin-top: 6px; white-space: pre-line; color: var(--text-color);
+    line-height: 1.5;
+}
+
+/* ================================================================
+       O'Z KAMERAMIZ (mahsulot surati)
+       Telegram'ning Android WebView'i file-input'dagi `capture` atributini
+       e'tiborsiz qoldiradi va doim galereyani ochadi — shuning uchun kamera
+       oqimini o'zimiz ochamiz.
+   ================================================================ */
+#camOverlay {
+    display:none; position:fixed; inset:0; background:#0f1f15;
+    z-index:320; flex-direction:column;
+}
+#camOverlay.active { display:flex; }
+.cam-stage { flex:1; position:relative; overflow:hidden; }
+#camView { width:100%; height:100%; }
+#camView video { width:100%; height:100%; object-fit:cover; display:block; }
+.cam-actions {
+    display:flex; align-items:center; justify-content:space-around;
+    padding:18px 24px calc(18px + env(safe-area-inset-bottom));
+    background:#0f1f15;
+}
+.cam-shot {
+    width:72px; height:72px; border-radius:50%;
+    background:#fff; border:5px solid var(--primary-mid);
+    cursor:pointer; flex-shrink:0;
+}
+.cam-shot:active { transform:scale(0.94); }
+.cam-flip {
+    background:rgba(116,198,157,0.20); color:#d8f3dc; border:none;
+    border-radius:50%; width:48px; height:48px; font-size:20px; cursor:pointer;
+}
 
 /* Rasmni to'liq ekranda ko'rish */
 .cl-zoom {

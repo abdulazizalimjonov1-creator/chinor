@@ -17,7 +17,7 @@ from database.channel_db import db, DB_PATH
 from database._helpers import now_local
 from handlers import (
     glavniy, admin_products, admin_clients, admin_stats, sale, client, catalog,
-    ai_analytics, auth_setup, client_ai,
+    ai_analytics, auth_setup, client_ai, discussion,
 )
 
 logging.basicConfig(
@@ -73,6 +73,22 @@ async def on_startup(bot: Bot):
         logger.info(f"Kanal: {chat.title} ({chat.id})")
     except Exception as e:
         logger.error(f"Kanal topilmadi: {e}  →  CHANNEL_ID ni tekshiring: {CHANNEL_ID}")
+    # Muhokama guruhi bormi — «qanday ishlatiladi» izohi shusiz yozilmaydi
+    # (Telegram'da izoh = bog'langan guruhdagi javob xabar).
+    try:
+        from bot import comments
+        loop = asyncio.get_running_loop()
+        gid = await loop.run_in_executor(
+            None, comments.linked_chat_id, BOT_TOKEN, CHANNEL_ID)
+        if gid:
+            logger.info(f"💬 Muhokama guruhi: {gid} — izohlar yoziladi")
+        else:
+            logger.warning(
+                "💬 Kanalga muhokama guruhi ULANMAGAN — «qanday ishlatiladi» "
+                "izohi yozilmaydi. Kanal sozlamalari → Muhokama → guruh "
+                "ulang va botni o'sha guruhga admin qiling.")
+    except Exception as e:
+        logger.warning(f"💬 Muhokama guruhi tekshirilmadi: {e}")
     try:
         await bot.send_message(
             GLAVNIY_ADMIN_ID,
@@ -126,6 +142,10 @@ async def main():
     dp.startup.register(on_startup)
 
     # ── Handlerlar (tartib muhim!) ────────────────────────────────────────────
+    # ENG BIRINCHI: muhokama guruhiga avtomatik ko'chirilgan kanal posti.
+    # U hech qanday buyruq emas — boshqa handlerlar uni "mijoz matni" deb
+    # o'ylab, AI sotuvchiga uzatib yubormasin.
+    dp.include_router(discussion.router)      # 💬 post ostidagi izohlar
     dp.include_router(glavniy.router)         # /start + bosh admin
     dp.include_router(admin_products.router)  # mahsulotlar
     dp.include_router(admin_clients.router)   # mijozlar

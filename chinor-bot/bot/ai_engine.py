@@ -236,8 +236,24 @@ def _call_with_keys(env_name: str, fn):
     raise last
 
 
+def _gemini_text(d: dict) -> str:
+    """Gemini javobidan MATNni yig'adi.
+
+    Faqat `parts[0]["text"]` ni olish yaramaydi: qidiruv (grounding) yoqilganda
+    javob bir nechta bo'lakdan iborat bo'ladi va birinchisi matn bo'lmasligi
+    mumkin — o'shanda KeyError chiqib, ishlaydigan model «yiqilgan» deb
+    hisoblanardi.
+    """
+    out = []
+    for cand in d.get("candidates") or []:
+        for part in (cand.get("content") or {}).get("parts") or []:
+            if part.get("text"):
+                out.append(part["text"])
+    return "\n".join(out).strip()
+
+
 def _call_gemini(model: str, prompt: str, img_b64: str = "",
-                 system: str = "") -> str:
+                 system: str = "", search: bool = False) -> str:
     parts = []
     if img_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
@@ -254,6 +270,17 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
+    if search:
+        # Google qidiruvi (grounding): model javob yozishdan OLDIN internetdan
+        # izlaydi. Aynan shu narsa tovar haqidagi ma'lumotni o'ylab topilgan
+        # emas, HAQIQIY qilib beradi. Qidiruv paytida "o'ylash"ni o'chirib
+        # bo'lmaydi — u yerda budjet berilmasa model bo'sh qaytaradi.
+        payload["tools"] = [{"google_search": {}}]
+        payload["generationConfig"].pop("thinkingConfig", None)
+        # Limit KATTA: qidiruv paytida "o'ylash" tokenlari ham shu hisobdan
+        # yeyiladi. 4000 da javob o'rtasidan kesilib, tayyor natija shaklga
+        # mos kelmay qolardi — qidiruv kvotasi esa bekorga sarflanardi.
+        payload["generationConfig"]["maxOutputTokens"] = 8000
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
     body = json.dumps(payload).encode()
@@ -267,9 +294,65 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
             d = json.load(r)
-        return (d["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+        return _gemini_text(d)
 
     return _call_with_keys("GEMINI_API_KEY", _once)
+
+
+def _gemini_models() -> list:
+    """Zanjirdagi gemini modellari (qidiruv faqat Gemini'da bor)."""
+    out = []
+    for provider, model in _text_chain() + _chain():
+        if provider == "gemini" and model not in out:
+            out.append(model)
+    return out
+
+
+def web_search(prompt: str, system: str = "", validate=None,
+               timeout: float = None) -> str:
+    """Internetdan (Google) izlab javob yozadi — Gemini grounding orqali.
+
+    Oddiy `chat()` dan farqi: model o'z xotirasidan emas, QIDIRUV natijasidan
+    yozadi. Do'kondagi tovar nomlari mahalliy va model ularni bilmasligi
+    mumkin — internet esa biladi.
+
+    Qidiruv har provayderda yo'q, shuning uchun zanjirdan faqat Gemini
+    modellari sinaladi. Hech biri ishlamasa '' — chaqiruvchi boshqa yo'l
+    (DuckDuckGo) bilan davom etadi. Bloklovchi: executor'da chaqiring.
+    """
+    global _TIMEOUT
+    st = _load_state()
+    cooldown = st.get("cooldown", {})
+    now = time.time()
+    saved = _TIMEOUT
+    if timeout:
+        _TIMEOUT = int(timeout)
+    try:
+        for model in _gemini_models():
+            tag = f"search:gemini:{model}"
+            if cooldown.get(tag, 0) > now:
+                continue
+            try:
+                out = _call_gemini(model, prompt, "", system=system, search=True)
+                if out and validate is not None and not validate(out):
+                    raise RuntimeError("javob shakli mos emas")
+                if out:
+                    cooldown.pop(tag, None)
+                    st["cooldown"] = cooldown
+                    _save_state(st)
+                    logger.info("🔎 Qidiruvli javob: %s", model)
+                    return out
+                raise RuntimeError("bo'sh javob")
+            except _NoKey:
+                return ""
+            except Exception as e:
+                cooldown[tag] = now + _cooldown_for(e)
+                logger.warning("🔎 %s qidiruvi yiqildi: %s", tag, str(e)[:160])
+        st["cooldown"] = cooldown
+        _save_state(st)
+        return ""
+    finally:
+        _TIMEOUT = saved
 
 
 def _call_openai_compat(provider: str, model: str, prompt: str,

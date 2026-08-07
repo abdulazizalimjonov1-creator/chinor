@@ -163,6 +163,9 @@
                     <span class="search-ic">🔍</span>
                     <input type="text" id="clCatalogSearch" placeholder="Mahsulot qidirish..." autocomplete="off" oninput="loadClientCatalog()">
                     <button id="clCatalogClear" class="search-clear" style="display:none" onclick="$('clCatalogSearch').value='';loadClientCatalog()">✕</button>
+                    <!-- Mijoz do'konda turib tovarning kodini o'qitadi va
+                         narxi bilan ma'lumotini darrov ko'radi -->
+                    <button class="scan-btn" onclick="scanInto('client')" title="Shtrix-kodni skanerlash">📷</button>
                 </div>
                 <div id="clCatCips" class="cl-cat-chips"></div>
                 <div id="clCatalogList"><div class="cl-loading">Yuklanmoqda...</div></div>
@@ -369,8 +372,34 @@
                 <span class="scan-title">📷 Kodni ramkaga tuting</span>
                 <button class="scan-close" onclick="stopScan()">✕ Yopish</button>
             </div>
-            <div id="reader"></div>
+            <div class="scan-stage">
+                <div id="reader"></div>
+                <!-- Ramka + harakatlanuvchi chiziq: kodni qayerga tutish
+                     kerakligini ko'rsatadi va skaner ishlayotganini bildiradi -->
+                <div class="scan-frame" aria-hidden="true">
+                    <span class="scan-corner tl"></span><span class="scan-corner tr"></span>
+                    <span class="scan-corner bl"></span><span class="scan-corner br"></span>
+                    <span class="scan-laser"></span>
+                </div>
+            </div>
             <div class="scan-hint" id="scanHint">QR yoki shtrix-kodni kamera ramkasi ichiga joylang</div>
+        </div>
+
+        <!-- O'z kameramiz: Telegram'ning Android WebView'i file-input
+             dagi `capture` atributini e'tiborsiz qoldiradi va doim
+             galereyani ochadi. Bu oyna to'g'ridan kamera oqimini
+             ko'rsatadi va suratni o'zimiz olamiz. -->
+        <div id="camOverlay">
+            <div class="scan-top">
+                <span class="scan-title">📷 Mahsulotni suratga oling</span>
+                <button class="scan-close" onclick="closePhotoCam()">✕ Yopish</button>
+            </div>
+            <div class="cam-stage"><div id="camView"></div></div>
+            <div class="cam-actions">
+                <button class="cam-flip" onclick="flipPhotoCam()" title="Kamerani almashtirish">🔄</button>
+                <button class="cam-shot" onclick="takePhoto()" aria-label="Suratga olish"></button>
+                <button class="cam-flip" onclick="pickProductImage('gallery')" title="Galereyadan">🖼</button>
+            </div>
         </div>
 
         <div id="clientPickModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;padding:40px 16px;">
