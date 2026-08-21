@@ -117,6 +117,7 @@ function withAuth(fn) {
 
 ipcMain.handle('data:stats', withAuth((base, token) => api.stats(base, token)));
 ipcMain.handle('data:recentSales', withAuth((base, token, since) => api.recentSales(base, token, since || '')));
+ipcMain.handle('data:salesSummary', withAuth((base, token, days) => api.salesSummary(base, token, days || 31)));
 ipcMain.handle('data:orders', withAuth((base, token) => api.orders(base, token)));
 ipcMain.handle('data:products', withAuth((base, token, arg) => {
   // Eski chaqiruv: raqam (page). Yangi: { page, limit }.

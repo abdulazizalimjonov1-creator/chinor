@@ -537,13 +537,47 @@ async function renderSalesReport(c) {
 
   // Grafiklar uchun real sotuvlarni filtrlash (eng eski → eng yangi).
   // total_sum/profit_sum qaytarishda allaqachon manfiy — belgi qo'shilmaydi.
+  //
+  // «Bu oy» rejimida har chek uchun alohida nuqta qo'yilsa, 3800+ nuqta
+  // chiqadi va grafik o'qib bo'lmas holga keladi (server ham hammasini
+  // bermaydi — chegara 1000 chek). Shuning uchun oylik ko'rinishda KUNLIK
+  // yig'indi chiziladi: har kun bitta nuqta.
   const ordered = sales.slice().reverse();
-  const labels = ordered.map((s) => {
-    const t = parseSaleTs(s.created_at);
-    return t ? `${String(t.getUTCHours() % 24).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : '';
-  });
-  const revVals = ordered.map((s) => Number(s.total_sum) || 0);
-  const profVals = ordered.map((s) => Number(s.profit_sum) || 0);
+  let labels, revVals, profVals;
+  if (range === 'month') {
+    // Kunlik yig'indi SERVERDAN — chek ro'yxati 1000 tada cheklangani uchun
+    // undan yig'ilsa oyning faqat oxirgi bir necha kuni chiqardi.
+    const sum = await api.getSalesSummary(31);
+    const daily = (sum && sum.ok && Array.isArray(sum.daily))
+      ? sum.daily.slice().reverse() : [];
+    if (daily.length) {
+      labels = daily.map((d) => String(d.day).slice(8) + '.' + String(d.day).slice(5, 7));
+      revVals = daily.map((d) => Number(d.sum) || 0);
+      profVals = daily.map((d) => Number(d.profit) || 0);
+    } else {
+      // Zaxira yo'l: eski server yoki cheklar hali yig'ilmagan.
+      const byDay = new Map();
+      ordered.forEach((s) => {
+        const day = String(s.created_at || '').slice(0, 10);
+        if (!day) return;
+        const d = byDay.get(day) || { rev: 0, prof: 0 };
+        d.rev += Number(s.total_sum) || 0;
+        d.prof += Number(s.profit_sum) || 0;
+        byDay.set(day, d);
+      });
+      const days = [...byDay.keys()].sort();
+      labels = days.map((d) => d.slice(8) + '.' + d.slice(5, 7));
+      revVals = days.map((d) => byDay.get(d).rev);
+      profVals = days.map((d) => byDay.get(d).prof);
+    }
+  } else {
+    labels = ordered.map((s) => {
+      const t = parseSaleTs(s.created_at);
+      return t ? `${String(t.getUTCHours() % 24).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : '';
+    });
+    revVals = ordered.map((s) => Number(s.total_sum) || 0);
+    profVals = ordered.map((s) => Number(s.profit_sum) || 0);
+  }
 
   // To'lov turlari. Server endi paid_* qismlarni ham yuboradi — aralash (split)
   // chekning har qismi o'z chelagiga tushadi. Qismlar bo'lmasa (eski server)
@@ -564,6 +598,17 @@ async function renderSalesReport(c) {
     else if (s.payment === 'card') pay.card += v;
     else if (s.payment === 'click') pay.click += v;
   });
+  // To'lov turlari: server endi aniq yig'indini beradi (`/api/stats`), u
+  // butun davrni qamraydi. Chek ro'yxatidan yig'ish esa 1000 ta bilan
+  // cheklangan edi — oylik ko'rinishda yarim rasm chiqardi.
+  const hasServerPay = ['cash_sum', 'card_sum', 'click_sum', 'nasiya_sum']
+    .some((k) => Number(blk[k]) > 0);
+  if (hasServerPay) {
+    pay.cash = Number(blk.cash_sum) || 0;
+    pay.card = Number(blk.card_sum) || 0;
+    pay.click = Number(blk.click_sum) || 0;
+    pay.qarz = Number(blk.nasiya_sum) || 0;
+  }
   const payRows = [
     { name: 'Naqd', v: pay.cash }, { name: 'Karta', v: pay.card },
     { name: 'Click', v: pay.click }, { name: 'Qarz', v: pay.qarz },

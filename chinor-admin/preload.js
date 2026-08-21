@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('chinor', {
   // Hisobot ma'lumotlari (jonli, serverdan)
   getStats: () => ipcRenderer.invoke('data:stats'),
   getRecentSales: (since) => ipcRenderer.invoke('data:recentSales', since),
+  getSalesSummary: (days) => ipcRenderer.invoke('data:salesSummary', days),
   getOrders: () => ipcRenderer.invoke('data:orders'),
   getProducts: (page, limit) => ipcRenderer.invoke('data:products', { page: page || 0, limit: limit || 0 }),
   productQty: (id, delta) => ipcRenderer.invoke('data:productQty', { id, delta }),

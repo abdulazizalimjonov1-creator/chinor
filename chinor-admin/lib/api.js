@@ -45,6 +45,12 @@ module.exports = {
       : `limit=200`;
     return req(base, `/api/sync/recent-sales?${qs}`, { token, timeout: 30000 });
   },
+  // Kunlik aylanma/foyda — YesPOS cheklaridan yig'ilgan. Grafik uchun
+  // chek-bachek ro'yxatdan ko'ra shu yengil va TO'LIQ (ro'yxat 1000 tada
+  // cheklanadi, oyda esa 3800+ chek bo'ladi).
+  salesSummary: (base, token, days = 31) =>
+    req(base, `/api/sales/summary?days=${Number(days) || 31}`, { token, timeout: 25000 }),
+
   orders: (base, token) =>
     req(base, '/api/orders', { token, timeout: 20000 }),
   // `limit` — sahifa hajmi (yangi server 500 gacha qo'llaydi; eskisi e'tiborsiz
