@@ -39,6 +39,90 @@ python -m marketplace.analytics dead --days 30    # muzlagan tovarlar
 python -m marketplace.analytics gap  --days 7     # tugagan-u keltirilmayotgan
 ```
 
+## Buyurtma: kimdan nimani, qanchadan
+
+Maqsad — «ko'z bilan» emas, ketish tezligiga qarab buyurtma berish. Coca-Cola
+tugagan bo'lsa-yu kuniga 1 dona ketsa, unga 17 dona kerak; Fanta 10 dona
+qolgan bo'lsa-yu kuniga 8 ketsa, u 1.2 kunda tugaydi va unga 126 dona kerak.
+«Bor ekan» degan taassurot bilan buyurtma berilsa, pul noto'g'ri tovarga
+ketadi.
+
+**1-qadam — yetkazib beruvchini biriktirish.** Kompaniyaning prixod ro'yxatini
+matn fayl qilib bering (har qatorda bitta tovar; shtrix-kod yoki artikul ham
+bo'lsa aniqroq mos keladi):
+
+```bash
+python -m marketplace.supplier_link import --supplier "Coca-Cola" --file cola.txt
+python -m marketplace.supplier_link import --supplier "Coca-Cola" --file cola.txt --apply
+```
+
+Avval sinov rejimida ishlaydi: nima moslashgani, nimasi shubhali va nimasi
+topilmagani ko'rinadi. Shubhalilarni kod o'zi tanlamaydi — noto'g'ri biriktiruv
+keyin noto'g'ri buyurtmaga aylanadi. Ularni qo'lda:
+
+```bash
+python -m marketplace.supplier_link assign --supplier "Coca-Cola" --sku 16099
+python -m marketplace.supplier_link list          # kimda nechta tovar bor
+python -m marketplace.supplier_link show --supplier "Coca-Cola"
+```
+
+Biriktiruv `pos.db` da saqlanadi, ya'ni Chinor admin ilovasining
+«Ombor → Yetkazib beruvchilar» bo'limida ham ko'rinadi va tahrirlanadi.
+
+**2-qadam — agent qachon kelishini belgilash.** Har kompaniya har xil vaqtda
+keladi, shuning uchun buyurtma miqdori ham har xil bo'lishi kerak: haftada bir
+keladigan agentga 9 kunlik, oyiga bir keladiganiga 37 kunlik zaxira kerak.
+
+```bash
+python -m marketplace.supplier_link schedule --supplier "Coca-Cola" --lead 2 --cycle 7
+```
+
+`--lead` — buyurtma berilgandan tovar kelguncha necha kun.
+`--cycle` — agent necha kunda bir keladi. Buyurtma **keyingi kelishigacha**
+yetishi kerak, shuning uchun miqdor `lead + cycle` kunlik ehtiyojga
+hisoblanadi. Belgilanmasa umumiy standart (3 + 14) ishlatiladi.
+
+Bu qiymatlar `suppliers.lead_days` / `suppliers.cycle_days` ustunlarida
+saqlanadi va `/api/suppliers` orqali ham qaytariladi (admin ilovasi keyin
+ko'rsatishi mumkin).
+
+**3-qadam — buyurtma ro'yxati.**
+
+```bash
+python -m marketplace.reorder                       # barcha kompaniyalar
+python -m marketplace.reorder --supplier "Coca-Cola"
+python -m marketplace.reorder --lead 5 --cover 21   # standartni vaqtincha o'zgartirish
+python -m marketplace.reorder --telegram             # qisqa ro'yxatni Telegram'ga
+python -m marketplace.reorder --csv                 # Excel uchun CSV
+python -m marketplace.velocity --top 30             # faqat ketish tezligi
+```
+
+Hisob: `kerak = kunlik_ketish × (yetkazish_kuni + kelish_oralig'i) − qoldiq`.
+Muddat avval kompaniyanikidan olinadi (2-qadam), bo'lmasa umumiy
+standart 3 + 14 kun (`REORDER_LEAD_DAYS`, `REORDER_COVER_DAYS`).
+
+Holatlar: **SHOSHILINCH** (tugagan-u sotilardi — har kuni savdo yo'qolmoqda),
+**BUYURTMA**, **YETADI**, **KO'P** (60 kundan uzoqqa yetadi — pul qotgan),
+**MUZLAGAN**, **NOANIQ** (tarix qisqa).
+
+### Tezlik qayerdan olinadi
+
+Gateway savdo tarixini bermaydi, shuning uchun sotuv qoldiq kamayishidan
+hisoblanadi. Ikkita manba, shu tartibda:
+
+1. **`stock_flow`** — har sinxronda (20 daqiqada) oldingi surat bilan
+   solishtirilib yig'ilgan kamayish. Kirim sotuvni yashira olmaydi.
+2. **`stock_daily`** farqi — eski kunlar uchun zaxira yo'l. Bir kunda 10 ta
+   sotilib 50 ta kirim qilinsa, kunlik surat faqat «+40 kirim» ko'radi va
+   sotuv yo'qoladi.
+
+Shuning uchun `stock_flow` qo'shildi: aniq raqam **shu jadval to'ldirila
+boshlagan kundan** keyin chiqadi, undan oldingi kunlar taxminiy bo'lib qoladi.
+
+**Muhim:** o'rtacha faqat tovar **sotuvda turgan** kunlarga bo'linadi. Tugab
+yotgan kunlarni bo'linmaga qo'shsak, ayni tugab qolgan (ya'ni eng kerakli)
+tovarning tezligi past ko'rinib, yana kam buyurtma qilinardi.
+
 ## Chinor POS'ga ulash (ko'prik)
 
 YesPOS qoldiq/narxini `pos.db` ga ko'chiradi — kassa, admin va bot o'sha bazadan
@@ -127,9 +211,12 @@ klient o'zi moslashib kutadi.
 |---|---|
 | `config.py` | `.env` dan sozlamalar, baza va rasm yo'llari |
 | `client.py` | Gateway klienti — limit hisobi, qayta urinish, xato tarjimasi |
-| `db.py` | SQLite sxema: `categories`, `products`, `stock_daily`, `sync_runs` |
+| `db.py` | SQLite sxema: `categories`, `products`, `stock_daily`, `stock_flow`, `sync_runs` |
 | `sync.py` | Katalog/qoldiqni tortib bazaga yozish (CLI) |
 | `analytics.py` | Muzlagan / tugagan-gap hisoblari (CLI) |
+| `velocity.py` | Kunlik ketish tezligi — qoldiq tarixidan (CLI) |
+| `reorder.py` | Yetkazib beruvchi bo'yicha buyurtma ro'yxati (CLI) |
+| `supplier_link.py` | Prixod ro'yxatidan yetkazib beruvchini biriktirish (CLI) |
 | `pos_bridge.py` | YesPOS qoldiq/narxini `pos.db` ga ko'chirish (CLI) |
 | `order_push.py` | Chinor cheklarini YesPOS'ga savdo qilib yuborish (CLI) |
 | `report.py` | Ombor kuzatuv hisoboti, ixtiyoriy Telegram'ga (CLI) |

@@ -87,6 +87,7 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
     ]
 
     qty_changes, price_changes, zero_price, negative = [], [], [], []
+    name_changes = []
     matched = 0
     local_ids = set()
 
@@ -102,6 +103,14 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
             qty_changes.append((r["id"], r["name"], float(r["qty"] or 0), m["stock"]))
         if m["stock"] < 0:
             negative.append((r["id"], r["name"], m["stock"]))
+
+        # Nom ham YesPOS'niki — u yerda tovar qayta nomlansa, bizda eskisi
+        # qolib ketardi (2026-08-20 da 512 ta shunday nom to'planib qolgandi).
+        # Eskirgan nom faqat ko'rinishga emas, YETKAZIB BERUVCHI ro'yxatini
+        # moslashtirishga ham xalaqit beradi — nakladnoy YesPOS nomi bilan
+        # keladi, bizniki esa boshqacha.
+        if (m["name"] or "").strip() and (m["name"] or "").strip() != (r["name"] or "").strip():
+            name_changes.append((r["id"], r["name"], m["name"]))
 
         if m["price"] <= 0:
             zero_price.append((r["id"], r["name"], float(r["sell_price"] or 0)))
@@ -131,6 +140,7 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
         "harvest": harvest,
         "barcode_restore": barcode_restore,
         "matched": matched,
+        "name_changes": name_changes,
         "local_total": len(local),
         "mp_total": len(mp_rows),
         "only_local": sorted(local_ids - set(mp_rows)),
@@ -201,6 +211,11 @@ def apply(pos_db_path: str, mp_rows: dict, p: dict) -> int:
                 (round(new_price, 2), pid),
             )
             touched += 1
+        # Nom — YesPOS'niki. `display_name` (mijozga chiroyli nom) TEGILMAYDI:
+        # u qo'lda yozilgan va sinxron uni yuvib ketmasligi kerak.
+        for pid, _old, new_name in p.get("name_changes") or []:
+            conn.execute("UPDATE products SET name = ? WHERE id = ?", (new_name, pid))
+            touched += 1
         # Saqlangan shtrix-kodlarni qaytaramiz — faqat bo'sh joylarga.
         for pid, bc in p["barcode_restore"]:
             conn.execute(
@@ -251,6 +266,14 @@ def _report(p: dict, pos_db_path: str, day: str) -> None:
         )[:10]:
             print(f"    [{pid}] {name[:34]:<34} {old:>10,.1f} → {new:>10,.1f}")
 
+    names = p.get("name_changes") or []
+    if names:
+        print(f"\n  NOM o'zgarishi: {len(names)}")
+        for pid, old_n, new_n in names[:8]:
+            print(f"    [{pid}] «{old_n[:30]}» → «{new_n[:30]}»")
+        if len(names) > 8:
+            print(f"    … yana {len(names) - 8} ta")
+
     if p["price_changes"]:
         print("\n  Eng katta narx o'zgarishlari:")
         for pid, name, old, new in sorted(
@@ -288,7 +311,7 @@ def main(argv=None) -> int:
         # ishlaganda o'zgarishsiz aylanishlar ko'p bo'ladi — har biriga nusxa
         # olish bekorga disk yeydi.
         if not (p["qty_changes"] or p["price_changes"] or p["barcode_restore"]
-                or p["new_products"]):
+                or p["new_products"] or p.get("name_changes")):
             print("\n✓ O'zgarish yo'q — bazaga tegilmadi.")
             return 0
         n = apply(args.pos_db, mp_rows, p)

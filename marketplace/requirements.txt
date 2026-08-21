@@ -1,2 +1,4 @@
 requests>=2.31.0
 python-dotenv==1.0.0
+# YesPOS chek xabarlarini o'qish uchun (tg_receipts.py)
+telethon>=1.34.0

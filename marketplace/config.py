@@ -43,6 +43,17 @@ DEAD_STOCK_DAYS = int(os.getenv("DEAD_STOCK_DAYS", "30"))
 # Tugagan-u keltirilmayotgan tovar: qoldig'i shuncha kundan beri 0.
 OUT_OF_STOCK_DAYS = int(os.getenv("OUT_OF_STOCK_DAYS", "7"))
 
+# ── Telegram userbot (YesPOS chek xabarlarini o'qish) ─────────────────────
+# Bot boshqa botning xabarini ko'rmaydi, shuning uchun cheklar shaxsiy akkaunt
+# nomidan o'qiladi (`tg_receipts.py`). Kalitlar my.telegram.org dan olinadi va
+# FAQAT `.env` da turadi.
+TG_API_ID = os.getenv("TG_API_ID", "").strip()
+TG_API_HASH = os.getenv("TG_API_HASH", "").strip()
+# Sessiya fayli — akkauntga to'liq kalit. DATA_DIR ichida, git'dan tashqarida.
+TG_SESSION = os.getenv("TG_SESSION", os.path.join(_DATA_DIR, "tg_userbot"))
+# Chek yuboradigan bot (masalan "@yespos_bot") — `dialogs` buyrug'i topadi.
+YESPOS_BOT = os.getenv("YESPOS_BOT", "").strip()
+
 # ── Chinor POS bazasi (ko'prik uchun) ─────────────────────────────────────
 # YesPOS qoldiq/narxi shu bazaga ko'chiriladi. Ulash kaliti:
 # Chinor `products.id` == YesPOS `sku` (98.8% moslik tekshirilgan).

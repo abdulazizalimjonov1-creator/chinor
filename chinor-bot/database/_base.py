@@ -172,6 +172,16 @@ class BaseDB:
         # taniydi, imlosi qanday bo'lsa ham. Bo'sh bo'lsa `name` ishlatiladi.
         if "display_name" not in prod_cols:
             conn.execute("ALTER TABLE products ADD COLUMN display_name TEXT DEFAULT ''")
+        # suppliers.lead_days / suppliers.cycle_days — buyurtma muddatlari.
+        # Har agent har xil paytda keladi: birov haftada bir, birov oyiga bir.
+        # Buyurtma miqdori shu ikki songa bog'liq (marketplace/reorder.py):
+        #   kerak = kunlik_ketish × (lead_days + cycle_days) − qoldiq
+        # 0 = belgilanmagan, umumiy standart ishlatiladi.
+        sup_cols = {r[1] for r in conn.execute("PRAGMA table_info(suppliers)").fetchall()}
+        if "lead_days" not in sup_cols:
+            conn.execute("ALTER TABLE suppliers ADD COLUMN lead_days INTEGER DEFAULT 0")
+        if "cycle_days" not in sup_cols:
+            conn.execute("ALTER TABLE suppliers ADD COLUMN cycle_days INTEGER DEFAULT 0")
         # clients.client_type
         cli_info = conn.execute("PRAGMA table_info(clients)").fetchall()
         cli_cols = {r[1] for r in cli_info}

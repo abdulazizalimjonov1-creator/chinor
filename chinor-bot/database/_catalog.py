@@ -163,7 +163,9 @@ class CatalogMixin:
                 conn.close()
 
     async def update_supplier(self, sid: int, **kw):
-        allowed = {"name", "phone", "note"}
+        # lead_days / cycle_days — buyurtma muddatlari (marketplace/reorder.py
+        # shularga qarab miqdorni hisoblaydi). Har agent har xil paytda keladi.
+        allowed = {"name", "phone", "note", "lead_days", "cycle_days"}
         kw = {k: (v or "").strip() if isinstance(v, str) else v
               for k, v in kw.items() if k in allowed}
         if not kw:

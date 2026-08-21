@@ -67,3 +67,16 @@ chinor-admin/dist/
 marketplace/.env
 data/marketplace.db*
 data/marketplace-images/
+
+# Telegram userbot sessiyasi — akkauntga kalit, HECH QACHON git.ga tushmasin
+data/tg_userbot*
+*.session
+*.session-journal
+
+# Desktop yangilanish fayllari — build natijasi (165 MB), git'da saqlanmaydi.
+# Faqat `latest*.yml` kuzatiladi: u kichik va qaysi versiya chiqarilganini
+# ko'rsatib turadi.
+chinor-bot/updates/**/*.exe
+chinor-bot/updates/**/*.zip
+chinor-bot/updates/**/*.blockmap
+chinor-bot/updates/**/*.dmg

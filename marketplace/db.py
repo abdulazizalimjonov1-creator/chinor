@@ -52,6 +52,24 @@ CREATE TABLE IF NOT EXISTS stock_daily (
 CREATE INDEX IF NOT EXISTS idx_stock_day     ON stock_daily(day);
 CREATE INDEX IF NOT EXISTS idx_stock_product ON stock_daily(product_id, branch, day);
 
+-- Kun ICHIDAGI harakat. `stock_daily` faqat kunning OXIRGI holatini saqlaydi,
+-- shuning uchun kun davomida 10 ta sotilib 50 ta kirim qilinsa — kunlik farq
+-- «+40 kirim» bo'lib ko'rinadi va 10 ta sotuv YO'QOLADI. Sinxron har 20
+-- daqiqada ishlagani uchun har suratni oldingisi bilan solishtirib, kamayishni
+-- (sotuv) va ko'payishni (kirim) ALOHIDA yig'ib boramiz — buyurtma miqdori
+-- shu raqamga suyanadi.
+CREATE TABLE IF NOT EXISTS stock_flow (
+    product_id  INTEGER NOT NULL,
+    branch      TEXT    NOT NULL,
+    day         TEXT    NOT NULL,          -- YYYY-MM-DD (mahalliy vaqt)
+    sold        REAL    NOT NULL DEFAULT 0,  -- kun davomidagi kamayishlar yig'indisi
+    received    REAL    NOT NULL DEFAULT 0,  -- kun davomidagi ko'payishlar yig'indisi
+    ticks       INTEGER NOT NULL DEFAULT 0,  -- nechta suratdan yig'ildi
+    updated_at  TEXT    NOT NULL,
+    PRIMARY KEY (product_id, branch, day)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_day ON stock_flow(day);
+
 -- Shtrix-kodlar. Bu YAGONA nusxada yashaydigan ma'lumot: YesPOS marketplace
 -- API uni bermaydi (u yerda faqat `classcode` = IKPU soliq kodi va ketma-ket
 -- `sku` bor). Ya'ni bazani YesPOS'dan qayta qursak, shtrix-kod yo'qolardi.
@@ -201,6 +219,10 @@ class MarketplaceDB:
             )
             for r in rows
         ]
+        # DIQQAT: tartib muhim — oldingi surat ustidan yozilishidan OLDIN
+        # farqni yig'ib olamiz, aks holda kun ichidagi sotuv yo'qoladi.
+        self._accumulate_flow(payload, branch, day, ts)
+
         self.conn.executemany(
             """INSERT INTO stock_daily
                    (product_id, branch, day, price, stock, low_stock, captured_at)
@@ -212,6 +234,55 @@ class MarketplaceDB:
         )
         self.conn.commit()
         return len(payload)
+
+    def _accumulate_flow(self, payload: list, branch: str, day: str, ts: str) -> int:
+        """Yangi suratni oldingisi bilan solishtirib `stock_flow` ga yozadi.
+
+        Solishtirish bazasi: shu kunning allaqachon yozilgan surati; bo'lmasa —
+        oxirgi oldingi kun (tunda bo'lgan o'zgarish bugungi kunga tushadi).
+        Faqat o'zgargan tovarlar yoziladi — jadval bekorga shishmasin.
+        """
+        prev = {
+            int(r["product_id"]): float(r["stock"])
+            for r in self.conn.execute(
+                """SELECT product_id, stock FROM stock_daily
+                    WHERE branch = ? AND day = (SELECT MAX(day) FROM stock_daily
+                                                 WHERE branch = ? AND day < ?)""",
+                (branch, branch, day),
+            )
+        }
+        prev.update(
+            {
+                int(r["product_id"]): float(r["stock"])
+                for r in self.conn.execute(
+                    "SELECT product_id, stock FROM stock_daily WHERE branch = ? AND day = ?",
+                    (branch, day),
+                )
+            }
+        )
+
+        rows = []
+        for pid, _br, _d, _price, stock, _low, _cap in payload:
+            before = prev.get(pid)
+            if before is None or before == stock:
+                continue  # yangi tovar yoki o'zgarmagan — yozadigan narsa yo'q
+            sold = before - stock if before > stock else 0.0
+            recv = stock - before if stock > before else 0.0
+            rows.append((pid, branch, day, sold, recv, ts))
+
+        if not rows:
+            return 0
+        self.conn.executemany(
+            """INSERT INTO stock_flow (product_id, branch, day, sold, received, ticks, updated_at)
+               VALUES (?,?,?,?,?,1,?)
+               ON CONFLICT(product_id, branch, day) DO UPDATE SET
+                   sold=stock_flow.sold+excluded.sold,
+                   received=stock_flow.received+excluded.received,
+                   ticks=stock_flow.ticks+1,
+                   updated_at=excluded.updated_at""",
+            rows,
+        )
+        return len(rows)
 
     def snapshot_days(self, branch: Optional[str] = None) -> int:
         """Nechta kunlik surat yig'ilgan (analitika tayyorligini bildiradi)."""
