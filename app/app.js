@@ -1739,6 +1739,303 @@
                 escapeHtml((data && data.error) || 'Saqlanmadi') + '</span>';
         };
 
+        // ── Buyurtma ro'yxati ────────────────────────────────────────────
+        // Kimdan nimani, qanchadan olish kerak. Miqdor ketish tezligidan
+        // hisoblanadi (server: marketplace/reorder.py) — bu yerda faqat
+        // ko'rsatish. Ikki qadam: kompaniyalar → bitta kompaniya ro'yxati.
+        function _rmoney(v) { return Number(v || 0).toLocaleString('uz-UZ'); }
+
+        // Tahlil davri — ketish tezligi QAYSI kunlardan hisoblanishi.
+        // Qoldiq har doim hozirgi: davr faqat savdo tezligiga taalluqli.
+        let _reoWin = { days: 30, from: '', to: '' };
+
+        function _reoQuery() {
+            return _reoWin.from || _reoWin.to
+                ? `days=${_reoWin.days}&from=${_reoWin.from}&to=${_reoWin.to}`
+                : `days=${_reoWin.days}`;
+        }
+
+        function _reoLabel() {
+            return (_reoWin.from || _reoWin.to)
+                ? `${_reoWin.from || '…'} — ${_reoWin.to || 'bugun'}`
+                : `oxirgi ${_reoWin.days} kun`;
+        }
+
+        function _reoPeriodBox(sid) {
+            const btn = (d, t) => `<button class="rcpt-fbtn${
+                (!_reoWin.from && !_reoWin.to && _reoWin.days === d) ? ' active' : ''
+            }" onclick="setReoPreset(${d}, ${sid})">${t}</button>`;
+            return `<div class="stat-block">
+                <div class="toprow"><span>📅 Savdo davri</span>
+                     <span class="val">${escapeHtml(_reoLabel())}</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+                    ${btn(7, '7 kun')}${btn(20, '20 kun')}${btn(30, '30 kun')}${btn(90, '90 kun')}
+                    <button class="rcpt-fbtn${(_reoWin.from || _reoWin.to) ? ' active' : ''}"
+                            onclick="toggleReoDates()">📅 Sana tanlash</button>
+                </div>
+                <div id="reoDates" style="display:${(_reoWin.from || _reoWin.to) ? 'block' : 'none'}">
+                    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                        <input type="date" id="reoFrom" value="${_reoWin.from}"
+                               max="${new Date().toISOString().slice(0, 10)}"
+                               style="flex:1;padding:8px;border-radius:8px;
+                                      border:1px solid var(--border,#ccc)">
+                        <span>—</span>
+                        <input type="date" id="reoTo" value="${_reoWin.to}"
+                               max="${new Date().toISOString().slice(0, 10)}"
+                               style="flex:1;padding:8px;border-radius:8px;
+                                      border:1px solid var(--border,#ccc)">
+                    </div>
+                    <button class="more-btn" style="width:100%"
+                            onclick="applyReoDates(${sid})">Qo'llash</button>
+                </div></div>`;
+        }
+
+        window.setReoPreset = function (days, sid) {
+            _reoWin = { days: days, from: '', to: '' };
+            sid ? openReorderList(sid) : openReorder();
+        };
+
+        window.toggleReoDates = function () {
+            const box = $('reoDates');
+            if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        };
+
+        window.applyReoDates = function (sid) {
+            const f = (($('reoFrom') || {}).value || '').trim();
+            const t = (($('reoTo') || {}).value || '').trim();
+            if (!f && !t) { alert('Kamida bitta sana tanlang'); return; }
+            if (f && t && f > t) { alert('Boshlanish sanasi tugashdan keyin bo\'lmasin'); return; }
+            _reoWin = { days: _reoWin.days, from: f, to: t };
+            sid ? openReorderList(sid) : openReorder();
+        };
+
+        window.openReorder = async function () {
+            openTool('📋 Buyurtma ro\'yxati');
+            const { ok, status, data } = await apiFetch('/api/reorder/suppliers?' + _reoQuery());
+            if (!ok || !data.ok) return openTool('📋 Buyurtma ro\'yxati', toolError(status, data));
+
+            let rows = '';
+            (data.suppliers || []).forEach(s => {
+                const urgent = s.urgent
+                    ? `<span class="val-red">🔴 ${s.urgent} ta tugagan</span>` : '';
+                const line = s.to_order
+                    ? `${s.to_order} pozitsiya · ${_rmoney(s.amount)} so'm`
+                    : '<span class="val-green">✅ Buyurtma kerak emas</span>';
+                const zeroTxt = s.zero_stock
+                    ? `<br><small>🔵 ${s.zero_stock} ta tovar qoldig'i 0</small>` : '';
+                rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
+                              onclick="openReorderList(${s.id})">
+                    <span><b>${escapeHtml(s.name)}</b><br>
+                      <small style="opacity:.75">${line}</small>
+                      ${urgent ? '<br><small>' + urgent + '</small>' : ''}${zeroTxt}</span>
+                    <span class="val">›</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Yetkazib beruvchi biriktirilmagan</div>';
+
+            const warn = data.warning
+                ? `<div class="list-status" style="text-align:left">⚠️ ${escapeHtml(data.warning)}</div>` : '';
+            const rest = data.unassigned
+                ? `<div class="list-status" style="text-align:left">
+                     ${data.unassigned} ta harakatdagi tovarga yetkazib beruvchi
+                     biriktirilmagan — ular hech qaysi ro'yxatga tushmaydi.</div>` : '';
+            openTool('📋 Buyurtma ro\'yxati',
+                `${warn}${_reoPeriodBox(0)}<div class="stat-block">${rows}</div>${rest}`);
+        };
+
+        window.openReorderList = async function (sid) {
+            openTool('📋 Buyurtma');
+            const { ok, status, data } = await apiFetch(
+                '/api/reorder?supplier_id=' + sid + '&' + _reoQuery());
+            if (!ok || !data.ok) return openTool('📋 Buyurtma', toolError(status, data));
+
+            const all = data.items || [];
+            const need = all.filter(i => i.need > 0);
+            // Qoldiq 0 ga tushgan, lekin buyurtma hisoblanmagan tovarlar —
+            // ko'k belgi bilan ALOHIDA. Ular tahlilga tushmagan (savdo tarixi
+            // yo'q yoki faqat yirik savdo bo'lgan), shuning uchun odam ko'zdan
+            // kechirishi kerak: kerakmi yoki umuman olib qo'yiladimi.
+            const zero = all.filter(i => i.need <= 0 && i.stock <= 0);
+            const rest = all.filter(i => i.need <= 0 && i.stock > 0);
+
+            const row = (i) => {
+                const mark = i.status === 'SHOSHILINCH' ? '🔴'
+                           : i.status === 'BUYURTMA' ? '🟡'
+                           : i.stock <= 0 ? '🔵' : '⚪';
+                const left = (i.days_left === null) ? '—' : (i.days_left + ' kun');
+                const qty = i.need > 0 ? `<b>${i.need}</b>` : '—';
+                // Yirik (bir martalik) savdo miqdordan chiqarilgan — buni
+                // yashirmaymiz: yana shunday xarid kutilsa odam o'zi qo'shadi.
+                const bulk = i.bulk_count
+                    ? `<br><small class="val-red">⚠ ${escapeHtml(i.bulk_note)} —
+                       hisobga olinmadi</small>` : '';
+                return `<div class="toprow" style="align-items:flex-start">
+                    <span>${mark} ${escapeHtml(i.name)}<br>
+                      <small style="opacity:.7">kuniga ${i.rate} · qoldiq ${i.stock} ·
+                      yetadi ${left}</small>${bulk}</span>
+                    <span class="val">${qty}</span></div>`;
+            };
+
+            const warn = data.warning
+                ? `<div class="list-status" style="text-align:left">⚠️ ${
+                    escapeHtml(data.warning)}</div>` : '';
+            let html = warn + _reoPeriodBox(sid) + `<div class="stat-block">
+                <button class="more-btn" style="width:100%"
+                        onclick="sendReorderTelegram(${sid})">📤 Excel'ni Telegramga yuborish</button>
+                <button class="more-btn" style="width:100%;margin-top:6px;opacity:.85"
+                        onclick="downloadReorder(${sid})">📥 Brauzerda yuklab olish</button>
+                <div id="reoMsg" class="list-status"></div>
+                <div class="toprow"><span>Buyurtmaga</span>
+                     <span class="val">${need.length} pozitsiya</span></div>
+                <div class="toprow"><span>Taxminiy summa</span>
+                     <span class="val">${_rmoney(data.total)} so'm</span></div>`;
+            if (data.lost_per_day > 0) {
+                html += `<div class="toprow"><span>Tugagani uchun kunlik zarar</span>
+                     <span class="val val-red">${_rmoney(data.lost_per_day)} so'm</span></div>`;
+            }
+            html += `<div class="toprow"><span>Muddat</span>
+                     <span class="val">${data.lead}+${data.cycle} kun</span></div></div>`;
+
+            html += '<div class="stat-block">' +
+                (need.length ? need.map(row).join('')
+                             : '<div class="list-status">✅ Hozircha kerak emas</div>') +
+                '</div>';
+            if (zero.length) {
+                html += `<div class="stat-block">
+                    <h3>🔵 Qoldiq 0 — ko'rib chiqing (${zero.length})</h3>
+                    <div class="list-status" style="text-align:left">
+                      Tugagan, lekin savdo ma'lumoti yetarli emas — buyurtma
+                      miqdorini o'zingiz belgilaysiz.</div>` +
+                    zero.map(row).join('') + '</div>';
+            }
+            if (rest.length) {
+                html += `<div class="stat-block"><h3 style="opacity:.7">⚪ Yetarli (${rest.length})</h3>` +
+                    rest.map(row).join('') + '</div>';
+            }
+            html += `<div class="stat-block"><button class="more-btn" style="width:100%"
+                        onclick="openReorder()">← Kompaniyalar</button></div>`;
+            openTool('📋 ' + escapeHtml(data.name || 'Buyurtma'), html);
+        };
+
+        window.sendReorderTelegram = async function (sid) {
+            const msg = $('reoMsg');
+            if (msg) msg.textContent = 'Tayyorlanmoqda...';
+            const { ok, data } = await apiFetch('/api/reorder/send', {
+                method: 'POST',
+                body: JSON.stringify({
+                    supplier_id: sid, days: _reoWin.days,
+                    from: _reoWin.from, to: _reoWin.to
+                })
+            });
+            if (ok && data && data.ok) {
+                if (msg) msg.innerHTML = '<span class="val-green">✅ Telegramga yuborildi — ' +
+                    'bot suhbatidan oching</span>';
+            } else if (msg) {
+                msg.innerHTML = '<span class="val-red">' +
+                    escapeHtml((data && data.error) || 'Yuborilmadi') + '</span>';
+            }
+        };
+
+        window.downloadReorder = function (sid) {
+            const msg = $('reoMsg');
+            if (msg) msg.textContent = 'Tayyorlanmoqda...';
+            // Eksport bilan bir xil yo'l: <a download> ga header qo'shib
+            // bo'lmaydi, shuning uchun imzo query orqali ketadi.
+            const url = `${API_BASE_URL}/api/reorder/export?supplier_id=${sid}` +
+                        `&${_reoQuery()}` +
+                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
+            try {
+                if (tg && tg.openLink) tg.openLink(url);
+                else window.open(url, '_blank');
+                if (msg) msg.innerHTML = '<span class="val-green">✅ Yuklanmoqda…</span>';
+            } catch (e) {
+                if (msg) msg.innerHTML = '<span class="val-red">Ochilmadi</span>';
+            }
+        };
+
+        // ── Savdo tarixi (YesPOS cheklari) ───────────────────────────────
+        // Manba: YesPOS boti Telegramga yuborgan cheklar. Eski «Cheklar»
+        // ekrani Chinor kassasiniki — u tegilmagan, bu yonida turadi.
+        let _salesDays = 1;
+        let _turnDays = 30;
+
+        window.openSalesHistory = async function () {
+            openTool('🧾 Savdo tarixi');
+            const { ok, status, data } = await apiFetch('/api/sales/history?days=' + _salesDays);
+            if (!ok || !data.ok) return openTool('🧾 Savdo tarixi', toolError(status, data));
+
+            const btn = (d, t) => `<button class="rcpt-fbtn${_salesDays === d ? ' active' : ''}"
+                onclick="setSalesDays(${d})">${t}</button>`;
+
+            let head = `<div class="stat-block">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                    ${btn(1, 'Bugun')}${btn(7, '7 kun')}${btn(30, '30 kun')}
+                </div>`;
+            (data.daily || []).slice(0, 7).forEach(d => {
+                head += `<div class="toprow"><span>${d.day}</span>
+                    <span class="val">${d.count} chek · ${_rmoney(d.sum)} so'm</span></div>`;
+            });
+            head += '</div>';
+
+            let rows = '';
+            (data.items || []).forEach(r => {
+                const mark = r.kind === 'qaytarish' ? '↩️'
+                           : r.kind === 'nasiya' ? '🤝' : '🧾';
+                const who = r.client ? ' · ' + escapeHtml(r.client) : '';
+                rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
+                              onclick="openSaleReceipt(${r.id})">
+                    <span>${mark} №${escapeHtml(r.doc_no)} <small style="opacity:.7">
+                      ${escapeHtml(r.at.slice(5, 16))}${who}</small><br>
+                      <small style="opacity:.7">${r.lines} tovar ·
+                      ${escapeHtml(r.cashier)}</small></span>
+                    <span class="val">${_rmoney(r.payable)}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Bu davrda chek yo\'q</div>';
+
+            openTool('🧾 Savdo tarixi', head + `<div class="stat-block">${rows}</div>`);
+        };
+
+        window.setSalesDays = function (d) { _salesDays = d; openSalesHistory(); };
+
+        window.openSaleReceipt = async function (id) {
+            openTool('🧾 Chek');
+            const { ok, status, data } = await apiFetch('/api/sales/receipt?id=' + id);
+            if (!ok || !data.ok) return openTool('🧾 Chek', toolError(status, data));
+
+            let rows = '';
+            (data.items || []).forEach(i => {
+                // Katalogga bog'lanmagan qator tahlilga tushmaydi — belgilaymiz.
+                const warn = i.linked ? '' :
+                    ' <small class="val-red">(katalogda topilmadi)</small>';
+                rows += `<div class="toprow" style="align-items:flex-start">
+                    <span>${escapeHtml(i.name)}${warn}<br>
+                      <small style="opacity:.7">${i.qty} × ${_rmoney(i.price)}</small></span>
+                    <span class="val">${_rmoney(i.amount)}</span></div>`;
+            });
+
+            openTool('🧾 №' + escapeHtml(data.doc_no), `
+                <div class="stat-block">
+                    <div class="toprow"><span>Sana</span>
+                         <span class="val">${escapeHtml(data.at)}</span></div>
+                    <div class="toprow"><span>Turi</span>
+                         <span class="val">${escapeHtml(data.kind)}</span></div>
+                    <div class="toprow"><span>Sotuvchi</span>
+                         <span class="val">${escapeHtml(data.cashier)}</span></div>
+                    ${data.client ? `<div class="toprow"><span>Mijoz</span>
+                         <span class="val">${escapeHtml(data.client)}</span></div>` : ''}
+                </div>
+                <div class="stat-block">${rows}</div>
+                <div class="stat-block">
+                    <div class="toprow"><span>Jami</span>
+                         <span class="val">${_rmoney(data.total)} so'm</span></div>
+                    ${data.discount ? `<div class="toprow"><span>Chegirma</span>
+                         <span class="val">${_rmoney(data.discount)} so'm</span></div>` : ''}
+                    <div class="toprow"><span><b>To'landi</b></span>
+                         <span class="val"><b>${_rmoney(data.payable)} so'm</b></span></div>
+                    <button class="more-btn" style="width:100%;margin-top:8px"
+                            onclick="openSalesHistory()">← Savdo tarixi</button>
+                </div>`);
+        };
+
         // ── Past qoldiq ──────────────────────────────────────────────────
         window.openLowStock = async function () {
             openTool('⚠️ Past qoldiq');
@@ -1843,6 +2140,73 @@
         };
 
         // ── Umumiy foyda ─────────────────────────────────────────────────
+        // Aylanma va foyda — YesPOS CHEKLARIDAN (haqiqiy savdo). Chinor
+        // bazasidagi `sales` jadvalida bir nechta yozuv bor, xolos: savdo
+        // YesPOS kassasida bo'ladi.
+        window.openTurnover = async function (days) {
+            _turnDays = days || _turnDays;
+            openTool('💰 Aylanma va foyda');
+            const { ok, status, data } = await apiFetch('/api/sales/summary?days=' + _turnDays);
+            if (!ok || !data.ok) return openTool('💰 Aylanma va foyda', toolError(status, data));
+
+            const btn = (d, t) => `<button class="rcpt-fbtn${_turnDays === d ? ' active' : ''}"
+                onclick="openTurnover(${d})">${t}</button>`;
+            const t = data.today || {}, p = data.period || {};
+
+            let html = `<div class="stat-block">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                    ${btn(7, '7 kun')}${btn(30, '30 kun')}${btn(90, '90 kun')}
+                </div>
+                <h3>Bugun (${escapeHtml(t.day || '')})</h3>
+                <div class="toprow"><span>Aylanma</span>
+                     <span class="val">${_rmoney(t.revenue)} so'm</span></div>
+                <div class="toprow"><span>Foyda</span>
+                     <span class="val val-green">${_rmoney(t.profit)} so'm</span></div>
+                <div class="toprow"><span>Cheklar</span>
+                     <span class="val">${t.count}</span></div>
+            </div>
+            <div class="stat-block">
+                <h3>${_turnDays} kunda</h3>
+                <div class="toprow"><span>Aylanma</span>
+                     <span class="val">${_rmoney(p.revenue)} so'm</span></div>
+                <div class="toprow"><span>Foyda</span>
+                     <span class="val val-green">${_rmoney(p.profit)} so'm</span></div>
+                <div class="toprow"><span>Cheklar</span>
+                     <span class="val">${p.count}</span></div>
+                <div class="toprow"><span>O'rtacha chek</span>
+                     <span class="val">${_rmoney(p.avg_check)} so'm</span></div>`;
+            if (data.profit_coverage < 100) {
+                html += `<div class="list-status" style="text-align:left">
+                    ⚠️ Foyda savdoning ${data.profit_coverage}% i bo'yicha hisoblandi —
+                    qolganida tannarx yoki katalog bog'lanishi yo'q.</div>`;
+            }
+            html += '</div>';
+
+            let rows = '';
+            (data.daily || []).slice(0, 14).forEach(d => {
+                rows += `<div class="toprow"><span>${d.day} <small style="opacity:.6">
+                    (${d.count})</small></span><span class="val">${_rmoney(d.sum)}
+                    <small class="val-green">+${_rmoney(d.profit)}</small></span></div>`;
+            });
+            html += `<div class="stat-block"><h3>Kunlik aylanma</h3>${rows}</div>`;
+
+            let tops = '';
+            (data.top_products || []).forEach(x => {
+                tops += `<div class="toprow"><span>${escapeHtml(x.name)}</span>
+                    <span class="val">${x.qty} · ${_rmoney(x.sum)}</span></div>`;
+            });
+            html += `<div class="stat-block"><h3>Top tovarlar</h3>${tops}</div>`;
+
+            let cash = '';
+            (data.cashiers || []).forEach(x => {
+                cash += `<div class="toprow"><span>${escapeHtml(x.name)}</span>
+                    <span class="val">${x.count} chek · ${_rmoney(x.sum)}</span></div>`;
+            });
+            if (cash) html += `<div class="stat-block"><h3>Sotuvchilar</h3>${cash}</div>`;
+
+            openTool('💰 Aylanma va foyda', html);
+        };
+
         window.openProfit = async function () {
             openTool('💰 Umumiy foyda');
             const { ok, status, data } = await apiFetch('/api/stats');

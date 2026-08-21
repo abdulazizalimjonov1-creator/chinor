@@ -2035,14 +2035,39 @@ async def api_stats(request: web.Request):
         "revenue_sum": float(t.get("revenue", 0) or 0),
     } for t in top]
 
-    return web.json_response({
+    payload = {
         "ok": True,
         "rate": rate,
         "today": block(st_today),
         "month": block(st_month),
         "month_label": now_local().strftime("%Y-%m"),
         "top_products": top_list,
-    })
+        "source": "chinor",
+    }
+
+    # HAQIQIY SAVDO — YesPOS cheklaridan.
+    #
+    # Savdo YesPOS kassasida bo'ladi, Chinor `sales` jadvalida bir nechta
+    # yozuv bor xolos. Shuning uchun aylanma/foyda cheklardan olinadi va
+    # yuqoridagi bloklar ustidan yoziladi. Javob SHAKLI o'zgarmaydi —
+    # Mini App ham, chinor-admin ilovasi ham qayta qurilmasdan to'g'ri
+    # raqamni ko'radi.
+    #
+    # Cheklar hali yig'ilmagan bo'lsa (yoki xato bo'lsa) eski qiymat qoladi:
+    # bo'sh ekran ko'rsatgandan ko'ra bor ma'lumot yaxshiroq.
+    try:
+        from bot.api_receipts import stats_blocks
+        real = stats_blocks(today, month)
+        if real:
+            for key in ("today", "month"):
+                payload[key].update(real[key])
+            payload["top_products"] = real["top_products"] or top_list
+            payload["source"] = "yespos"
+            payload["profit_coverage"] = real["profit_coverage"]
+    except Exception as e:
+        logger.warning(f"[api stats] cheklardan o'qilmadi: {e}")
+
+    return web.json_response(payload)
 
 
 # ─── Kassa naqd harakatlari (rasxod/kirim) — admin ─────────────────────────
@@ -3300,6 +3325,19 @@ async def api_recent_sales(request: web.Request):
             "orig_receipt_no": orig_rno,
             "items": items,
         })
+
+    # YesPOS kassasidagi savdo — «offline savdo» sifatida shu ro'yxatga
+    # qo'shiladi. Admin ilovasidagi «Cheklar» va «Sotuvlar grafigi» aynan shu
+    # endpointdan oziqlanadi, Chinor `sales` jadvali esa deyarli bo'sh —
+    # shuning uchun ular bo'sh chiqardi. Manbasi `source: "YesPOS"` bo'lib
+    # ko'rinadi, id manfiy (Chinor id lari bilan to'qnashmaydi).
+    try:
+        from bot.api_receipts import recent_sales as _yespos_sales
+        out.extend(_yespos_sales(limit=limit, since=since))
+        out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    except Exception as e:
+        logger.warning(f"[recent-sales] YesPOS cheklari qo'shilmadi: {e}")
+
     return web.json_response({"ok": True, "sales": out})
 
 
@@ -4071,6 +4109,14 @@ def create_app() -> web.Application:
     # kattalashtirmaslik uchun). Lazy import — circular importdan qochish.
     from bot import api_suppliers
     api_suppliers.setup(app)
+    # Buyurtma ro'yxati (ketish tezligiga qarab) — hisob `marketplace`
+    # paketida, bu yerda faqat API qatlami.
+    from bot import api_reorder
+    api_reorder.setup(app)
+    # Savdo tarixi — YesPOS cheklaridan (marketplace.db), eski «Cheklar»
+    # ekrani tegilmaydi.
+    from bot import api_receipts
+    api_receipts.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)

@@ -27,6 +27,11 @@ def _supplier_json(s: dict) -> dict:
         "note": s.get("note", "") or "",
         "product_count": int(s.get("product_count", 0) or 0),
         "low_count": int(s.get("low_count", 0) or 0),
+        # Buyurtma muddatlari: agent necha kunda keltiradi (lead_days) va
+        # necha kunda bir keladi (cycle_days). 0 = belgilanmagan, umumiy
+        # standart ishlatiladi. Miqdorni `marketplace/reorder.py` hisoblaydi.
+        "lead_days": int(s.get("lead_days", 0) or 0),
+        "cycle_days": int(s.get("cycle_days", 0) or 0),
     }
 
 
@@ -60,15 +65,20 @@ async def api_supplier_save(request: web.Request):
     name = (body.get("name") or "").strip()
     phone = (body.get("phone") or "").strip()
     note = (body.get("note") or "").strip()
+    lead = max(0, int(body.get("lead_days") or 0))
+    cycle = max(0, int(body.get("cycle_days") or 0))
     if not name:
         return _err("Yetkazib beruvchi nomi bo'sh")
 
     if sid:
         if not await _db.get_supplier(sid):
             return _err("Yetkazib beruvchi topilmadi", 404)
-        await _db.update_supplier(sid, name=name, phone=phone, note=note)
+        await _db.update_supplier(sid, name=name, phone=phone, note=note,
+                                  lead_days=lead, cycle_days=cycle)
     else:
         sid = await _db.add_supplier(name=name, phone=phone, note=note)
+        if lead or cycle:
+            await _db.update_supplier(sid, lead_days=lead, cycle_days=cycle)
 
     s = await _db.get_supplier(sid)
     return web.json_response({"ok": True, "id": sid,
