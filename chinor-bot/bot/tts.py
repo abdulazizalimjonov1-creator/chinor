@@ -45,13 +45,15 @@ def available() -> bool:
         return False
 
 
-def speak(text: str, out_wav: str) -> bool:
-    """Matnni o'qib, WAV qilib saqlaydi. Muvaffaqiyatli bo'lsa True."""
-    text = " ".join((text or "").split())
+def speak(text: str, out_wav: str, style: str = "") -> bool:
+    """Matnni o'qib, WAV qilib saqlaydi. Muvaffaqiyatli bo'lsa True.
+    `style` — o'z ohang ko'rsatmasi (bo'lmasa standart reklama ohangi).
+    Qator bo'linishlari saqlanadi: diktor ularda pauza qiladi."""
+    text = "\n".join(" ".join(l.split()) for l in (text or "").splitlines() if l.strip())
     if not text:
         return False
     body = json.dumps({
-        "contents": [{"parts": [{"text": _STYLE + text}]}],
+        "contents": [{"parts": [{"text": (style or _STYLE) + text}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             "speechConfig": {"voiceConfig": {

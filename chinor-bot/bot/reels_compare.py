@@ -38,9 +38,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-DURATION = 23.0
 FPS = 30
-T_VS, T_ROWS, T_VERDICT, T_CTA = 3.0, 6.0, 15.0, 20.0
 MAX_ROWS = 4
 REPEAT_DAYS = 14          # bir mavzu shuncha kun ichida takrorlanmaydi
 
@@ -139,12 +137,13 @@ async def _pick_pair(db, prods: list) -> list:
     if len(scored) < 2:
         return []
     # Faktlisi va rasmlisi oldinda
-    scored.sort(key=lambda s: (-s["facts"], -s["img"], -s["rating"]))
+    # Rasmi bor tovarlar afzal — videoda rasmsiz kartochka zaif ko'rinadi
+    scored.sort(key=lambda s: (-(s["facts"] and s["img"]), -s["facts"], -s["img"], -s["rating"]))
     best = scored[0]
     others = [s for s in scored[1:] if s["fam"] != best["fam"]] or scored[1:]
     # Ikkinchisi — eng katta narx/sifat farqi (taqqoslash ma'noli bo'lsin)
     if best["per"] > 0:
-        others.sort(key=lambda s: (-s["facts"], -abs((s["per"] or best["per"]) - best["per"])))
+        others.sort(key=lambda s: (-s["facts"], -s["img"], -abs((s["per"] or best["per"]) - best["per"])))
     pair = [best, others[0]]
     # Chapda «sifatli» (bahosi yuqori yoki qimmatroq), o'ngda «arzon»
     pair.sort(key=lambda s: (-s["rating"], -(s["per"] or float(s["p"]["sell_price"]))))
@@ -226,16 +225,21 @@ def build_rows(pair: list) -> list:
     return rows
 
 
-# ── Ssenariy (AI: faqat ilgak, xulosa, diktor) ─────────────────────────────
+# ── Ssenariy (AI: faqat so'zlar; raqam va faktlar bazadan) ────────────────
+# Video DIKTOR bilan boshqariladi: har sahna — bitta gap. Gap qancha
+# davom etsa, sahna shuncha turadi. Ilgari vaqtlar qat'iy edi va diktor
+# faqat 2 bo'lak gapirardi — taqqoslash qatorlari chiqayotgan 9 soniya
+# davomida ovoz yo'q edi, xulosa sahnasi esa qotib turardi. Lentada bu
+# "video qotib qoldi" degan taassurot berib, odam o'tkazib yuboradi.
 
 _SYSTEM = (
-    "Sen Instagram Reels va Telegram uchun qisqa video ssenariy yozuvchisisan. "
+    "Sen Instagram Reels uchun qisqa video ssenariy yozuvchisi va diktorisan. "
     "Xo'jalik-qurilish do'koni Chinor (Toshkent, Sergeli). O'zbek tilida (lotin). "
-    "Maqsad — odamni birinchi 2 soniyada to'xtatish: uning MUAMMOSI yoki qiziq "
-    "savol bilan boshla (maqtov bilan emas). QOIDALAR: faqat berilgan "
-    "faktlardan foydalan; mamlakat/texnologiya faqat faktda bo'lsa; 'eng zo'r', "
-    "'hamma oladi' kabi tasdiqlanmagan gap yozma; do'kon bahosini 'xaridorlar "
-    "bahosi' dema; emoji ishlatma. Faqat JSON."
+    "Tajribali usta do'stiga tushuntirayotgandek gapir: sodda, jonli, qisqa gaplar. "
+    "Maqtov bilan emas, xaridorning MUAMMOSI bilan boshla. QOIDALAR: faqat berilgan "
+    "faktlar va qiymatlardan foydalan; raqamni o'zgartirma; mamlakat/texnologiya "
+    "faqat faktda bo'lsa; 'eng zo'r', 'hamma oladi' kabi tasdiqlanmagan gap yozma; "
+    "do'kon bahosini 'xaridorlar bahosi' dema; emoji ishlatma. Faqat JSON."
 )
 
 
@@ -245,27 +249,39 @@ def _script_prompt(topic: str, answer: str, pair: list, rows: list) -> str:
         nm = (p.get("display_name") or "").strip() or p.get("name", "")
         facts = "; ".join(f"{f['k']}: {_short(f['v'], 80)}" for f in (s["info"].get("facts") or []))
         return (f"{nm} | narx {float(p['sell_price']):,.0f} so'm"
-                + (f" | 1kg ≈ {s['per']:,.0f}" if s["per"] else "")
                 + (f" | do'kon bahosi {s['rating']}/5" + (f" ({s['info'].get('store_rating_note')})"
                                                           if s['info'].get('store_rating_note') else "")
                    if s["rating"] else "")
                 + (f" | {facts}" if facts else ""))
+    rows_txt = "\n".join(f"  {i + 1}) {r['label']}: A = {r['a']}, B = {r['b']}"
+                         + (f" (yaxshirog'i: {r['win'].upper()})" if r['win'] else "")
+                         for i, r in enumerate(rows))
     return (
         f"Mavzu (savol): {topic}\n"
         + (f"Do'kon tasdiqlagan javob: {_short(answer, 700)}\n" if answer else "")
-        + f"\nA (chapda): {desc(pair[0])}\nB (o'ngda): {desc(pair[1])}\n"
-        + "Ekrandagi taqqoslash qatorlari: "
-        + "; ".join(f"{r['label']}: A={r['a']}, B={r['b']}" for r in rows) + "\n\n"
+        + f"\nA: {desc(pair[0])}\nB: {desc(pair[1])}\n"
+        + f"Ekranda ketma-ket chiqadigan taqqoslash qatorlari:\n{rows_txt}\n\n"
         "ILGAK QOIDASI: savolni takrorlama — xaridorning AYNAN vaziyatini yoki og'rig'ini ayt "
         "(yomon: 'Qaysi emalni tanlash kerak?'; yaxshi: 'Darvozangiz bir yilda zanglab ketdimi?', "
         "'Bo'yoq 3 oyda ko'chib tushdimi?', 'Pasta tishni achishtiryaptimi?').\n"
-        'JSON: {"hook": "ilgak — vaziyat/og\'riq savoli, 3-7 so\'z, savol belgisi bilan", '
-        '"problem": "ziddiyat — 5-10 so\'z (masalan: Narxi 2 barobar farq qiladi — qaysi biri?)", '
-        '"verdict_a": "A kimga/qaysi ishga mos — 3-7 so\'z", '
-        '"verdict_b": "B kimga/qaysi ishga mos — 3-7 so\'z", '
-        '"voice_1": "ilgak+ziddiyatni diktor o\'qiydi — 1-2 gap", '
-        '"voice_2": "xulosa+chaqiruv — 2-3 gap, oxiri: Chinor do\'konida"}'
+        "Har 'rows_say' gapi o'sha qatorni odamga o'xshab tushuntirsin va ikkala qiymatni "
+        "AYNAN aytsin (masalan: 'Birinchisi Turkiyada, ikkinchisi O'zbekistonda ishlab chiqarilgan.'). "
+        "Qatorlar soni bilan bir xil bo'lsin.\n"
+        "Diktor gaplari QISQA bo'lsin: hook_say ≤ 10 so'z, problem_say ≤ 16, har rows_say ≤ 16, "
+        "verdict_*_say ≤ 12, cta_say ≤ 12. Butun video 30 soniyadan oshmasin.\n"
+        'JSON: {"hook": "ekran uchun ilgak, 3-7 so\'z, savol belgisi bilan", '
+        '"hook_say": "diktor uchun ilgak, 1 qisqa gap", '
+        '"problem": "ekran uchun ziddiyat, 5-10 so\'z", '
+        '"problem_say": "diktor: ziddiyat va A, B ni tanishtirish, 1-2 gap", '
+        '"rows_say": ["har qator uchun 1 gap", ...], '
+        '"verdict_a": "ekran: A kimga mos, 3-7 so\'z", "verdict_a_say": "diktor, 1 gap", '
+        '"verdict_b": "ekran: B kimga mos, 3-7 so\'z", "verdict_b_say": "diktor, 1 gap", '
+        '"cta_say": "diktor: chaqiruv, 1 gap, oxiri Chinor do\'konida"}'
     )
+
+
+_KEYS = ("hook", "hook_say", "problem", "problem_say", "verdict_a", "verdict_a_say",
+         "verdict_b", "verdict_b_say", "cta_say")
 
 
 def _parse(text: str):
@@ -276,29 +292,195 @@ def _parse(text: str):
         d = json.loads(m.group(0))
     except ValueError:
         return None
-    need = ("hook", "problem", "verdict_a", "verdict_b", "voice_1", "voice_2")
-    if not isinstance(d, dict) or not all(str(d.get(k) or "").strip() for k in need):
+    if not isinstance(d, dict) or not all(str(d.get(k) or "").strip() for k in _KEYS):
         return None
-    return {k: _short(d[k], 260 if k.startswith("voice") else 60) for k in need}
+    out = {k: (_tight(d[k], _MAX_WORDS.get(k, 99)) if k.endswith("_say") else _short(d[k], 60))
+           for k in _KEYS}
+    out["rows_say"] = [_tight(x, 18) for x in (d.get("rows_say") or []) if str(x).strip()]
+    return out
+
+
+# Diktor gaplarining so'z chegarasi. Lentada odam 1–2 soniyada qaror qiladi:
+# 12 soniyalik ilgak (birinchi sinovda shunday chiqdi) — o'tkazib yuborish.
+_MAX_WORDS = {"hook_say": 12, "problem_say": 18, "verdict_a_say": 14,
+              "verdict_b_say": 14, "cta_say": 13}
+
+
+def _tight(text: str, max_words: int) -> str:
+    """Uzun gap — birinchi jumlasi; u ham uzun bo'lsa so'z chegarasida kesiladi."""
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(t.split()) <= max_words:
+        return t
+    first = re.split(r"(?<=[.!?])\s+", t)[0]
+    if len(first.split()) <= max_words:
+        return first
+    words = first.split()[:max_words]
+    return " ".join(words).rstrip(",;:—-") + ("?" if first.endswith("?") else ".")
+
+
+def _mentions(sent: str, value: str) -> bool:
+    """Gap qiymatni aytadimi: raqamlar to'liq, so'zlar o'zagi bo'yicha."""
+    s = sent.lower().replace(" ", "")
+    v = value.lower()
+    digits = re.findall(r"\d+", v.replace(" ", ""))
+    if digits:
+        return all(d in s for d in digits)
+    stems = [w[:5] for w in re.findall(r"[a-zʻʼ'’]+", v) if len(w) >= 3]
+    return not stems or any(st.replace("'", "") in s.replace("'", "") for st in stems)
+
+
+def _row_say(r: dict, ai: str) -> str:
+    """AI gapi ikkala qiymatni aytsa — o'sha; aytmasa — shablon (fakt yo'qolmasin)."""
+    if ai and r["a"].strip("★") and _mentions(ai, r["a"]) and _mentions(ai, r["b"]):
+        return ai
+    if r["a"].startswith("★"):
+        return f"Do'kon bahosi: birinchisiga {len(r['a'])}, ikkinchisiga {len(r['b'])} yulduz."
+    return f"{r['label']}: birinchisi {r['a']}, ikkinchisi {r['b']}."
 
 
 def make_script(topic: dict, rows: list) -> dict:
-    """Bloklovchi (AI). AI ishlamasa — mavzudan oddiy zaxira ssenariy."""
+    """Bloklovchi (AI). Natija: ekran matnlari + `segments` (diktor gaplari)."""
     from bot import ai_engine
     g = topic.get("guide") or {}
     raw = ai_engine.chat(_script_prompt(topic["topic"], g.get("answer", ""), topic["pair"], rows),
                          _SYSTEM, 40, validate=lambda t: _parse(t) is not None)
-    d = _parse(raw)
-    if d:
-        return d
-    a = topic["pair"][0]["p"]; b = topic["pair"][1]["p"]
-    return {"hook": _short(topic["topic"], 60), "problem": "Ikkalasi bor — farqi nimada?",
-            "verdict_a": "Sifat muhim bo'lsa", "verdict_b": "Tejamkor tanlov",
-            "voice_1": topic["topic"],
-            "voice_2": "Farqini ko'rdingiz. Narxi va buyurtma — Chinor do'konida."}
+    d = _parse(raw) or {
+        "hook": _short(topic["topic"], 60), "hook_say": topic["topic"],
+        "problem": "Ikkalasi bor — farqi nimada?",
+        "problem_say": "Do'konda ikkalasi ham bor. Keling, farqini ko'ramiz.",
+        "rows_say": [], "verdict_a": "Sifat muhim bo'lsa", "verdict_a_say": "Sifat muhim bo'lsa — birinchisi.",
+        "verdict_b": "Tejamkor tanlov", "verdict_b_say": "Tejamoqchi bo'lsangiz — ikkinchisi.",
+        "cta_say": "Narxi va buyurtma — Chinor do'konida."}
+    ai_rows = d.get("rows_say") or []
+    segs = [{"kind": "hook", "say": d["hook_say"]},
+            {"kind": "problem", "say": d["problem_say"]}]
+    for i, r in enumerate(rows):
+        segs.append({"kind": "row", "i": i, "say": _row_say(r, ai_rows[i] if i < len(ai_rows) else "")})
+    segs += [{"kind": "verdict", "i": 0, "say": d["verdict_a_say"]},
+             {"kind": "verdict", "i": 1, "say": d["verdict_b_say"]},
+             {"kind": "cta", "say": d["cta_say"]}]
+    d["segments"] = segs
+    return d
+
+
+# ── Diktor: bitta so'rov, pauzalar bo'yicha bo'laklarga ajratish ───────────
+# Har gapga alohida TTS so'rovi bepul kvotada 429 beradi (daqiqasiga bir
+# necha so'rov). Shuning uchun BUTUN matn bitta so'rovda o'qitiladi (har gap
+# yangi qatorda — diktor pauza qiladi), keyin ovozdagi jimlik joylari
+# topilib, har gapning boshlanish-tugash vaqti aniqlanadi.
+
+_VOICE_STYLE = ("Quyidagi matnni o'zbek tilida, tajribali usta do'stiga maslahat "
+                "berayotgandek jonli, ishonarli va biroz tez sur'atda o'qing. Har bir "
+                "qatordan keyin qisqa (yarim soniyacha) pauza qiling. Faqat matnning "
+                "o'zini o'qing:\n")
+MAX_SPEECH = 34.0     # diktor shundan uzun bo'lsa — biroz tezlashtiriladi
+
+
+def _speech_spans(wav: str) -> list:
+    """[(boshlanish, tugash)] — ovoz bor oraliqlar (jimlik ≥0.28 s bo'yicha)."""
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-i", wav, "-af",
+                            "silencedetect=noise=-30dB:d=0.22", "-f", "null", "-"],
+                           capture_output=True, timeout=60)
+    except Exception:
+        return []
+    log = (r.stderr or b"").decode()
+    starts = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", log)]
+    ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", log)]
+    from bot import tts
+    total = tts.duration(wav)
+    spans, cur = [], 0.0
+    for s0, e0 in zip(starts, ends + [total] * (len(starts) - len(ends))):
+        if s0 - cur > 0.12:
+            spans.append((cur, s0))
+        cur = e0
+    if total - cur > 0.12:
+        spans.append((cur, total))
+    return spans
+
+
+def _align(segs: list, spans: list, total: float) -> list:
+    """Har gapga (boshlanish, tugash) — gap uzunligiga mutanosib kutilgan
+    chegaraga ENG YAQIN jimlikka "yopishtirib". Diktor gap ichida ham
+    to'xtashi mumkin, shuning uchun jimliklar soni gaplardan ko'p bo'ladi."""
+    n = len(segs)
+    if not spans:
+        return []
+    gaps = [((spans[i][1] + spans[i + 1][0]) / 2) for i in range(len(spans) - 1)]
+    lens = [max(1, len(s["say"])) for s in segs]
+    tot = sum(lens)
+    t0, t1 = spans[0][0], spans[-1][1]
+    bounds, acc, used = [], 0, -1
+    for k in range(n - 1):
+        acc += lens[k]
+        want = t0 + (t1 - t0) * acc / tot
+        cands = [j for j in range(used + 1, len(gaps)) if len(gaps) - j >= (n - 1 - k)]
+        if not cands:
+            bounds.append(want)
+            continue
+        j = min(cands, key=lambda j: abs(gaps[j] - want))
+        used = j
+        bounds.append(gaps[j])
+    edges = [t0] + bounds + [t1]
+    out = [(edges[i], edges[i + 1]) for i in range(n)]
+    # Tekshiruv: diktor pauza qilmasa (yoki juda qisqa pauza), jimliklar
+    # gaplarga mos kelmaydi va hamma gap boshiga yopishib qoladi — video
+    # 7-soniyadan oxirgi sahnada qotib turgan (2026-10-20 sinovi). Shunday
+    # bo'lsa, vaqt gap uzunligiga MUTANOSIB taqsimlanadi (nutq sur'ati
+    # deyarli bir xil — sezilarli farq bo'lmaydi).
+    exp = [(t1 - t0) * l / tot for l in lens]
+    bad = any(not (0.4 * e <= (b - a) <= 2.5 * e) for (a, b), e in zip(out, exp))
+    if bad:
+        logger.info("🎬 Diktor pauzalari gaplarga mos emas — mutanosib vaqt")
+        acc, out = t0, []
+        for e in exp:
+            out.append((acc, acc + e))
+            acc += e
+    return out
+
+
+def build_voice(script: dict, out_wav: str) -> list:
+    """Diktor yo'li + har gap vaqti [(start, end)]. Chiqmasa [] (ovozsiz rejim)."""
+    try:
+        from bot import tts
+    except Exception:
+        return []
+    if not tts.available():
+        return []
+    text = "\n".join(s["say"] for s in script["segments"])
+    if not tts.speak(text, out_wav, style=_VOICE_STYLE):
+        return []
+    total = tts.duration(out_wav)
+    # Juda uzun chiqsa — 1.3 baravargacha tezlashtiramiz (ohang buzilmaydi)
+    if total > MAX_SPEECH:
+        tempo = min(1.3, total / MAX_SPEECH)
+        fast = out_wav + ".fast.wav"
+        r = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", out_wav,
+                            "-af", f"atempo={tempo:.3f}", fast], capture_output=True, timeout=60)
+        if r.returncode == 0:
+            os.replace(fast, out_wav)
+            total = tts.duration(out_wav)
+    times = _align(script["segments"], _speech_spans(out_wav), total)
+    if len(times) != len(script["segments"]) or total < 5:
+        return []
+    return times
+
+
+def silent_times(script: dict) -> list:
+    """Diktor bo'lmasa — subtitr o'qishga yetadigan vaqt (sekundiga ~13 harf)."""
+    t, out = 0.0, []
+    for s in script["segments"]:
+        d = max(2.2, min(6.0, len(s["say"]) / 13.0))
+        out.append((t, t + d))
+        t += d + 0.25
+    return out
 
 
 # ── Chizish ────────────────────────────────────────────────────────────────
+
+LEAD = 0.35        # video boshlanishi bilan diktor orasidagi kichik nafas
+TAIL = 1.4         # oxirgi gapdan keyin
+
 
 class _Layers:
     def __init__(self, topic: dict, rows: list, script: dict):
@@ -308,18 +490,37 @@ class _Layers:
         W, H = R.W, R.H
         self.W, self.H = W, H
         self.bg = R._gradient(W, H, R.BG_TOP, R.BG_BOTTOM).convert("RGBA")
+        self.glow = self._glow()
         self.head = R._text_layer((W, int(H * 0.08)), self._head)
         self.hook = R._text_layer((W, int(H * 0.30)), lambda d, im: self._big(d, script["hook"], 0.098, 3))
-        self.problem = R._text_layer((W, int(H * 0.22)), lambda d, im: self._big(d, script["problem"], 0.058, 3, R.ACCENT))
+        self.problem = R._text_layer((W, int(H * 0.22)),
+                                     lambda d, im: self._big(d, script["problem"], 0.058, 3, R.ACCENT))
         self.cards = [self._card(s, i) for i, s in enumerate(topic["pair"])]
         self.vs = self._vs()
         self.rows = [self._row(r) for r in rows]
+        self.row_hi = [self._row(r, hot=True) for r in rows]
         names = [(s["p"].get("display_name") or s["p"].get("name") or "") for s in topic["pair"]]
         self.verdicts = [self._verdict(script["verdict_a"], names[0], 0),
                          self._verdict(script["verdict_b"], names[1], 1)]
         self.cta = R._text_layer((W, int(H * 0.30)), self._cta)
+        # Subtitr gapni 7 so'zlik bo'laklarda ko'rsatadi — uzun gap 3 qatorga
+        # sig'may kesilib qolardi
+        self.sub_words = [s["say"].split() for s in script["segments"]]
+        self.sub_chunks = [[w[i:i + 7] for i in range(0, len(w), 7)] or [[""]]
+                           for w in self.sub_words]
+        self._sub_cache = {}
 
     # — qatlam chizuvchilar —
+    def _glow(self):
+        from PIL import ImageFilter
+        Image, ImageDraw = self.Image, self.ImageDraw
+        g = Image.new("L", (self.W, self.W), 0)
+        ImageDraw.Draw(g).ellipse([self.W * 0.15, self.W * 0.15, self.W * 0.85, self.W * 0.85], fill=120)
+        g = g.filter(ImageFilter.GaussianBlur(int(self.W * 0.14)))
+        lay = Image.new("RGBA", g.size, (60, 140, 100, 0))
+        lay.putalpha(g)
+        return lay
+
     def _head(self, d, im):
         R = self.R
         try:
@@ -347,19 +548,26 @@ class _Layers:
         card = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
         d = ImageDraw.Draw(card)
         d.rounded_rectangle([0, 0, cw - 1, ch - 1], radius=36, fill=R.CARD_BG + (255,))
-        box = cw - 50
+        name = R._strip_emoji((s["p"].get("display_name") or "").strip() or s["p"].get("name", ""))
         path = _img_path(s["p"])
         try:
             if path:
                 im = Image.open(path).convert("RGBA")
-                im.thumbnail((box, int(ch * 0.55)), Image.LANCZOS)
+                im.thumbnail((cw - 50, int(ch * 0.55)), Image.LANCZOS)
                 card.alpha_composite(im, ((cw - im.width) // 2, 24 + (int(ch * 0.55) - im.height) // 2))
             else:
-                f = R._font(int(cw * 0.30))
-                d.text((cw // 2 - int(cw * 0.12), int(ch * 0.15)), "?", font=f, fill=(170, 200, 180, 255))
+                # Rasm yo'q — so'roq belgisi emas, brend nomi katta harflarda
+                brand = (_fact(s["info"], "Brend") or name.split()[1:2] or [name])
+                brand = brand if isinstance(brand, str) else brand[0]
+                f = R._font(int(cw * 0.16))
+                lines = R._wrap(d, brand.upper(), f, cw - 60, 2)
+                y = int(ch * 0.22)
+                for line in lines:
+                    tw = d.textlength(line, font=f)
+                    d.text(((cw - tw) / 2, y), line, font=f, fill=(30, 110, 70, 255))
+                    y += int(cw * 0.19)
         except Exception:
             pass
-        name = R._strip_emoji((s["p"].get("display_name") or "").strip() or s["p"].get("name", ""))
         f = R._font(int(cw * 0.075))
         y = int(ch * 0.62)
         for line in R._wrap(d, name, f, cw - 40, 2):
@@ -383,26 +591,28 @@ class _Layers:
         d.text(((s - tw) / 2, 36), "VS", font=f, fill=(9, 40, 25, 255))
         return im
 
-    def _row(self, r):
+    def _row(self, r, hot=False):
         R, Image, ImageDraw = self.R, self.Image, self.ImageDraw
         W = self.W
-        h = 170
-        im = Image.new("RGBA", (W, h), (0, 0, 0, 0))
+        im = Image.new("RGBA", (W, 170), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
+        if hot:      # hozir gapirilayotgan qator — ramka bilan ajraladi
+            d.rounded_rectangle([int(W * 0.03), 0, int(W * 0.97), 166], radius=34,
+                                outline=(255, 255, 255, 230), width=5)
         fl = R._font(int(W * 0.032), bold=False)
         tw = d.textlength(r["label"].upper(), font=fl)
-        d.text(((W - tw) / 2, 0), r["label"].upper(), font=fl, fill=R.ACCENT + (255,))
+        d.text(((W - tw) / 2, 8), r["label"].upper(), font=fl, fill=R.ACCENT + (255,))
         fv = R._font(int(W * 0.045))
         for side, val in ((0, r["a"]), (1, r["b"])):
-            x0 = int(W * 0.05) if side == 0 else int(W * 0.52)
-            x1 = int(W * 0.48) if side == 0 else int(W * 0.95)
+            x0 = int(W * 0.06) if side == 0 else int(W * 0.52)
+            x1 = int(W * 0.48) if side == 0 else int(W * 0.94)
             win = r["win"] == ("a" if side == 0 else "b")
-            d.rounded_rectangle([x0, 50, x1, 150], radius=28,
+            d.rounded_rectangle([x0, 54, x1, 150], radius=28,
                                 fill=(R.ACCENT + (255,)) if win else (255, 255, 255, 38))
             lines = R._wrap(d, val, fv, x1 - x0 - 30, 1)
             txt = lines[0] if lines else val
             tw = d.textlength(txt, font=fv)
-            d.text((x0 + (x1 - x0 - tw) / 2, 74), txt, font=fv,
+            d.text((x0 + (x1 - x0 - tw) / 2, 76), txt, font=fv,
                    fill=(9, 40, 25, 255) if win else (255, 255, 255, 255))
         return im
 
@@ -422,9 +632,10 @@ class _Layers:
             d.text((x0 + 125, y), line, font=f, fill=(14, 52, 33, 255))
             y += int(W * 0.060)
         f2 = R._font(int(W * 0.036), bold=False)
+        y = max(y + 14, 150)
         for line in R._wrap(d, R._strip_emoji(name), f2, x1 - x0 - 60, 2):
-            d.text((x0 + 30, max(y + 14, 150)), line, font=f2, fill=(40, 80, 60, 255))
-            y = max(y + 14, 150) + int(W * 0.045) - 14
+            d.text((x0 + 30, y), line, font=f2, fill=(40, 80, 60, 255))
+            y += int(W * 0.045)
         return im
 
     def _cta(self, d, im):
@@ -434,161 +645,204 @@ class _Layers:
             tw = d.textlength(line, font=f)
             d.text(((W - tw) / 2, i * int(W * 0.085)), line, font=f,
                    fill=(255, 255, 255, 255) if i == 0 else R.ACCENT + (255,))
-        f2 = R._font(int(W * 0.036), bold=False)
-        sub = "Sergeli · Telegram: Chinor Mini App"
+        f2 = R._font(int(W * 0.042))
+        sub = "Telegram: t.me/" + _channel_handle()
         tw = d.textlength(sub, font=f2)
-        d.text(((W - tw) / 2, int(W * 0.21)), sub, font=f2, fill=(220, 240, 228, 255))
+        d.rounded_rectangle([(W - tw) / 2 - 30, int(W * 0.205), (W + tw) / 2 + 30, int(W * 0.205) + 74],
+                            radius=37, fill=(255, 255, 255, 245))
+        d.text(((W - tw) / 2, int(W * 0.205) + 14), sub, font=f2, fill=(16, 60, 38, 255))
+
+    def subtitle(self, si: int, ci: int, n_words: int):
+        """Joriy gapning subtitri — so'zlar diktor bilan birga paydo bo'ladi
+        (ko'pchilik lentani ovozsiz ko'radi)."""
+        key = (si, ci, n_words)
+        got = self._sub_cache.get(key)
+        if got is not None:
+            return got
+        R, Image, ImageDraw = self.R, self.Image, self.ImageDraw
+        W = self.W
+        words = self.sub_chunks[si][ci]
+        full = " ".join(words)
+        im = Image.new("RGBA", (W, 260), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        f = R._font(int(W * 0.046))
+        lines = R._wrap(d, full, f, int(W * 0.84), 3)
+        shown = n_words
+        y = 20
+        box_h = 30 + len(lines) * int(W * 0.058)
+        d.rounded_rectangle([int(W * 0.05), 0, int(W * 0.95), box_h], radius=30, fill=(6, 20, 13, 205))
+        for line in lines:
+            lw = line.split()
+            vis, shown = lw[:max(0, shown)], shown - len(lw)
+            x = int(W * 0.08)
+            for j, w in enumerate(lw):
+                col = (255, 255, 255, 255) if j < len(vis) else (255, 255, 255, 70)
+                d.text((x, y), w, font=f, fill=col)
+                x += d.textlength(w + " ", font=f)
+            y += int(W * 0.058)
+        if len(self._sub_cache) > 60:
+            self._sub_cache.clear()
+        self._sub_cache[key] = im
+        return im
 
 
-def _frame(L: _Layers, t: float):
+def _channel_handle() -> str:
+    try:
+        from bot.config import CHANNEL_ID
+        ch = str(CHANNEL_ID or "")
+        if ch.startswith("@"):
+            return ch[1:]
+    except Exception:
+        pass
+    return "Chinors"
+
+
+def _frame(L: _Layers, t: float, segs: list, times: list, total: float, n_rows: int):
     R, Image = L.R, L.Image
     W, H = L.W, L.H
     e, seg, ab = R._ease_out, R._seg, R._ease_out_back
+    tv = t - LEAD                                       # diktor vaqti
+    si = 0
+    for i, (a, b) in enumerate(times):
+        if tv >= a - 0.05:
+            si = i
+    kind = segs[si]["kind"]
+    s_start = times[si][0] + LEAD
+    first_row = next((i for i, s in enumerate(segs) if s["kind"] == "row"), 2)
+    first_ver = next((i for i, s in enumerate(segs) if s["kind"] == "verdict"), len(segs) - 3)
+    cta_i = len(segs) - 1
+
     fr = L.bg.copy()
-    # Fon sekin "nafas oladi" — kadr hech qachon qotib qolmasin
-    glow = int(18 + 10 * math.sin(t * 1.3))
-    fr.alpha_composite(Image.new("RGBA", (W, H), (46, 106, 79, glow)))
-    fr.alpha_composite(R._alpha(L.head, e(seg(t, 0.1, 0.5))), (0, int(H * 0.04)))
+    # Fon doim harakatda: yorug' dog' sekin aylanadi — kadr hech qachon qotmaydi
+    gx = int(W * 0.5 + W * 0.22 * math.sin(t * 0.45)) - L.glow.width // 2
+    gy = int(H * 0.42 + H * 0.10 * math.cos(t * 0.33)) - L.glow.height // 2
+    fr.alpha_composite(L.glow, (gx, gy))
+    fr.alpha_composite(L.head, (0, int(H * 0.04)))
+    # Jarayon chizig'i — qancha qolganini ko'rsatadi (oxirigacha ko'rishga undaydi)
+    bar = L.ImageDraw.Draw(fr)
+    bar.rectangle([0, 0, W, 10], fill=(255, 255, 255, 40))
+    bar.rectangle([0, 0, int(W * min(1.0, t / total)), 10], fill=R.ACCENT + (255,))
 
-    if t < T_VS + 0.4:                                    # ILGAK
-        k_in, k_out = ab(seg(t, 0.15, 0.6)), seg(t, T_VS - 0.2, 0.5)
-        y = int(H * 0.30) + int(80 * (1 - k_in)) - int(120 * k_out)
-        s = 1.0 + 0.03 * math.sin(t * 2.2)
-        lay = L.hook if abs(s - 1) < 0.004 else L.hook.resize((int(W * s), int(L.hook.height * s)))
-        fr.alpha_composite(R._alpha(lay, min(1.0, k_in) * (1 - k_out)), ((W - lay.width) // 2, y))
-        kp = e(seg(t, 1.3, 0.5)) * (1 - k_out)
-        if kp > 0:
-            fr.alpha_composite(R._alpha(L.problem, kp), (0, int(H * 0.62)))
+    if si == 0:                                         # ILGAK — 1-kadrdan ko'rinadi
+        pulse = 1.0 + 0.025 * math.sin(t * 2.4)
+        k_in = 0.85 + 0.15 * e(seg(t, 0.0, 0.35))
+        lay = L.hook.resize((int(W * pulse), int(L.hook.height * pulse)))
+        fr.alpha_composite(R._alpha(lay, k_in), ((W - lay.width) // 2, int(H * 0.30) - int(30 * (1 - k_in))))
+        # Ikki tovar pastdan "mo'ralaydi" — nima haqida ekani darhol ko'rinsin
+        for i, card in enumerate(L.cards):
+            c = card.resize((int(card.width * 0.55), int(card.height * 0.55)))
+            x = (W // 2 - c.width - 25) if i == 0 else (W // 2 + 25)
+            fr.alpha_composite(c, (x, int(H * 0.66) + int(10 * math.sin(t * 2 + i * 1.7))))
 
-    if T_VS - 0.2 <= t < T_VERDICT:                       # KARTOCHKALAR
-        k = e(seg(t, T_VS - 0.2, 0.7))
-        shrink = e(seg(t, T_ROWS, 0.6))                   # qatorlar uchun tepaga ko'tariladi
+    elif si < first_ver:                                # ZIDDIYAT + TAQQOSLASH
+        in_rows = kind == "row"
+        k = e(seg(t, s_start if si == 1 else times[1][0] + LEAD, 0.6))
+        shrink = e(seg(t, times[first_row][0] + LEAD, 0.6)) if n_rows and si >= first_row else 0.0
         scale = 1.0 - 0.28 * shrink
-        top = int(H * (0.25 - 0.10 * shrink))
+        top = int(H * (0.22 - 0.08 * shrink))
         for i, card in enumerate(L.cards):
             c = card if scale > 0.999 else card.resize((int(card.width * scale), int(card.height * scale)))
             cx = (W // 4 if i == 0 else 3 * W // 4) - c.width // 2
             off = int((1 - k) * W * 0.6) * (-1 if i == 0 else 1)
-            bob = int(6 * math.sin(t * 1.8 + i * 1.6))
+            bob = int(7 * math.sin(t * 1.8 + i * 1.6))
             fr.alpha_composite(c, (cx + off, top + bob))
-        kv = ab(seg(t, T_VS + 0.4, 0.5))
+        kv = ab(seg(t, times[1][0] + LEAD + 0.3, 0.5))
         if kv > 0:
-            vs = L.vs.resize((max(8, int(L.vs.width * kv * scale)), max(8, int(L.vs.height * kv * scale))))
+            pulse = 1.0 + 0.05 * math.sin(t * 3.0)
+            sz = max(8, int(L.vs.width * kv * scale * pulse))
+            vs = L.vs.resize((sz, sz))
             vy = top + int(L.cards[0].height * scale * 0.42) - vs.height // 2
             fr.alpha_composite(vs, (W // 2 - vs.width // 2, vy))
-        # Qatorlar birin-ketin
-        n = max(1, len(L.rows))
-        step = (T_VERDICT - T_ROWS - 0.6) / n
-        for i, row in enumerate(L.rows):
-            kr = e(seg(t, T_ROWS + 0.5 + i * step, 0.45))
-            if kr <= 0:
-                continue
-            y = int(H * 0.52) + i * 190 + int(40 * (1 - kr))
-            fr.alpha_composite(R._alpha(row, kr), (0, y))
+        if si == 1:
+            kp = e(seg(t, s_start + 0.2, 0.5))
+            fr.alpha_composite(R._alpha(L.problem, kp), (0, int(H * 0.60)))
+        if in_rows:
+            cur = segs[si]["i"]
+            for i in range(cur + 1):
+                rs = times[first_row + i][0] + LEAD
+                kr = e(seg(t, rs, 0.45))
+                # 4 qator subtitr qutisiga (0.82H) tegmasligi uchun zichroq
+                y = int(H * 0.455) + i * 160 + int(40 * (1 - kr))
+                lay = L.row_hi[i] if i == cur else L.rows[i]
+                fr.alpha_composite(R._alpha(lay, kr * (1.0 if i == cur else 0.75)), (0, y))
 
-    if T_VERDICT - 0.1 <= t < T_CTA + 0.3:                # XULOSA
-        k_out = seg(t, T_CTA - 0.1, 0.4)
+    elif kind == "verdict":                             # XULOSA
         for i, v in enumerate(L.verdicts):
-            k = ab(seg(t, T_VERDICT + i * 0.9, 0.55))
+            vs_t = times[first_ver + i][0] + LEAD if first_ver + i < len(times) else s_start
+            k = ab(seg(t, vs_t, 0.55))
             if k <= 0:
                 continue
             x = int((1 - min(1.0, k)) * W * (1 if i else -1))
-            fr.alpha_composite(R._alpha(v, (1 - k_out)), (x, int(H * 0.30) + i * 330))
+            active = segs[si]["i"] == i
+            pulse = 1.0 + (0.02 * math.sin(t * 3.2) if active else 0)
+            lay = v if abs(pulse - 1) < 0.003 else v.resize((int(v.width * pulse), int(v.height * pulse)))
+            fr.alpha_composite(R._alpha(lay, 1.0 if active else 0.7),
+                               (x - (lay.width - v.width) // 2, int(H * 0.26) + i * 330))
 
-    if t >= T_CTA:                                        # CHAQIRUV
-        k = ab(seg(t, T_CTA, 0.6))
-        fr.alpha_composite(R._alpha(L.cta, min(1.0, k)), (0, int(H * 0.36) + int(60 * (1 - min(1.0, k)))))
+    else:                                               # CHAQIRUV
+        k = ab(seg(t, s_start, 0.6))
+        fr.alpha_composite(R._alpha(L.cta, min(1.0, k)), (0, int(H * 0.24) + int(60 * (1 - min(1.0, k)))))
         for i, card in enumerate(L.cards):
-            c = card.resize((int(card.width * 0.55), int(card.height * 0.55)))
+            c = card.resize((int(card.width * 0.62), int(card.height * 0.62)))
             x = (W // 2 - c.width - 20) if i == 0 else (W // 2 + 20)
-            fr.alpha_composite(R._alpha(c, min(1.0, k)), (x, int(H * 0.60) + int(8 * math.sin(t * 2 + i))))
+            fr.alpha_composite(R._alpha(c, min(1.0, k)), (x, int(H * 0.47) + int(9 * math.sin(t * 2 + i))))
+
+    # SUBTITR — joriy gap, so'zlar diktor bilan birga ochiladi
+    a, b = times[si]
+    words = len(L.sub_words[si])
+    frac = 1.0 if b <= a else min(1.0, max(0.0, (tv - a) / (b - a)))
+    said = max(1, min(words, int(math.ceil(frac * words + 0.3))))   # nechta so'z aytildi
+    ci = min(len(L.sub_chunks[si]) - 1, (said - 1) // 7)
+    nw = said - ci * 7
+    fr.alpha_composite(L.subtitle(si, ci, nw), (0, int(H * 0.82)))
     return fr.convert("RGB")
 
 
-def _voice(script: dict, out_wav: str, tmp: str) -> bool:
-    """Ikki bo'lak diktor: ilgak (0.4 s) va xulosa (T_VERDICT)."""
-    try:
-        from bot import tts
-    except Exception:
-        return False
-    if not tts.available():
-        return False
-    parts = []
-    for i, (at, txt) in enumerate(((0.4, script["voice_1"]), (T_VERDICT + 0.2, script["voice_2"]))):
-        p = f"{tmp}.v{i}.wav"
-        if i:
-            time.sleep(2)
-        if tts.speak(txt, p):
-            parts.append((at, p, tts.duration(p)))
-    if not parts:
-        return False
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
-    chains, labels = [], []
-    prev_end = 0.0
-    for i, (at, p, dur) in enumerate(parts):
-        start = max(at, prev_end + 0.15)
-        room = DURATION - 0.2 - start
-        tempo = min(1.35, dur / room) if room > 0 and dur > room else 1.0
-        prev_end = start + dur / tempo
-        cmd += ["-i", p]
-        ms = int(start * 1000)
-        sp = f"atempo={tempo:.3f}," if tempo > 1.001 else ""
-        chains.append(f"[{i}:a]{sp}aresample=44100,adelay={ms}|{ms}[v{i}]")
-        labels.append(f"[v{i}]")
-    fc = ";".join(chains) + ";" + "".join(labels) + \
-        f"amix=inputs={len(parts)}:normalize=0:duration=longest,apad,atrim=0:{DURATION}[a]"
-    cmd += ["-filter_complex", fc, "-map", "[a]", "-ac", "1", "-ar", "44100", out_wav]
-    try:
-        ok = subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0
-    except Exception:
-        ok = False
-    for _, p, _ in parts:
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-    return ok and os.path.exists(out_wav)
-
-
-def render(topic: dict, rows: list, script: dict, out_path: str, voice_wav: str = "") -> str:
+def render(topic: dict, rows: list, script: dict, times: list, out_path: str,
+           voice_wav: str = "") -> str:
     """Bloklovchi. '' = muvaffaqiyat, aks holda xato matni."""
     from bot import reels as R
     if not R.is_available():
         return "ffmpeg o'rnatilmagan"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    segs = script["segments"]
+    total = min(45.0, times[-1][1] + LEAD + TAIL)
     L = _Layers(topic, rows, script)
     music = out_path + ".m.wav"
     try:
         from bot import reels_audio
-        has_music = reels_audio.build(music, DURATION,
-                                      cuts=[T_VS, T_ROWS, T_VERDICT, T_CTA], stamp=T_CTA + 0.1)
+        has_music = reels_audio.build(music, total, cuts=[a + LEAD for a, _ in times[1:]],
+                                      stamp=times[-1][0] + LEAD)
     except Exception:
         has_music = False
     audio = ""
-    if voice_wav and os.path.exists(voice_wav) and has_music:
-        audio = out_path + ".mix.wav"
-        r = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", music,
-                            "-i", voice_wav, "-filter_complex",
-                            "[0:a]volume=0.20[m];[m][1:a]amix=inputs=2:normalize=0:duration=first[a]",
-                            "-map", "[a]", "-ar", "44100", audio], capture_output=True, timeout=120)
-        if r.returncode != 0:
-            audio = voice_wav
-    elif voice_wav and os.path.exists(voice_wav):
-        audio = voice_wav
-    elif has_music:
+    if voice_wav and os.path.exists(voice_wav):
+        ms = int(LEAD * 1000)
+        mix = out_path + ".mix.wav"
+        if has_music:
+            fc = (f"[1:a]adelay={ms}|{ms},apad[v];[0:a]volume=0.16[m];"
+                  "[m][v]amix=inputs=2:normalize=0:duration=first[a]")
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", music, "-i", voice_wav,
+                   "-filter_complex", fc, "-map", "[a]", "-ar", "44100", mix]
+        else:
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", voice_wav,
+                   "-af", f"adelay={ms}|{ms},apad=whole_dur={total}", "-ar", "44100", mix]
+        if subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0:
+            audio = mix
+    if not audio and has_music:
         audio = music
-    a_in = ["-i", audio] if audio else ["-f", "lavfi", "-t", str(DURATION), "-i", "anullsrc=r=44100:cl=stereo"]
+    a_in = ["-i", audio] if audio else ["-f", "lavfi", "-t", str(total), "-i", "anullsrc=r=44100:cl=stereo"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo",
            "-pix_fmt", "rgb24", "-s", f"{R.W}x{R.H}", "-r", str(FPS), "-i", "-", *a_in,
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", out_path]
+           "-c:a", "aac", "-b:a", "128k", "-t", f"{total:.2f}", "-movflags", "+faststart", out_path]
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE)
-        for i in range(int(DURATION * FPS)):
-            proc.stdin.write(_frame(L, i / FPS).tobytes())
+        for i in range(int(total * FPS)):
+            proc.stdin.write(_frame(L, i / FPS, segs, times, total, len(rows)).tobytes())
         proc.stdin.close()
-        if proc.wait(timeout=600) != 0:
+        if proc.wait(timeout=900) != 0:
             return "ffmpeg: " + proc.stderr.read().decode()[-300:]
     except Exception as e:
         return f"video yozilmadi: {e}"
@@ -639,8 +893,12 @@ async def produce(db, guide_id: int = 0) -> dict:
     os.makedirs(R.REELS_DIR, exist_ok=True)
     out = os.path.join(R.REELS_DIR, f"cmp_{rid}.mp4")
     voice = out + ".voice.wav"
-    has_voice = await loop.run_in_executor(None, _voice, script, voice, out)
-    err = await loop.run_in_executor(None, render, topic, rows, script, out, voice if has_voice else "")
+    times = await loop.run_in_executor(None, build_voice, script, voice)
+    has_voice = bool(times)
+    if not has_voice:
+        times = silent_times(script)       # ovozsiz: subtitr + musiqa
+    err = await loop.run_in_executor(None, render, topic, rows, script, times, out,
+                                     voice if has_voice else "")
     try:
         os.remove(voice)
     except OSError:
@@ -665,7 +923,7 @@ async def _send_for_approval(db, rid: int, video: str, caption: str, voice: bool
         InlineKeyboardButton(text="✅ Kanalga joylash", callback_data=f"rcmp_ok_{rid}"),
         InlineKeyboardButton(text="❌ Bekor", callback_data=f"rcmp_no_{rid}"),
     ]])
-    note = "" if voice else "\n\n🔇 Diktor ovozi chiqmadi (AI kvotasi) — faqat musiqa."
+    note = "" if voice else "\n\n🔇 Diktor ovozi chiqmadi (AI kvotasi) — subtitr va musiqa bilan."
     try:
         await bot.send_video(GLAVNIY_ADMIN_ID, FSInputFile(video),
                              caption=("🎬 <b>Kunlik video — tasdiqlang</b>\n\n" + caption)[:1000] + note,
