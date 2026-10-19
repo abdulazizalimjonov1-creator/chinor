@@ -444,6 +444,10 @@ async def api_admin_label_save(request: web.Request):
 
     removed = 0
     if status == "approved":
+        # Yangi fakt paydo bo'ldi — shu bo'lim uchun AI savol taklif qilsin
+        # (fonda, qoralama sifatida; admin «🧐 Maslahatlar»da ko'radi)
+        from bot import api_guides
+        asyncio.get_event_loop().create_task(api_guides.auto_suggest(db, pid))
         # Tasdiqlandi — yorliq rasmlari endi kerak emas (ma'lumot matn bo'lib saqlandi)
         d = _labels_dir(pid)
         removed = len(_photos(pid))

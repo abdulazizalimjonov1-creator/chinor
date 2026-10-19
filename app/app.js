@@ -2334,13 +2334,29 @@
             _gTypes = data.paint_types || {};
             const rows = _gAdmin.map(g => `<div class="g-row" onclick="editGuide(${g.id})">
                 <div><b>${escapeHtml(g.question)}</b>
-                <div class="g-meta">${g.status === 'published' ? '✅ Nashr qilingan' : (g.answer ? '📝 Qoralama — tekshiring' : '⚪ Javob yo\'q')}
+                <div class="g-meta">${g.source === 'auto' && g.status !== 'published' ? '🤖 AI taklifi · ' : ''}${g.status === 'published' ? '✅ Nashr qilingan' : (g.answer ? '📝 Qoralama — tekshiring' : '⚪ Javob yo\'q')}
                  · 👁 ${g.views || 0}</div></div><span>›</span></div>`).join('');
             openTool('🧐 Ustalar maslahati', `
                 <div class="stat-block g-help">Mijoz Mini App'da shu savollarni ko'radi. Javobni <b>✨ AI qoralama</b>
                 yozib beradi, siz tekshirib <b>Nashr qilish</b>ni bosasiz. Narx va qoldiq avtomatik qo'shiladi.</div>
                 <button class="more-btn" onclick="editGuide(0)">➕ Yangi savol</button>
+                <button class="more-btn" id="gSuggestBtn" onclick="guideSuggest()">🤖 AI yangi savollar taklif qilsin</button>
+                <div class="g-hint">AI yorliq kartochkasi va tavsifi bor tovarlardan xaridor so'raydigan savollarni tuzadi.
+                Ular qoralama bo'lib turadi — siz o'qib nashr qilasiz. Yorliq tasdiqlanganda o'zi ham taklif qiladi.</div>
                 <div class="g-list">${rows || '<div class="list-status">Hali yo\'q</div>'}</div>`);
+        };
+
+        window.guideSuggest = async function () {
+            const b = $('gSuggestBtn');
+            if (b) { b.disabled = true; b.textContent = '⏳ AI savollar tuzmoqda… (30–90 soniya)'; }
+            const { ok, data } = await apiFetch('/api/admin/guides/suggest', { method: 'POST', body: '{}' });
+            await openGuidesAdmin();
+            const t = $('toolBody');
+            const msg = !ok || !data.ok ? '⚠️ ' + ((data && data.error) || 'Xato')
+                : data.created ? `🤖 ${data.created} ta yangi savol taklif qilindi — pastda "AI taklifi" belgisi bilan`
+                : (data.groups ? '🤖 Bu safar yangi savol chiqmadi (AI band yoki hammasi bor) — keyinroq urinib ko\'ring'
+                               : 'ℹ️ Taklif uchun ma\'lumot yo\'q yoki bugun allaqachon taklif qilingan. Avval yorliq o\'qiting.');
+            if (t) t.insertAdjacentHTML('afterbegin', `<div class="list-status">${msg}</div>`);
         };
 
         window.editGuide = function (id) {
@@ -2591,7 +2607,7 @@
             const r = await apiFetch('/api/admin/label?pid=' + d.product.id);
             if (r.ok && r.data.ok) _lbl = r.data;
             _lblRender(status === 'approved'
-                ? `✅ Tasdiqlandi${data.photos_removed ? ` — ${data.photos_removed} ta yorliq surati o'chirildi` : ''}${data.category_applied ? ` · bo'lim: ${escapeHtml(data.category_applied)}` : ''}`
+                ? `✅ Tasdiqlandi${data.photos_removed ? ` — ${data.photos_removed} ta yorliq surati o'chirildi` : ''}${data.category_applied ? ` · bo'lim: ${escapeHtml(data.category_applied)}` : ''}<br>🤖 AI shu tovar bo'yicha maslahat savoli tayyorlayapti — bir daqiqadan keyin «🧐 Maslahatlar»da ko'rasiz`
                 : '💾 Qoralama saqlandi');
         };
 

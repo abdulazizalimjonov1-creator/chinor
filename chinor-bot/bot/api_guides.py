@@ -97,6 +97,12 @@ def _ensure(db) -> None:
         conn = db._conn()
         try:
             conn.executescript(_SCHEMA)
+            # Avto-savollar uchun ustunlar (eski bazalarga qo'shiladi)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(guides)").fetchall()}
+            if "source" not in cols:
+                conn.execute("ALTER TABLE guides ADD COLUMN source TEXT DEFAULT ''")
+            if "group_key" not in cols:
+                conn.execute("ALTER TABLE guides ADD COLUMN group_key TEXT DEFAULT ''")
             n = conn.execute("SELECT COUNT(*) FROM guides").fetchone()[0]
             if n == 0:
                 for i, (q, query, calc) in enumerate(SEED):
@@ -472,12 +478,195 @@ async def api_admin_guide_draft(request: web.Request):
             None, lambda: ai_engine.chat(prompt, system=_DRAFT_SYSTEM, validate=_ok))
     if not text:
         return _err("AI hozir javob bermadi — keyinroq urinib ko'ring yoki o'zingiz yozing", 503)
-    text = text.strip()
+    text = _tidy(text)
     if gid:
         await db._in_thread(_exec, db,
             "UPDATE guides SET answer=?, status='draft', updated_at=? WHERE id=?",
             (text, _now(), gid))
     return web.json_response({"ok": True, "answer": text})
+
+
+# ── AI savol takliflari (avtomatik) ───────────────────────────────────────
+# Tasdiqlangan yorliq kartochkasi yoki tavsifi bor tovarlardan AI xaridor
+# beradigan savollarni o'zi tuzadi. Hammasi QORALAMA (source='auto') —
+# admin o'qib nashr qilmaguncha mijozga chiqmaydi. Bitta guruh (bo'lim)
+# uchun sutkada ko'pi bilan bir marta — bepul AI kvotasini tejash uchun.
+
+_SUGGEST_SYSTEM = (
+    "Sen xo'jalik do'koni uchun mijozlarga foydali savol-javob kartochkalari "
+    "tuzasan. O'zbek tilida (lotin). QOIDALAR: 1) Savol — xaridor tanlashda "
+    "haqiqatan beradigan, qiziqarli va aniq savol (masalan 'Sezgir tish uchun "
+    "qaysi pasta?', 'Dezodorant va antiperspirantning farqi nima?'). "
+    "2) Javob FAQAT berilgan zavod ma'lumoti va tavsiflardan; umumiy ma'lum "
+    "texnik bilim qo'shsang ham bo'ladi, lekin brend sifati, 'eng yaxshi', "
+    "'ko'p sotiladi' kabi baholar oxiriga [TEKSHIRING] qo'y. 3) Narx raqamini "
+    "yozma. 4) Javob 70–150 so'z, '• ' bilan ro'yxat mumkin, **qalin** mumkin. "
+    "5) 'keywords' — tovar NOMLARIDA uchraydigan 1–3 so'z (vergul bilan), "
+    "shular orqali tegishli tovarlar topiladi. 6) Mavjud savollarni takrorlama. "
+    "7) Faqat JSON."
+)
+
+
+def _suggest_parse(text: str):
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if not m:
+        return None
+    try:
+        import json as _j
+        d = _j.loads(m.group(0))
+    except ValueError:
+        return None
+    items = d.get("items") if isinstance(d, dict) else None
+    if not isinstance(items, list):
+        return None
+    out = []
+    for it in items[:2]:
+        if isinstance(it, dict) and str(it.get("question") or "").strip() and \
+                len(str(it.get("answer") or "").split()) >= 30:
+            out.append(it)
+    return out or None
+
+
+async def _groups_for(db, pid: int = 0) -> list:
+    """[(group_key, nom, [tovarlar], [manba tovarlar])]. Guruh — bo'lim,
+    bo'lim bo'lmasa nomning birinchi so'zi."""
+    from bot import api_recommend as R, api_labels as L
+    idx = await R._index(db)
+    rows = await db._in_thread(L._all_rows, db)
+    approved = {r["product_id"] for r in rows if r.get("status") == "approved"}
+
+    def gkey(p):
+        c = int(p.get("category_id") or 0)
+        if c:
+            return f"cat:{c}"
+        t = R._tokens(p.get("display_name") or p.get("name") or "")
+        return f"tok:{t[0]}" if t else ""
+
+    sources = [p for q, p in idx.items.items()
+               if q in approved or (p.get("description") or "").strip()]
+    if pid:
+        p = idx.items.get(pid) or await db.get_product_any(pid)
+        sources = [p] if p else []
+    groups = {}
+    for p in sources:
+        k = gkey(p)
+        if k:
+            groups.setdefault(k, {"src": [], "all": []})["src"].append(p)
+    for k, g in groups.items():
+        g["all"] = [p for p in idx.items.values() if gkey(p) == k][:15]
+        for p in g["src"]:
+            if p not in g["all"]:
+                g["all"].append(p)
+    out = []
+    for k, g in groups.items():
+        name = k.split(":", 1)[1]
+        if k.startswith("cat:"):
+            try:
+                c = await db.get_category(int(name))
+                name = (c or {}).get("name") or name
+            except Exception:
+                pass
+        out.append((k, name, g["all"], g["src"], approved))
+    return out
+
+
+async def suggest_for_group(db, key, gname, members, sources, approved) -> int:
+    from bot import ai_engine, api_labels as L
+    existing = await db._in_thread(_rows, db)
+    if any(r.get("group_key") == key and r.get("source") == "auto"
+           and (r.get("created_at") or "") >= time.strftime("%Y-%m-%d %H:%M:%S",
+                                                           time.localtime(time.time() - 86400))
+           for r in existing):
+        return -1                                  # bugun shu guruhga taklif qilingan — AI chaqirilmadi
+    lines = []
+    for p in members[:15]:
+        nm = (p.get("display_name") or "").strip() or p.get("name", "")
+        info = await db._in_thread(L.public_info, db, p["id"]) if p["id"] in approved else {}
+        facts = "; ".join(f"{f['k']}: {f['v'][:120]}" for f in (info.get("facts") or []))
+        desc = (p.get("description") or "").strip()[:300]
+        extra = " | ".join(x for x in [facts and f"zavod: {facts}", desc and f"tavsif: {desc}",
+                                       info.get("store_rating") and f"do'kon bahosi {info['store_rating']}/5"] if x)
+        lines.append(f"- {nm}" + (f" | {extra}" if extra else ""))
+    prompt = (f"Bo'lim: {gname}\n\nTOVARLAR:\n" + "\n".join(lines) +
+              "\n\nMAVJUD SAVOLLAR (takrorlama):\n" +
+              "\n".join(f"- {r['question']}" for r in existing[:40]) +
+              '\n\nJSON qaytar: {"items": [{"question": "...", "answer": "...", '
+              '"keywords": "so\'z1, so\'z2"}]} — 1 yoki 2 ta savol.')
+    loop = asyncio.get_event_loop()
+    raw = await loop.run_in_executor(
+        None, lambda: ai_engine.chat(prompt, _SUGGEST_SYSTEM, 40,
+                                     validate=lambda t: _suggest_parse(t) is not None))
+    items = _suggest_parse(raw) or []
+    from bot import api_recommend as R
+    made = 0
+    for it in items:
+        q = str(it["question"]).strip()[:200]
+        if any(_similar_q(q, r["question"]) for r in existing):
+            continue
+        kws = [w.strip().lower() for w in str(it.get("keywords") or "").split(",") if w.strip()]
+        # Kalit so'z tovar nomlarida haqiqatan uchrashi shart — aks holda
+        # maslahat ostida tovar ro'yxati bo'sh chiqadi
+        name_toks = set()
+        for p in members:
+            name_toks |= set(R._tokens(p.get("display_name") or p.get("name") or ""))
+        kws = [w for w in kws if any(t == w or (len(w) >= 5 and t.startswith(w)) for t in name_toks)]
+        if not kws:
+            first = R._tokens(sources[0].get("display_name") or sources[0].get("name") or "")
+            kws = first[:1]
+        await db._in_thread(_exec, db,
+            "INSERT INTO guides(question, answer, query, calc, status, sort, source, group_key,"
+            " created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (q, _tidy(str(it["answer"]))[:6000], ", ".join(kws[:3]), "", "draft", 50,
+             "auto", key, _now(), _now()))
+        existing.append({"question": q})
+        made += 1
+    return made
+
+
+def _tidy(text: str) -> str:
+    """AI ba'zan ro'yxatni bitta qatorga yozadi ("… • **A:** … • **B:** …").
+    Mini App ro'yxatni faqat alohida qatordagi '• ' dan taniydi."""
+    t = re.sub(r"\s+•\s+", "\n• ", (text or "").strip())
+    return re.sub(r"([^\n])\n• ", r"\1\n\n• ", t, count=1)
+
+
+def _similar_q(a: str, b: str) -> bool:
+    from bot import api_recommend as R
+    ta, tb = set(R._tokens(a)), set(R._tokens(b))
+    if not ta or not tb:
+        return False
+    return len(ta & tb) / min(len(ta), len(tb)) >= 0.7
+
+
+async def auto_suggest(db, pid: int) -> None:
+    """Yorliq tasdiqlangach fonda chaqiriladi — xato bo'lsa jim (log)."""
+    try:
+        for g in await _groups_for(db, pid):
+            await suggest_for_group(db, *g)
+    except Exception:
+        logger.exception("auto guide suggest")
+
+
+@GUIDE_ROUTES.post("/api/admin/guides/suggest")
+async def api_admin_guides_suggest(request: web.Request):
+    """Admin tugmasi: tavsif/yorliq kartochkasi bor bo'limlar uchun savollar
+    taklif qiladi. Bir chaqiriqda ko'pi bilan 3 ta guruh (kvota)."""
+    db, auth, err = await _admin(request)
+    if err is not None:
+        return err
+    made, tried = 0, 0
+    groups = await _groups_for(db)
+    # Yorliq kartochkasi bor guruhlar birinchi — ularda ma'lumot boyroq
+    groups.sort(key=lambda g: -sum(1 for p in g[3] if p["id"] in g[4]))
+    for g in groups:
+        if tried >= 3:
+            break
+        n = await suggest_for_group(db, *g)
+        if n < 0:
+            continue                       # bugun ko'rilgan guruh — kvota sarflanmadi
+        tried += 1
+        made += n
+    return web.json_response({"ok": True, "created": made, "groups": tried})
 
 
 def setup(app: web.Application):
