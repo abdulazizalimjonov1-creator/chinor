@@ -360,7 +360,15 @@ async def api_admin_label_read(request: web.Request):
         photos = photos[-MAX_PHOTOS:]
 
     loop = asyncio.get_event_loop()
-    texts = []
+    # Yangi surat qo'shilmagan bo'lsa va matn avval o'qilgan bo'lsa — qayta
+    # OCR qilmaymiz: oldingi urinish faqat tarjima bosqichida yiqilgan
+    # (masalan AI kvotasi). Bu kvotani ham, vaqtni ham tejaydi.
+    prev = await db._in_thread(_get_row, db, pid) or {}
+    if not fresh and prev.get("ocr_text"):
+        photos = []
+        texts = [prev["ocr_text"]]
+    else:
+        texts = []
     for path in photos:
         t = await loop.run_in_executor(
             None, lambda p=path: ai_engine.read_document(

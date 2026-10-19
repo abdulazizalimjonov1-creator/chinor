@@ -285,9 +285,14 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
         "contents": [{"parts": parts}],
         "generationConfig": {
             "maxOutputTokens": 4000 if not img_b64 else (getattr(_tls, "img_tokens", 0) or 800),
-            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
+    # "O'ylash"ni o'chirish faqat 2.5 avlodida bor. Yangi modellar
+    # (gemini-flash-lite-latest = 3.x, gemini-3.5-*) thinkingBudget=0 ni
+    # "invalid argument" (400) deb rad etadi — 2026-10-20 da aynan shu sabab
+    # zaxira model doim yiqilib, asosiy kvota tugaganda AI butunlay to'xtardi.
+    if "2.5" in model:
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
     if search:
         # Google qidiruvi (grounding): model javob yozishdan OLDIN internetdan
         # izlaydi. Aynan shu narsa tovar haqidagi ma'lumotni o'ylab topilgan
