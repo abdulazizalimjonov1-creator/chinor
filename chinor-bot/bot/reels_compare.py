@@ -344,17 +344,18 @@ def _outro_say(store: dict) -> str:
     n = int(store.get("count") or 0)
     parts = []
     if n >= 100:
-        parts.append(f"Chinor do'konida {store['count_txt']} dan ortiq tovar sizni kutmoqda.")
+        # Raqam bo'shliqsiz: "5 200" ni diktor "besh, ikki yuz" deb bo'lib o'qiydi
+        parts.append(f"Chinor do'konida {store['count_say']} dan ortiq tovar sizni kutmoqda.")
     else:
         parts.append("Narxi va buyurtma — Chinor do'konida.")
-    parts.append(f"{store.get('location', 'Sergeli')}, {store.get('hours', '')}.".replace(", .", "."))
+    parts.append(f"Sergeli tumani, Chinor bekati yonida, {store.get('hours_say', '')}.".replace(", .", "."))
     return " ".join(parts)
 
 
 async def store_info(db) -> dict:
     """Video oxiri uchun do'kon faktlari: tovar soni, bo'limlar, rasmlar devori."""
     from bot import api_recommend as R
-    from bot.config import SHOP_LOCATION, SHOP_HOURS
+    from bot.config import SHOP_LOCATION, SHOP_HOURS, SHOP_HOURS_SAY
     idx = await R._index(db)
     n = len(idx.items)
     cats = len({int(p.get("category_id") or 0) for p in idx.items.values()} - {0})
@@ -370,7 +371,8 @@ async def store_info(db) -> dict:
     rounded = (n // 100) * 100
     return {"count": n, "count_txt": f"{rounded:,}".replace(",", " "),
             "cats": cats if cats >= 5 else 0, "location": SHOP_LOCATION,
-            "hours": SHOP_HOURS, "images": imgs}
+            "hours": SHOP_HOURS, "hours_say": SHOP_HOURS_SAY,
+            "count_say": str(rounded), "images": imgs}
 
 
 def make_script(topic: dict, rows: list) -> dict:

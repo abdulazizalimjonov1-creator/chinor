@@ -72,6 +72,9 @@ CONTACT_PHONE_1 = os.getenv("CONTACT_PHONE_1", "+998 77 877 55 33").strip()
 CONTACT_PHONE_2 = os.getenv("CONTACT_PHONE_2", "+998 77 877 55 99").strip()
 SHOP_LOCATION   = os.getenv("SHOP_LOCATION", "Sergeli, Chinor bekati yoni").strip()
 SHOP_HOURS      = os.getenv("SHOP_HOURS", "har kuni 8:00–22:00").strip()
+# Diktor uchun — "8:00–22:00" ni TTS g'alati o'qiydi ("sakkiz nol nol tire…")
+SHOP_HOURS_SAY  = os.getenv("SHOP_HOURS_SAY",
+                            "har kuni ertalab soat sakkizdan kechki o'ngacha").strip()
 
 # ── HTTPS API (Mini App uchun login endpoint) ────────────────────────────
 # Bot bilan birga aiohttp serveri ishga tushadi. Frontend (Netlify) shu
