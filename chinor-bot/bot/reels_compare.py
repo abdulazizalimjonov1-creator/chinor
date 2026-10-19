@@ -338,6 +338,41 @@ def _row_say(r: dict, ai: str) -> str:
     return f"{r['label']}: birinchisi {r['a']}, ikkinchisi {r['b']}."
 
 
+def _outro_say(store: dict) -> str:
+    """Do'kon haqida yakuniy gap — AI emas, JONLI raqamlardan (qo'lda yozilgan
+    "5000 xil" tez eskiradi yoki noto'g'ri bo'lib qoladi)."""
+    n = int(store.get("count") or 0)
+    parts = []
+    if n >= 100:
+        parts.append(f"Chinor do'konida {store['count_txt']} dan ortiq tovar sizni kutmoqda.")
+    else:
+        parts.append("Narxi va buyurtma — Chinor do'konida.")
+    parts.append(f"{store.get('location', 'Sergeli')}, {store.get('hours', '')}.".replace(", .", "."))
+    return " ".join(parts)
+
+
+async def store_info(db) -> dict:
+    """Video oxiri uchun do'kon faktlari: tovar soni, bo'limlar, rasmlar devori."""
+    from bot import api_recommend as R
+    from bot.config import SHOP_LOCATION, SHOP_HOURS
+    idx = await R._index(db)
+    n = len(idx.items)
+    cats = len({int(p.get("category_id") or 0) for p in idx.items.values()} - {0})
+    imgs = []
+    day = int(time.time() // 86400)
+    ordered = sorted(idx.items.values(), key=lambda p: (p["id"] * 2654435761 + day) % 100003)
+    for p in ordered:
+        path = _img_path(p)
+        if path:
+            imgs.append(path)
+        if len(imgs) >= 18:
+            break
+    rounded = (n // 100) * 100
+    return {"count": n, "count_txt": f"{rounded:,}".replace(",", " "),
+            "cats": cats if cats >= 5 else 0, "location": SHOP_LOCATION,
+            "hours": SHOP_HOURS, "images": imgs}
+
+
 def make_script(topic: dict, rows: list) -> dict:
     """Bloklovchi (AI). Natija: ekran matnlari + `segments` (diktor gaplari)."""
     from bot import ai_engine
@@ -358,7 +393,7 @@ def make_script(topic: dict, rows: list) -> dict:
         segs.append({"kind": "row", "i": i, "say": _row_say(r, ai_rows[i] if i < len(ai_rows) else "")})
     segs += [{"kind": "verdict", "i": 0, "say": d["verdict_a_say"]},
              {"kind": "verdict", "i": 1, "say": d["verdict_b_say"]},
-             {"kind": "cta", "say": d["cta_say"]}]
+             {"kind": "outro", "say": _outro_say(topic.get("store") or {})}]
     d["segments"] = segs
     return d
 
@@ -503,6 +538,9 @@ class _Layers:
         self.verdicts = [self._verdict(script["verdict_a"], names[0], 0),
                          self._verdict(script["verdict_b"], names[1], 1)]
         self.cta = R._text_layer((W, int(H * 0.30)), self._cta)
+        store = topic.get("store") or {}
+        self.outro = R._text_layer((W, int(H * 0.42)), lambda d, im: self._outro(d, im, store))
+        self.wall = self._wall(store.get("images") or [])
         # Subtitr gapni 7 so'zlik bo'laklarda ko'rsatadi — uzun gap 3 qatorga
         # sig'may kesilib qolardi
         self.sub_words = [s["say"].split() for s in script["segments"]]
@@ -652,6 +690,54 @@ class _Layers:
                             radius=37, fill=(255, 255, 255, 245))
         d.text(((W - tw) / 2, int(W * 0.205) + 14), sub, font=f2, fill=(16, 60, 38, 255))
 
+    def _outro(self, d, im, store):
+        """Do'kon sahnasi: raqamlar faqat jonli bazadan."""
+        R, W = self.R, self.W
+        y = 0
+        if int(store.get("count") or 0) >= 100:
+            f = R._font(int(W * 0.115))
+            big = f"{store['count_txt']}+ tovar"
+            tw = d.textlength(big, font=f)
+            d.text(((W - tw) / 2, y), big, font=f, fill=(255, 255, 255, 255))
+            y += int(W * 0.13)
+            f2 = R._font(int(W * 0.050))
+            sub = "sizni kutmoqda" + (f" · {store['cats']} bo'lim" if store.get("cats") else "")
+            tw = d.textlength(sub, font=f2)
+            d.text(((W - tw) / 2, y), sub, font=f2, fill=R.ACCENT + (255,))
+            y += int(W * 0.09)
+        f3 = R._font(int(W * 0.040), bold=False)
+        for line in (f"Chinor · {store.get('location', '')}", str(store.get("hours", ""))):
+            if line.strip(" ·"):
+                tw = d.textlength(line, font=f3)
+                d.text(((W - tw) / 2, y), line, font=f3, fill=(235, 245, 238, 255))
+                y += int(W * 0.055)
+        y += 18
+        f4 = R._font(int(W * 0.044))
+        pill = "Telegram: t.me/" + _channel_handle()
+        tw = d.textlength(pill, font=f4)
+        d.rounded_rectangle([(W - tw) / 2 - 32, y, (W + tw) / 2 + 32, y + 78], radius=39,
+                            fill=(255, 255, 255, 245))
+        d.text(((W - tw) / 2, y + 15), pill, font=f4, fill=(16, 60, 38, 255))
+
+    def _wall(self, paths):
+        """Haqiqiy tovar rasmlaridan kartochkalar (devor uchun)."""
+        Image, ImageDraw = self.Image, self.ImageDraw
+        out = []
+        side = int(self.W * 0.29)
+        for pth in paths:
+            try:
+                im = Image.open(pth).convert("RGB")
+                im.thumbnail((side - 20, side - 20), Image.LANCZOS)
+                card = Image.new("RGBA", (side, side), self.R.CARD_BG + (255,))
+                card.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+                m = Image.new("L", (side, side), 0)
+                ImageDraw.Draw(m).rounded_rectangle([0, 0, side - 1, side - 1], radius=28, fill=255)
+                card.putalpha(m)
+                out.append(card)
+            except Exception:
+                continue
+        return out
+
     def subtitle(self, si: int, ci: int, n_words: int):
         """Joriy gapning subtitri — so'zlar diktor bilan birga paydo bo'ladi
         (ko'pchilik lentani ovozsiz ko'radi)."""
@@ -779,6 +865,29 @@ def _frame(L: _Layers, t: float, segs: list, times: list, total: float, n_rows: 
             fr.alpha_composite(R._alpha(lay, 1.0 if active else 0.7),
                                (x - (lay.width - v.width) // 2, int(H * 0.26) + i * 330))
 
+    elif kind == "outro":                               # DO'KON SAHNASI
+        k = e(seg(t, s_start, 0.5))
+        if L.wall:
+            # Rasmlar devori pastdan tepaga suzadi: 3 ustun, har biri o'z
+            # tezligida; ustun uzunligi ekrandan katta — tepadan chiqqan
+            # kartochka pastdan qaytib kiradi (uzluksiz lenta)
+            side, gap = L.wall[0].width, 22
+            step = side + gap
+            n = H // step + 2
+            col_len = n * step
+            col_x = [int(W * 0.035), (W - side) // 2, W - side - int(W * 0.035)]
+            for ci in range(3):
+                shift = (t - s_start) * (150 + ci * 50) + ci * 140
+                for j in range(n):
+                    y = int((j * step - shift) % col_len) - side // 2
+                    card = L.wall[(ci * 5 + j) % len(L.wall)]
+                    fr.alpha_composite(R._alpha(card, 0.9 * k), (col_x[ci], y))
+            shade = Image.new("RGBA", (W, H), (8, 26, 17, int(150 * k)))
+            fr.alpha_composite(shade)
+        ko = ab(seg(t, s_start + 0.25, 0.6))
+        fr.alpha_composite(R._alpha(L.outro, min(1.0, ko)),
+                           (0, int(H * 0.27) + int(60 * (1 - min(1.0, ko)))))
+
     else:                                               # CHAQIRUV
         k = ab(seg(t, s_start, 0.6))
         fr.alpha_composite(R._alpha(L.cta, min(1.0, k)), (0, int(H * 0.24) + int(60 * (1 - min(1.0, k)))))
@@ -888,6 +997,7 @@ async def produce(db, guide_id: int = 0) -> dict:
     finally:
         c.close()
     loop = asyncio.get_event_loop()
+    topic["store"] = await store_info(db)
     script = await loop.run_in_executor(None, make_script, topic, rows)
     from bot import reels as R
     os.makedirs(R.REELS_DIR, exist_ok=True)

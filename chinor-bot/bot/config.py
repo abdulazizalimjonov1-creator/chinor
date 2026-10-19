@@ -71,6 +71,7 @@ MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
 CONTACT_PHONE_1 = os.getenv("CONTACT_PHONE_1", "+998 77 877 55 33").strip()
 CONTACT_PHONE_2 = os.getenv("CONTACT_PHONE_2", "+998 77 877 55 99").strip()
 SHOP_LOCATION   = os.getenv("SHOP_LOCATION", "Sergeli, Chinor bekati yoni").strip()
+SHOP_HOURS      = os.getenv("SHOP_HOURS", "har kuni 8:00–22:00").strip()
 
 # ── HTTPS API (Mini App uchun login endpoint) ────────────────────────────
 # Bot bilan birga aiohttp serveri ishga tushadi. Frontend (Netlify) shu
