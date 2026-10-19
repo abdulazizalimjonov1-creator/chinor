@@ -35,6 +35,7 @@ provayder JIM o'tkazib yuboriladi, xato hisoblanmaydi.
 """
 
 import base64
+import threading
 import json
 import logging
 import os
@@ -252,6 +253,23 @@ def _gemini_text(d: dict) -> str:
     return "\n".join(out).strip()
 
 
+# Hujjat o'qish (yorliq/yo'riqnoma) rejimi: rasmdan UZUN matn kerak bo'ladi,
+# oddiy tavsifning 800/400 tokenlik limiti yorliq matnini o'rtasidan kesadi.
+# Oqimga bog'langan — parallel ishlayotgan boshqa tavsiflarga ta'sir qilmaydi.
+_tls = threading.local()
+
+
+def read_document(fpath: str, prompt: str, validate=None, max_tokens: int = 3000) -> str:
+    """Rasmdagi hujjatni o'qiydi (OCR + tushunish). `describe` dan farqi:
+    javob limiti katta va rasm modellari yiqilsa NOMDAN taxmin QILINMAYDI —
+    yorliqdagi faktni o'ylab topish mumkin emas."""
+    _tls.img_tokens = max_tokens
+    try:
+        return describe(fpath, prompt, validate=validate, allow_text_fallback=False)
+    finally:
+        _tls.img_tokens = 0
+
+
 def _call_gemini(model: str, prompt: str, img_b64: str = "",
                  system: str = "", search: bool = False) -> str:
     parts = []
@@ -266,7 +284,7 @@ def _call_gemini(model: str, prompt: str, img_b64: str = "",
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 4000 if not img_b64 else 800,
+            "maxOutputTokens": 4000 if not img_b64 else (getattr(_tls, "img_tokens", 0) or 800),
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
@@ -375,7 +393,7 @@ def _call_openai_compat(provider: str, model: str, prompt: str,
     msgs.append({"role": "user", "content": content})
     body = json.dumps({
         "model": model,
-        "max_tokens": 1200 if not img_b64 else 400,
+        "max_tokens": 1200 if not img_b64 else (getattr(_tls, "img_tokens", 0) or 400),
         "messages": msgs,
     }).encode()
     def _once(key: str) -> str:

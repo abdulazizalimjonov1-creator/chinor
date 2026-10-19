@@ -733,7 +733,8 @@
                     <button class="act-btn act-edit" onclick="openProductForm(${p.id})">✏️ Tahrirlash</button>
                     <button class="act-btn act-qty" onclick="prodQty(${p.id})">📦 Prixod</button>
                     <button class="act-btn act-del" onclick="prodDelete(${p.id})">🗑</button>
-                </div>`;
+                </div>
+                <button class="more-btn lbl-entry" onclick="openLabelFor(${p.id})">📄 Yorliq / yo'riqnoma o'qitish (tovar rasmi emas)</button>`;
                 // AI amallari: bo'limni rasmga qarab aniqlash va rasmni qayta
                 // brendlash (fonni kesish). Ikkalasi ham asl rasmni saqlab qoladi.
                 html += `<div class="detail-actions" style="margin-top:8px">
@@ -1601,10 +1602,20 @@
                 <div class="cl-modal-name">${escapeHtml(p.name)}</div>
                 <div class="cl-modal-price">${_fmt_sum_cl(_clPrice(p))}<span class="cl-modal-unit"> / ${escapeHtml(p.unit||'dona')}</span></div>
                 ${p.sold > 0 ? `<div class="cl-sold-line">🔥 ${_clNum(p.sold)} ${escapeHtml(p.unit||'dona')} sotilgan — xaridorlar tanlovi</div>` : ''}
+                ${p.store_rating ? `<div class="cl-store-rating">
+                    <span class="st">${'★'.repeat(p.store_rating)}<i>${'★'.repeat(5 - p.store_rating)}</i></span>
+                    <b>Do'kon bahosi</b>
+                    ${p.store_rating_note ? `<div>${escapeHtml(p.store_rating_note)}</div>` : ''}
+                </div>` : ''}
                 ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
                 ${p.usage_info ? `<details class="cl-usage-info">
                     <summary>📖 Qanday ishlatiladi / Как использовать</summary>
                     <div>${escapeHtml(p.usage_info)}</div>
+                </details>` : ''}
+                ${(p.facts && p.facts.length) || (p.specs && p.specs.length) ? `<details class="cl-facts">
+                    <summary>🏭 Zavod ma'lumoti <span>${escapeHtml((p.facts || []).filter(f => /^(Brend|Ishlab chiqarilgan mamlakat|Texnologiya)/.test(f.k)).map(f => f.v).join(' · ') || 'yorliqdan')}</span></summary>
+                    ${(p.facts || []).map(f => `<div class="cl-fact"><span>${escapeHtml(f.k)}</span><div>${escapeHtml(f.v)}</div></div>`).join('')}
+                    ${(p.specs || []).map(f => `<div class="cl-fact"><span>${escapeHtml(f.k)}</span><div>${escapeHtml(f.v)}</div></div>`).join('')}
                 </details>` : ''}
                 ${_clStockTag(p, true)}
                 <div class="cl-buybox" data-pid="${p.id}">${_clModalBuy(p)}</div>
@@ -2388,6 +2399,200 @@
             if (!confirm('Maslahat o\'chirilsinmi?')) return;
             await apiFetch('/api/admin/guide/delete', { method: 'POST', body: JSON.stringify({ id }) });
             openGuidesAdmin();
+        };
+
+        // ── Admin: yorliq / yo'riqnoma o'qitish ──────────────────────────
+        // TOVAR RASMIDAN ALOHIDA joy: bu yerga yuklangan surat tovar rasmi
+        // bo'lmaydi, mijozga ko'rinmaydi. AI matnni o'qib o'zbekchaga
+        // o'giradi, admin tekshirib tasdiqlaydi — shunda rasmlar o'chadi.
+        let _lbl = null;          // joriy tovar kartochkasi (server javobi)
+
+        window.openLabels = async function () {
+            openTool('📄 Yorliq o\'qitish', `
+                <div class="lbl-explain">
+                    <b>📄 Bu yer — tovar YORLIG'I va YO'RIQNOMASI uchun.</b><br>
+                    Bu yerga yuklangan surat <u>tovar rasmi bo'lmaydi</u> va mijozga ko'rinmaydi.
+                    AI undagi matnni (qaysi tilda bo'lmasin) o'qib, o'zbekchaga o'giradi.
+                    Siz tekshirib tasdiqlaysiz — shundan keyin suratlar o'chiriladi,
+                    ma'lumot esa tovar kartochkasida va AI maslahatchida qoladi.
+                </div>
+                <div class="search-bar" style="margin:12px 0">
+                    <span class="search-ic">🔍</span>
+                    <input type="text" id="lblSearch" placeholder="Tovar nomi yoki shtrix-kodi..." autocomplete="off">
+                </div>
+                <div id="lblResults"></div>
+                <div class="cl-sheet-sub">Oxirgi kartochkalar</div>
+                <div id="lblRecent"><div class="list-status">Yuklanmoqda...</div></div>`);
+            let timer;
+            $('lblSearch').addEventListener('input', e => {
+                clearTimeout(timer);
+                timer = setTimeout(() => _lblSearch(e.target.value.trim()), 300);
+            });
+            const { ok, data } = await apiFetch('/api/admin/labels');
+            const box = $('lblRecent');
+            if (!box) return;
+            if (!ok || !data.ok) { box.innerHTML = '<div class="list-status">Yuklanmadi</div>'; return; }
+            box.innerHTML = (data.items || []).map(it => `<div class="g-row" onclick="openLabelFor(${it.pid})">
+                <div><b>${escapeHtml(it.name)}</b><div class="g-meta">${it.status === 'approved' ? '✅ Tasdiqlangan' : '📝 Qoralama'}
+                ${it.rating ? ' · ' + '⭐'.repeat(it.rating) : ''} · ${escapeHtml(it.updated_at)}</div></div><span>›</span></div>`).join('')
+                || '<div class="list-status">Hali yo\'q — yuqoridan tovarni toping</div>';
+        };
+
+        async function _lblSearch(q) {
+            const box = $('lblResults');
+            if (!box) return;
+            if (!q) { box.innerHTML = ''; return; }
+            const { ok, data } = await apiFetch('/api/products?page=0&q=' + encodeURIComponent(q));
+            const items = (ok && data.ok) ? (data.items || data.products || []).slice(0, 12) : [];
+            box.innerHTML = items.map(p => `<div class="g-row" onclick="openLabelFor(${p.id})">
+                <div><b>${escapeHtml(p.name)}</b><div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}</div></div><span>›</span></div>`).join('')
+                || '<div class="list-status">Topilmadi</div>';
+        }
+
+        window.openLabelFor = async function (pid) {
+            openTool('📄 Yorliq o\'qitish');
+            const { ok, status, data } = await apiFetch('/api/admin/label?pid=' + pid);
+            if (!ok || !data.ok) return openTool('📄 Yorliq o\'qitish', toolError(status, data));
+            _lbl = data;
+            _lblRender();
+        };
+
+        function _lblRender(msg) {
+            const d = _lbl, p = d.product || {};
+            const img = p.image_url ? `<img src="${API_BASE_URL + p.image_url}" onerror="this.remove()">` : '';
+            const anyFact = Object.values(d.facts || {}).some(v => v) || (d.specs || []).length;
+            const fields = (d.fields || []).map(f => `
+                <label>${escapeHtml(f.label)}</label>
+                <textarea rows="${(d.facts[f.k] || '').length > 80 ? 3 : 1}" data-k="${f.k}" class="lbl-f">${escapeHtml(d.facts[f.k] || '')}</textarea>`).join('');
+            const specs = (d.specs || []).concat([{ k: '', v: '' }]).map(s => `
+                <div class="lbl-spec"><input class="lbl-sk" placeholder="Ko'rsatkich" value="${escapeHtml(s.k)}">
+                <input class="lbl-sv" placeholder="Qiymati" value="${escapeHtml(s.v)}"></div>`).join('');
+            const stars = [1, 2, 3, 4, 5].map(n =>
+                `<button class="lbl-star${n <= (d.rating || 0) ? ' on' : ''}" onclick="lblRate(${n})">★</button>`).join('');
+            openTool('📄 Yorliq o\'qitish', `
+                <div class="lbl-product">${img}<div><div class="g-meta">Tanlangan tovar</div>
+                    <b>${escapeHtml(p.name || '')}</b><div class="g-meta">${fmtSum(p.price_sum || 0)} so'm</div></div></div>
+                ${msg ? `<div class="list-status">${msg}</div>` : ''}
+                <div class="lbl-explain small">📄 Yorliq / yo'riqnoma surati — <b>tovar rasmi EMAS</b>, mijozga ko'rinmaydi.
+                    Bir nechta surat tashlash mumkin (old, orqa, yo'riqnoma).</div>
+                <div class="lbl-photos">${(d.photos || []).map(t => `<img src="${t}">`).join('')}</div>
+                <div class="img-pick-row">
+                    <button type="button" class="img-pick-btn" onclick="$('lblCam').click()">📷 Yorliqni suratga olish</button>
+                    <button type="button" class="img-pick-btn" onclick="$('lblGal').click()">🖼 Galereyadan</button>
+                </div>
+                <input type="file" id="lblCam" accept="image/*" capture="environment" style="display:none" onchange="lblUpload(this.files)">
+                <input type="file" id="lblGal" accept="image/*" multiple style="display:none" onchange="lblUpload(this.files)">
+                ${(d.photos || []).length && !anyFact ? `<button class="more-btn" onclick="lblUpload([])">🤖 Qayta o'qitish</button>` : ''}
+                <div id="lblBusy"></div>
+
+                ${anyFact ? `
+                <div class="form-card g-form" style="margin-top:12px">
+                    <div class="lbl-status">${d.status === 'approved' ? '✅ Tasdiqlangan — mijoz va AI ko\'radi' : '📝 Qoralama — tekshirib tasdiqlang'}
+                        ${d.src_lang ? `<br><span class="g-meta">Asl tili: ${escapeHtml(d.src_lang)} → o'zbekchaga o'girildi. Raqamlarni yorliq bilan solishtiring.</span>` : ''}</div>
+                    ${fields}
+                    <label>Texnik ko'rsatkichlar</label>
+                    <div id="lblSpecs">${specs}</div>
+                    <label>Bo'lim (kategoriya)</label>
+                    <input type="text" id="lblCat" list="lblCats" value="${escapeHtml(d.category || '')}">
+                    <datalist id="lblCats">${(d.categories || []).map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist>
+                    <label class="lbl-check"><input type="checkbox" id="lblApplyCat" ${p.category_id ? '' : 'checked'}> Tovarni shu bo'limga biriktirish</label>
+                </div>` : ''}
+
+                <div class="form-card g-form" style="margin-top:12px">
+                    <label>⭐ Do'kon bahosi — mijozga aynan shunday nom bilan ko'rinadi</label>
+                    <div class="lbl-stars">${stars}<button class="lbl-star-clear" onclick="lblRate(0)">✕</button></div>
+                    <label>Nimasi bilan yaxshi / kimga mos (mijoz ko'radi, AI ham foydalanadi)</label>
+                    <textarea id="lblNote" rows="2" placeholder="Masalan: tez quriydi, rangi uzoq turadi — tashqi ish uchun yaxshi">${escapeHtml(d.rating_note || '')}</textarea>
+                </div>
+                <div class="form-row" style="gap:8px;margin-top:10px">
+                    <button class="save-btn" style="flex:1;background:#64748b" onclick="lblSave('draft')">💾 Qoralama</button>
+                    ${anyFact ? `<button class="save-btn" style="flex:1" onclick="lblSave('approved')">✅ Tasdiqlash</button>` : ''}
+                </div>
+                ${anyFact ? `<div class="g-hint">Tasdiqlansa yorliq suratlari o'chiriladi, matn qoladi.</div>` : ''}
+                <div id="lblStatus" class="list-status"></div>
+                <button class="more-btn" onclick="openLabels()">← Boshqa tovar</button>`);
+        }
+
+        function _lblCollect() {
+            const d = _lbl;
+            document.querySelectorAll('.lbl-f').forEach(t => { d.facts[t.dataset.k] = t.value; });
+            d.specs = [...document.querySelectorAll('.lbl-spec')].map(r => ({
+                k: r.querySelector('.lbl-sk').value.trim(), v: r.querySelector('.lbl-sv').value.trim() }))
+                .filter(s => s.k);
+            if ($('lblCat')) d.category = $('lblCat').value.trim();
+            if ($('lblNote')) d.rating_note = $('lblNote').value;
+        }
+
+        window.lblRate = function (n) {
+            _lblCollect();
+            _lbl.rating = n;
+            _lblRender();
+        };
+
+        // Yorliq mayda yozuvli — 2000px gacha saqlaymiz (tovar rasmidan kattaroq)
+        function _lblCompress(file) {
+            return new Promise(resolve => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+                    const c = document.createElement('canvas');
+                    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+                    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                    URL.revokeObjectURL(url);
+                    c.toBlob(b => resolve(b || file), 'image/jpeg', 0.88);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+                img.src = url;
+            });
+        }
+
+        window.lblUpload = async function (files) {
+            if (!_lbl || !_lbl.product) return;
+            _lblCollect();
+            const busy = $('lblBusy');
+            if (busy) busy.innerHTML = '<div class="lbl-busy">⏳ AI yorliqni o\'qimoqda va o\'zbekchaga o\'girmoqda… (10–40 soniya)</div>';
+            const fd = new FormData();
+            fd.append('pid', String(_lbl.product.id));
+            for (const f of Array.from(files || []).slice(0, 6)) {
+                fd.append('photo', await _lblCompress(f), 'label.jpg');
+            }
+            let data = {}, status = 0;
+            try {
+                const resp = await fetch(API_BASE_URL + '/api/admin/label/read', {
+                    method: 'POST',
+                    headers: { 'ngrok-skip-browser-warning': 'true',
+                               'X-Telegram-Init-Data': (tg && tg.initData) || '',
+                               'X-Session-Token': _sessionToken || '' },
+                    body: fd });
+                status = resp.status;
+                data = await resp.json().catch(() => ({}));
+            } catch (e) { data = { error: 'Internet xatosi' }; }
+            if (!data.ok) {
+                // Suratlar serverda qoldi — yangisini qo'shish yoki qayta o'qitish mumkin
+                const r = await apiFetch('/api/admin/label?pid=' + _lbl.product.id);
+                if (r.ok && r.data.ok) _lbl = r.data;
+                _lblRender('⚠️ ' + (data.error || ('Xato ' + status)));
+                return;
+            }
+            _lbl = data;
+            _lblRender(`✅ ${data.read_photos} ta surat o'qildi. Tekshirib, kerak bo'lsa tuzating.`);
+        };
+
+        window.lblSave = async function (status) {
+            _lblCollect();
+            const d = _lbl;
+            const { ok, data } = await apiFetch('/api/admin/label/save', {
+                method: 'POST', body: JSON.stringify({
+                    pid: d.product.id, facts: d.facts, specs: d.specs, status,
+                    rating: d.rating || 0, rating_note: d.rating_note || '',
+                    category: d.category || '', apply_category: !!($('lblApplyCat') && $('lblApplyCat').checked) }) });
+            if (!ok || !data.ok) { $('lblStatus').textContent = '⚠️ ' + ((data && data.error) || 'Xato'); return; }
+            const r = await apiFetch('/api/admin/label?pid=' + d.product.id);
+            if (r.ok && r.data.ok) _lbl = r.data;
+            _lblRender(status === 'approved'
+                ? `✅ Tasdiqlandi${data.photos_removed ? ` — ${data.photos_removed} ta yorliq surati o'chirildi` : ''}${data.category_applied ? ` · bo'lim: ${escapeHtml(data.category_applied)}` : ''}`
+                : '💾 Qoralama saqlandi');
         };
 
         // AI Chat

@@ -982,6 +982,12 @@ async def api_product_detail(request: web.Request):
     if role == "client":
         ctype = (auth["user"].get("client_type") or "dona").lower()
     out = _product_json(p, role, ctype)
+    # Tasdiqlangan zavod ma'lumoti va do'kon bahosi (yorliqdan) — bo'lsa
+    try:
+        from bot import api_labels
+        out.update(await _db._in_thread(api_labels.public_info, _db, pid))
+    except Exception:
+        logger.exception("product facts")
     # Bo'lim nomi — Mini App kartochkasida ko'rsatiladi (id o'zi hech nima demaydi).
     if out.get("category_id"):
         try:
@@ -4305,6 +4311,9 @@ def create_app() -> web.Application:
     # «Ustalar maslahati» kartochkalari va bo'yoq kalkulyatori
     from bot import api_guides
     api_guides.setup(app)
+    # Yorliq/yo'riqnomadan zavod ma'lumoti (admin tasdiqlaydi) + do'kon bahosi
+    from bot import api_labels
+    api_labels.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)

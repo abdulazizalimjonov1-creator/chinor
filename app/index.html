@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -93,6 +93,7 @@
                 <button class="quick-card card-blue" onclick="handleAction('Xodimlar')"><span class="card-icon">👔</span><h4>Xodimlar</h4><p>Xodimlar ro'yxati</p></button>
                 <button class="quick-card card-navy" onclick="handleAction('Sozlamalar')"><span class="card-icon">⚙️</span><h4>Sozlamalar</h4><p>Tizim sozlamalari</p></button>
                 <button class="quick-card card-orange" onclick="openViewAs()"><span class="card-icon">👁</span><h4>Mijoz ko'rinishi</h4><p>Mini App'ni mijoz ko'zi bilan sinash</p></button>
+                <button class="quick-card card-blue" onclick="openLabels()"><span class="card-icon">📄</span><h4>Yorliq o'qitish</h4><p>Yorliq/yo'riqnoma → AI ma'lumot</p></button>
                 <button class="quick-card card-teal" onclick="openGuidesAdmin()"><span class="card-icon">🧐</span><h4>Maslahatlar</h4><p>Mijozlar uchun savol-javob</p></button>
                 <button class="quick-card card-orange" onclick="openReceipts()"><span class="card-icon">🧾</span><h4>Cheklar</h4><p>Barcha kassa cheklari</p></button>
                 <button class="quick-card card-red" onclick="openCashMoves()"><span class="card-icon">💸</span><h4>Kassa harakati</h4><p>Naqd kirim / rasxod</p></button>
@@ -499,6 +500,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=14"></script>
 </body>
 </html>
