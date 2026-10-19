@@ -1373,6 +1373,7 @@
                 if (el) el.style.display = (t === tab) ? '' : 'none';
             });
             if (tab === 'catalog') { loadClientCategories(); loadClientCatalog(); }
+            if (tab === 'home') { _clRenderRecent(); _clLoadFeed(); }
             if (tab === 'account') loadClientAccount();
         };
 
@@ -1389,12 +1390,14 @@
             _clOrdersOn = data.orders_enabled !== false;
             if (data.shop) _clShop = data.shop;
             (data.top||[]).concat(data.new||[]).forEach(_clRemember);
-            if (topEl) topEl.innerHTML = (data.top||[]).length
-                ? (data.top||[]).map(p => _clCardHtml(p, true)).join('')
-                : '<div class="cl-loading">Ma\'lumot yo\'q</div>';
-            if (newEl) newEl.innerHTML = (data.new||[]).length
-                ? (data.new||[]).map(p => _clCardHtml(p, false)).join('')
-                : '<div class="cl-loading">Hali yo\'q</div>';
+            // Ma'lumot bo'lmasa bo'lim butunlay yashiriladi — "ko'p
+            // sotilayotgan" deb tasodifiy tovar ko'rsatish yolg'on bo'ladi.
+            const topSec = $('clTopSec'), newSec = $('clNewSec');
+            if (topSec) topSec.style.display = (data.top||[]).length ? '' : 'none';
+            if (newSec) newSec.style.display = (data.new||[]).length ? '' : 'none';
+            if (topEl) topEl.innerHTML = (data.top||[]).map(p => _clCardHtml(p, true)).join('');
+            if (newEl) newEl.innerHTML = (data.new||[]).map(p => _clCardHtml(p, false)).join('');
+            _clRenderRecent();
             _clRenderBar();
         }
 
@@ -1479,21 +1482,41 @@
             document.body.appendChild(z);
         };
 
-        window.clOpenProduct = async function(pid) {
+        // Mahsulot oynasi BITTA: o'xshash tovar bosilsa shu oynaning o'zida
+        // ochiladi (Instagram'dagi kabi ichkariga kirib boriladi), "←" esa
+        // oldingisiga qaytaradi.
+        const _clStack = [];
+
+        window.clOpenProduct = async function(pid, fromStack) {
             const { ok, data } = await apiFetch(`/api/product/${pid}`);
             if (!ok || !data.ok) return;
+            const prevSheet = $('clProdSheet');
+            if (!fromStack) {
+                if (prevSheet && prevSheet.dataset.pid) _clStack.push(+prevSheet.dataset.pid);
+                else _clStack.length = 0;
+            }
             const p = data.product;
             if (_clProd[p.id] && _clProd[p.id].sold) p.sold = _clProd[p.id].sold;
             _clRemember(p);
+            _clTrackView(p.id);
             const url = p.image_url ? API_BASE_URL + p.image_url : '';
             // Asl rasm — foni kesilmagani. Ikkalasi bor bo'lsa o'tkazgich chiqadi:
             // mijoz tovar haqiqatda qanday ekanini ko'ra olsin.
             const origUrl = (p.image_orig_url && p.image_orig_url !== p.image_url)
                 ? API_BASE_URL + p.image_orig_url : '';
-            const overlay = document.createElement('div');
-            overlay.className = 'cl-modal-overlay';
-            overlay.innerHTML = `<div class="cl-modal" style="position:relative">
-                <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+            document.querySelectorAll('.cl-modal-overlay').forEach(o => { if (o.id !== 'clProdSheet') o.remove(); });
+            let overlay = prevSheet;
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.className = 'cl-modal-overlay';
+                overlay.id = 'clProdSheet';
+                overlay.addEventListener('click', e => { if (e.target === overlay) clCloseProduct(); });
+                document.body.appendChild(overlay);
+            }
+            overlay.dataset.pid = p.id;
+            overlay.innerHTML = `<div class="cl-modal" id="clProdModal" style="position:relative">
+                ${_clStack.length ? `<button class="cl-modal-back" onclick="clProdBack()">←</button>` : ''}
+                <button class="cl-modal-close" onclick="clCloseProduct()">✕</button>
                 ${url ? `<img class="cl-modal-img" id="clModalImg" src="${url}"
                               onclick="clZoomImg(this.src)">`
                       : '<div style="height:60px"></div>'}
@@ -1520,9 +1543,34 @@
                     <span>💵 To'lov — tovarni olganingizda</span>
                     <span>📞 Savol bo'lsa: <a href="tel:${(_clShop.phone||'').replace(/\s/g,'')}">${escapeHtml(_clShop.phone||'')}</a></span>
                 </div>
+                <div class="cl-feed-head">🔎 O'xshash tovarlar</div>
+                <div class="cl-grid" id="clSimGrid"></div>
+                <div class="cl-feed-more" id="clSimMore">Yuklanmoqda...</div>
             </div>`;
-            overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
-            document.body.appendChild(overlay);
+            const modal = $('clProdModal');
+            modal.scrollTop = 0;
+            // O'xshashlar tugagach server davomini "sizga yoqishi mumkin"
+            // tovarlar bilan beradi — lenta pastga cheksiz davom etadi.
+            _clInfinite($('clSimGrid'), $('clSimMore'), modal,
+                page => `/api/client/similar?pid=${p.id}&page=${page}`,
+                d => {
+                    if (d.page === 0 && !d.similar_count) {
+                        const h = modal.querySelector('.cl-feed-head');
+                        if (h) h.textContent = '✨ Sizga yoqishi mumkin';
+                    }
+                });
+        };
+
+        window.clProdBack = function () {
+            const prev = _clStack.pop();
+            if (prev) clOpenProduct(prev, true);
+        };
+        window.clCloseProduct = function () {
+            _clStack.length = 0;
+            const s = $('clProdSheet');
+            if (s) s.remove();
+            const home = $('clTabHome');
+            if (home && home.style.display !== 'none') { _clRenderRecent(); _clLoadFeed(); }
         };
 
         window.clSwitchImg = function(btn, src) {
@@ -1547,7 +1595,7 @@
         const _clProd = {};                 // id → oxirgi ko'rilgan tovar
         const _CL_CART_KEY = 'chinor_cl_cart_v1';
         const _CL_FORM_KEY = 'chinor_cl_form_v1';
-        const _CL_LOW = 5;                  // shundan kam qolsa ogohlantiramiz
+        const _CL_LOW = 3;                  // shundan kam qolsa ogohlantiramiz (5 da deyarli hamma tovar "oz qoldi" bo'lardi)
 
         function _clLoad(key, def) {
             try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v || def; }
@@ -1682,6 +1730,7 @@
             if (!p) return;
             if (_clCart[pid]) return clInc(pid, 1);
             _clSet(p, _clStep(p) === 1 ? 1 : Math.min(1, Number(p.qty)));
+            _clTrackView(pid);               // savatga solish — eng kuchli qiziqish
             _clHaptic();
             _clToast(`✅ ${p.name} savatga qo'shildi`);
         };
@@ -1875,6 +1924,128 @@
                 </div>`;
         };
 
+        // ── Qiziqish va cheksiz lenta ────────────────────────────────────
+        // Mijoz qaysi tovarlarni ochgani / savatga solgani brauzerda saqlanadi
+        // (serverga yozilmaydi) va «Siz uchun» lentasiga urug' bo'lib boradi:
+        // server shu tovarlarga o'xshashlarni yuqoriga chiqaradi. Tavsiyalar
+        // daromadning katta qismini beradi, lekin faqat RELEVANT bo'lsa —
+        // tasodifiy tovar ko'rsatilsa mijoz e'tibor bermaydi (Baymard).
+        const _CL_VIEWS_KEY = 'chinor_cl_views_v1';
+        const _CL_SEEN_KEY = 'chinor_cl_seen_v1';
+        let _clViews = _clLoad(_CL_VIEWS_KEY, []);
+        let _clSeen = _clLoad(_CL_SEEN_KEY, {});
+        let _clFeedSeed = '';             // lenta qaysi urug' bilan yuklangan
+
+        function _clTrackView(pid) {
+            pid = +pid;
+            if (!pid) return;
+            _clViews = _clViews.filter(x => x !== pid);
+            _clViews.push(pid);
+            if (_clViews.length > 40) _clViews = _clViews.slice(-40);
+            _clSave(_CL_VIEWS_KEY, _clViews);
+            const p = _clProd[pid];
+            if (p) {
+                _clSeen[pid] = { id: p.id, name: p.name, price_sum: _clPrice(p),
+                                 image_url: p.image_url || '', qty: p.qty, unit: p.unit || 'dona' };
+                const keep = _clViews.slice(-20);
+                Object.keys(_clSeen).forEach(k => { if (!keep.includes(+k)) delete _clSeen[k]; });
+                _clSave(_CL_SEEN_KEY, _clSeen);
+            }
+        }
+
+        function _clGridCard(p) {
+            const q = Number(p.qty) || 0;
+            return `<div class="cl-gcard" onclick="clOpenProduct(${p.id})">
+                <div class="cl-gcard-media">
+                    ${_cl_img(p)}
+                    ${p.sold > 0 ? `<span class="cl-badge">🔥 ${_clNum(p.sold)} sotilgan</span>` : ''}
+                    ${q > 0 && q <= _CL_LOW ? `<span class="cl-badge low">Oz qoldi</span>` : ''}
+                </div>
+                <div class="cl-card-body">
+                    <div class="cl-card-name">${escapeHtml(p.name)}</div>
+                    <div class="cl-card-foot">
+                        <div class="cl-card-price">${_fmt_sum_cl(_clPrice(p))}</div>
+                        <div class="cl-card-buy" data-pid="${p.id}" onclick="event.stopPropagation()">${_clBuyCtl(p)}</div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        // Umumiy cheksiz yuklovchi: `more` elementi ko'rinishga kelganda
+        // keyingi sahifa olinadi. Har chaqiruvda eski kuzatuvchi o'chiriladi.
+        function _clInfinite(grid, more, root, urlFn, onPage) {
+            if (!grid || !more) return;
+            if (grid._io) grid._io.disconnect();
+            if (grid._onScroll) document.removeEventListener('scroll', grid._onScroll, true);
+            grid.innerHTML = '';
+            const st = { page: 0, busy: false, done: false, token: {} };
+            grid._st = st;
+            more.style.display = '';
+            more.textContent = 'Yuklanmoqda...';
+            const load = async () => {
+                if (st.busy || st.done) return;
+                st.busy = true;
+                const my = st.token;
+                const { ok, data } = await apiFetch(urlFn(st.page));
+                if (grid._st !== st || my !== st.token) return;   // boshqa lenta boshlangan
+                st.busy = false;
+                if (!ok || !data.ok) { more.textContent = 'Yuklanmadi — pastga torting'; return; }
+                (data.items || []).forEach(_clRemember);
+                grid.insertAdjacentHTML('beforeend', (data.items || []).map(_clGridCard).join(''));
+                if (onPage) onPage(data, grid);
+                st.page++;
+                if (!data.has_more) {
+                    st.done = true;
+                    more.textContent = grid.children.length ? '— hammasi shu —' : '';
+                    if (grid._io) grid._io.disconnect();
+                    document.removeEventListener('scroll', check, true);
+                    return;
+                }
+                // Kuzatuvchi faqat holat O'ZGARGANDA xabar beradi: "Yuklanmoqda"
+                // yozuvi hali ham ko'rinib tursa, yangi xabar kelmaydi va lenta
+                // to'xtab qoladi. Qayta ulash darhol joriy holatni yuboradi.
+                if (grid._io) { grid._io.unobserve(more); grid._io.observe(more); }
+                setTimeout(check, 0);
+            };
+            // Zaxira: ba'zi (eski) webview'larda IntersectionObserver
+            // ishonchsiz — oddiy scroll hodisasida ham joyini tekshiramiz.
+            // `offsetParent === null` → bo'lim yashirin (boshqa tab ochiq).
+            const check = () => {
+                if (st.done || st.busy || !more.isConnected || more.offsetParent === null) return;
+                const r = more.getBoundingClientRect();
+                if (r.top < window.innerHeight + 400) load();
+            };
+            grid._onScroll = check;
+            document.addEventListener('scroll', check, { capture: true, passive: true });
+            grid._io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) load(); },
+                                                { root: null, rootMargin: '400px 0px' });
+            grid._io.observe(more);
+            load();
+        }
+
+        function _clRenderRecent() {
+            const sec = $('clRecentSec'), box = $('clRecentList');
+            if (!sec || !box) return;
+            const ids = _clViews.slice().reverse().filter(id => _clSeen[id]).slice(0, 12);
+            if (ids.length < 2) { sec.style.display = 'none'; return; }
+            sec.style.display = '';
+            box.innerHTML = ids.map(id => {
+                const p = _clProd[id] || _clSeen[id];
+                if (!_clProd[id]) _clProd[id] = Object.assign({}, p);
+                return _clCardHtml(p, false);
+            }).join('');
+        }
+
+        function _clLoadFeed(force) {
+            const seed = _clViews.slice(-20).join(',');
+            if (!force && seed === _clFeedSeed && $('clFeedGrid') && $('clFeedGrid').children.length) return;
+            _clFeedSeed = seed;
+            const title = $('clFeedTitle');
+            if (title) title.textContent = seed ? '✨ Siz uchun — qiziqishingizga qarab' : '✨ Siz uchun';
+            _clInfinite($('clFeedGrid'), $('clFeedMore'), null,
+                page => `/api/client/feed?seed=${encodeURIComponent(seed)}&page=${page}`);
+        }
+
         // AI Chat
         window.clSendHint = function(btn) {
             const inp = $('clChatInput');
@@ -1983,6 +2154,7 @@
             const grEl = $('clientGreeting');
             if (grEl) grEl.textContent = gr + '!';
             loadClientTop();
+            _clLoadFeed(true);
         }
 
         window.openAccount = async function () {

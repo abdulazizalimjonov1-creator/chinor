@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=4">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -139,17 +139,23 @@
 
             <!-- HOME TAB -->
             <div id="clTabHome">
-                <!-- Top sellers -->
-                <div class="cl-section">
+                <!-- Top sellers — faqat oxirgi 30 kunda haqiqatan sotilganlar -->
+                <div class="cl-section" id="clTopSec" style="display:none">
                     <div class="cl-section-head">
-                        <span>🔥 Ko'p sotilayotgan</span>
+                        <span>🔥 Ko'p sotilayotgan · 30 kun</span>
                         <button onclick="clientTab(document.querySelector('.cl-tab:nth-child(2)'),'catalog')" class="cl-see-all">Barchasi →</button>
                     </div>
                     <div class="cl-hscroll" id="clTopList"><div class="cl-loading">Yuklanmoqda...</div></div>
                 </div>
 
+                <!-- Recently viewed -->
+                <div class="cl-section" id="clRecentSec" style="display:none">
+                    <div class="cl-section-head"><span>👀 Yaqinda ko'rganlaringiz</span></div>
+                    <div class="cl-hscroll" id="clRecentList"></div>
+                </div>
+
                 <!-- New arrivals -->
-                <div class="cl-section">
+                <div class="cl-section" id="clNewSec" style="display:none">
                     <div class="cl-section-head">
                         <span>✨ Yangi tovarlar</span>
                         <button onclick="clientTab(document.querySelector('.cl-tab:nth-child(2)'),'catalog')" class="cl-see-all">Barchasi →</button>
@@ -165,6 +171,13 @@
                         <div style="font-size:12px;opacity:0.85">Kerakli tovarni topishda yordam beraman</div>
                     </div>
                     <span style="margin-left:auto;font-size:20px">→</span>
+                </div>
+
+                <!-- «Siz uchun» — qiziqishga qarab cheksiz lenta -->
+                <div class="cl-section" style="margin-top:18px">
+                    <div class="cl-section-head"><span id="clFeedTitle">✨ Siz uchun</span></div>
+                    <div class="cl-grid" id="clFeedGrid"></div>
+                    <div class="cl-feed-more" id="clFeedMore"></div>
                 </div>
             </div>
 
@@ -471,6 +484,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>

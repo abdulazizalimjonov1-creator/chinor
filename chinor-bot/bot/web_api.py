@@ -700,68 +700,40 @@ async def api_me(request: web.Request):
 
 @ROUTES.get("/api/client/top")
 async def api_client_top(request: web.Request):
-    """Klientlar uchun: ko'p sotilgan va yangi tovarlar."""
+    """Mijoz bosh sahifasi: ko'p sotilayotgan va yangi tovarlar.
+
+    Ikkala ro'yxat ham FAQAT haqiqiy ma'lumotdan: "ko'p sotilayotgan" —
+    oxirgi 30 kunda real sotilganlar, "yangi" — 30 kun ichida qo'shilganlar.
+    Ma'lumot bo'lmasa ro'yxat bo'sh qaytadi va Mini App bo'limni yashiradi.
+    Ilgari bo'sh joy qoldiq tovarlar bilan (alifbo tartibida) to'ldirilardi —
+    mijozga "0 shina" ko'p sotilayotgandek ko'rinardi, bu yolg'on edi."""
     from database.channel_db import db as _db
+    from bot import api_recommend
     auth = await _authenticate(request, _db)
     if not auth:
         return _err("Avtorizatsiya talab qilinadi", 401)
-    try:
-        top = await _db.top_selling_products(limit=12)
-    except Exception:
-        top = []
-    # Yangi tovarlar — so'nggi 30 kun ichida qo'shilganlar
-    try:
-        all_prods = await _db.get_all_products(active_only=True)
-        from database._helpers import _now
-        import time as _time
-        cutoff = _time.time() - 30 * 86400
-        new_prods = []
-        for p in all_prods:
-            try:
-                import datetime
-                dt = datetime.datetime.fromisoformat(p["created_at"].replace("Z",""))
-                # RASM SHARTI OLIB TASHLANDI: 6664 tovardan atigi ~73 tasida
-                # rasm bor, shu sabab "Yangi" ro'yxati deyarli bo'sh chiqardi.
-                if dt.timestamp() > cutoff and (p.get("qty", 0) or 0) > 0:
-                    new_prods.append(p)
-            except Exception:
-                pass
-        new_prods = new_prods[-12:]
-        new_prods.reverse()
-    except Exception:
-        all_prods, new_prods = [], []
+    idx = await api_recommend._index(_db)
+    top = api_recommend.recent_top(idx, limit=12)
+    import datetime
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=30)
+    new_prods = []
+    for p in idx.items.values():
+        try:
+            dt = datetime.datetime.fromisoformat(str(p.get("created_at") or "").replace("Z", ""))
+        except ValueError:
+            continue
+        if dt.replace(tzinfo=None) > cutoff:
+            new_prods.append((dt.replace(tzinfo=None), p))
+    new_prods = [p for _, p in sorted(new_prods, key=lambda x: x[0], reverse=True)[:12]]
 
-    # Ikkala ro'yxat ham qisqa bo'lsa — mijoz bo'sh ekran ko'rmasin uchun
-    # qoldig'i bor tovarlar bilan to'ldiramiz. Bu ayniqsa savdo tarixi
-    # tozalangandan keyin muhim: `top_selling_products` bo'shab qoladi.
-    try:
-        # Har bir ro'yxat alohida to'ldiriladi: katalog eski bo'lsa "yangi"
-        # bo'sh chiqadi va mijoz bitta qator ko'radi.
-        if len(new_prods) < 6:
-            if not all_prods:
-                all_prods = await _db.get_all_products(active_only=True)
-            seen = {p["id"] for p in top} | {p["id"] for p in new_prods}
-            filler = [p for p in all_prods
-                      if (p.get("qty", 0) or 0) > 0 and p["id"] not in seen]
-            new_prods = new_prods + filler[:12 - len(new_prods)]
-    except Exception:
-        pass
-    # Mijoz turiga mos narx (optomchi optom narxni ko'radi — savatdagi va
-    # buyurtmadagi narx bilan bir xil bo'lishi shart).
     u = auth.get("user") or {}
     ctype = (u.get("client_type") or "dona").lower() if auth["role"] == "client" else "dona"
-    try:
-        rank = await _db._in_thread(_db._sales_rank_sync)
-    except Exception:
-        rank = {}
 
     def _clip(lst):
         out = []
         for p in lst:
             j = _product_json(p, "client", ctype)
-            # Haqiqiy sotilgan miqdor — "🔥 N ta sotilgan" (ijtimoiy isbot).
-            # Faqat real raqam; 0 bo'lsa ko'rsatilmaydi.
-            j["sold"] = float(rank.get(p["id"], 0) or 0)
+            j["sold"] = float(idx.sales.get(p["id"], 0) or 0)
             out.append(j)
         return out
     return web.json_response({
@@ -4276,6 +4248,9 @@ def create_app() -> web.Application:
     # ekrani tegilmaydi.
     from bot import api_receipts
     api_receipts.setup(app)
+    # Mijoz Mini App'i tavsiyalari — o'xshash tovarlar va «Siz uchun» lenta
+    from bot import api_recommend
+    api_recommend.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)

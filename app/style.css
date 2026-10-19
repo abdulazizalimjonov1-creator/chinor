@@ -1306,3 +1306,23 @@
     .cl-steps .on { color: var(--text-color); }
     .cl-reorder { color: var(--text-color); }
 }
+
+/* ── Cheksiz lenta (o'xshashlar / Siz uchun) ───────────────────── */
+.cl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cl-gcard {
+    background: var(--card-bg); border: 1px solid var(--border, #e5e7eb); border-radius: 16px;
+    overflow: hidden; cursor: pointer; min-width: 0; display: flex; flex-direction: column;
+}
+.cl-gcard:active { transform: scale(0.98); }
+.cl-gcard-media { position: relative; }
+.cl-gcard .cl-card-img, .cl-gcard .cl-card-img-ph { width: 100%; aspect-ratio: 1 / 1; height: auto; object-fit: contain; }
+.cl-gcard .cl-card-body { flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+.cl-gcard .cl-card-name { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; min-height: 30px; }
+.cl-feed-head { font-size: 16px; font-weight: 900; margin: 22px 0 10px; padding-top: 16px; border-top: 1px solid var(--border, #e5e7eb); }
+.cl-feed-more { text-align: center; color: var(--muted); font-size: 12px; padding: 16px 0 8px; }
+.cl-modal-back {
+    position: absolute; top: 16px; left: 16px; z-index: 2;
+    background: rgba(0,0,0,0.35); border: none; border-radius: 50%;
+    width: 34px; height: 34px; font-size: 18px; cursor: pointer; color: #fff;
+}
+.cl-modal-close { z-index: 2; }
