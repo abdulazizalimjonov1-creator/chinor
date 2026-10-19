@@ -2615,11 +2615,33 @@
             const typing = $('clTyping');
             if (typing) typing.remove();
             if (!ok || !data.ok) {
-                if (box) box.innerHTML += `<div class="cl-msg-ai">⚠️ Xato yuz berdi. Qayta urinib ko'ring.</div>`;
+                if (box) box.innerHTML += `<div class="cl-msg-ai">⚠️ ${escapeHtml((data && data.error) || "Xato yuz berdi. Qayta urinib ko'ring.")}</div>`;
                 return;
             }
-            if (box) {
-                box.innerHTML += `<div class="cl-msg-ai">${data.answer || '...'}</div>`;
+            if (box && (data.picks || []).length) {
+                // Taqqoslovchi javob: har tanlov — rasm, narx, do'kon bahosi,
+                // "nega aynan shu" va Savatga tugmasi; pastda asosiy farq.
+                box.innerHTML += `<div class="cl-msg-ai">${escapeHtml(data.answer || '')}</div>`;
+                data.picks.forEach(pk => _clRemember(pk.product));
+                box.innerHTML += `<div class="cl-picks">${data.picks.map(pk => {
+                    const p = pk.product;
+                    return `<div class="cl-pick tier-${pk.tier}" onclick="clOpenProduct(${p.id})">
+                        <div class="cl-pick-tier">${escapeHtml(pk.tier_label)}</div>
+                        <div class="cl-pick-row">
+                            ${_cl_img_row(p)}
+                            <div class="cl-pick-info">
+                                <div class="cl-prod-name">${escapeHtml(p.name)}</div>
+                                <div class="cl-prod-price">${_fmt_sum_cl(_clPrice(p))}</div>
+                                ${p.store_rating ? `<div class="cl-pick-stars">${'★'.repeat(p.store_rating)}<i>${'★'.repeat(5 - p.store_rating)}</i> <span>Do'kon bahosi</span></div>` : ''}
+                            </div>
+                            <div class="cl-row-buy" data-pid="${p.id}" onclick="event.stopPropagation()">${_clBuyCtl(p)}</div>
+                        </div>
+                        ${pk.why ? `<div class="cl-pick-why">${escapeHtml(pk.why)}</div>` : ''}
+                    </div>`; }).join('')}</div>`;
+                if (data.compare) box.innerHTML += `<div class="cl-compare"><b>⚖️ Farqi nimada?</b><br>${escapeHtml(data.compare)}</div>`;
+                box.scrollTop = box.scrollHeight;
+            } else if (box) {
+                box.innerHTML += `<div class="cl-msg-ai">${escapeHtml(data.answer || '...')}</div>`;
                 const _pl = data.items || data.products || [];
                 if (_pl.length) {
                     _pl.forEach(_clRemember);

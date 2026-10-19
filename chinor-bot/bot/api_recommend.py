@@ -42,6 +42,8 @@ _STOP = {
     "gr", "ml", "metr", "va", "bilan", "uchun", "the", "and", "for", "new",
     "mini", "big", "set", "nabor", "для", "и", "с", "шт", "мм", "см",
 }
+# Ikki harfli, lekin ma'noli so'zlar (rang): "oq emal" ≠ "emal"
+_SHORT_OK = {"oq"}
 _TOKEN_RE = re.compile(r"[a-zа-яёʻʼ'’ўқғҳ0-9]+", re.IGNORECASE)
 
 
@@ -49,7 +51,7 @@ def _tokens(text: str) -> list:
     out = []
     for t in _TOKEN_RE.findall((text or "").lower()):
         t = t.strip("ʻʼ'’")
-        if len(t) < 3 or t.isdigit() or t in _STOP:
+        if (len(t) < 3 and t not in _SHORT_OK) or t.isdigit() or t in _STOP:
             continue
         out.append(t)
     return out
@@ -102,22 +104,31 @@ def _recent_sales_sync(db, days: int = SALES_DAYS):
     Mini App/bot buyurtmalaridan. Hammasi haqiqiy tranzaksiyalar."""
     since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
     rank = Counter()
+    returns = Counter()
     co = defaultdict(Counter)
     baskets = []
     with db._lock:
         conn = db._conn()
         try:
-            rows = conn.execute(
-                "SELECT items FROM sales WHERE created_at >= ?", (since,)).fetchall()
-            rows += conn.execute(
+            rows = [(r["items"], r["is_return"]) for r in conn.execute(
+                "SELECT items, COALESCE(is_return, 0) AS is_return FROM sales "
+                "WHERE created_at >= ?", (since,)).fetchall()]
+            rows += [(r["items"], 0) for r in conn.execute(
                 "SELECT items FROM orders WHERE created_at >= ? AND status != 'cancelled'",
-                (since,)).fetchall()
+                (since,)).fetchall()]
         finally:
             conn.close()
-    for r in rows:
+    for raw, is_ret in rows:
         try:
-            items = json.loads(r["items"]) if r["items"] else []
+            items = json.loads(raw) if raw else []
         except Exception:
+            continue
+        if is_ret:
+            # Qaytarilgan chek — sotuv emas; alohida sanaladi ("qaytarish yo'q"
+            # degan gap faqat shu raqam 0 bo'lsa aytiladi)
+            for it in items:
+                if it.get("product_id"):
+                    returns[int(it["product_id"])] += abs(float(it.get("qty") or 0))
             continue
         basket = set()
         for it in items:
@@ -133,12 +144,14 @@ def _recent_sales_sync(db, days: int = SALES_DAYS):
             for c in b:
                 if a != c:
                     co[a][c] += 1
-    return dict(rank), co
+    return dict(rank), co, dict(returns)
 
 
 def _build_index_sync(db):
-    rank, co = _recent_sales_sync(db)
-    return _Index(db._all_products(active_only=True), rank, co)
+    rank, co, returns = _recent_sales_sync(db)
+    idx = _Index(db._all_products(active_only=True), rank, co)
+    idx.returns = returns
+    return idx
 
 
 async def _index(db) -> _Index:

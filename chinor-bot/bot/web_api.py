@@ -764,37 +764,10 @@ async def api_client_top(request: web.Request):
 
 @ROUTES.post("/api/client/consult")
 async def api_client_consult(request: web.Request):
-    """Klient AI sotuvchiga savol beradi."""
-    from database.channel_db import db as _db
-    auth = await _authenticate(request, _db)
-    if not auth:
-        return _err("Avtorizatsiya talab qilinadi", 401)
-    body = await _read_json(request)
-    question = (body.get("question") or "").strip()
-    if not question:
-        return _err("Savol bo'sh")
-    try:
-        from bot.gemini_analyzer import expand_query_keywords, consult_client
-        keywords = await expand_query_keywords(question)
-        candidates = []
-        seen = set()
-        for kw in keywords[:6]:
-            rows = await _db.search_products(kw, limit=6)
-            for p in rows:
-                if p["id"] not in seen:
-                    seen.add(p["id"])
-                    candidates.append(p)
-        answer = await consult_client(question, candidates)
-        import re
-        ids = re.findall(r"#(\d{2,10})", answer or "")
-        mentioned = []
-        for sid in ids[:5]:
-            p = await _db.get_product(int(sid))
-            if p:
-                mentioned.append(_product_json(p, "client", "dona"))
-        return web.json_response({"ok": True, "answer": answer, "products": mentioned})
-    except Exception as e:
-        return _err(f"AI xato: {e}", 500)
+    """Klient AI sotuvchiga savol beradi — faktlarga tayangan taqqoslash
+    (zavod ma'lumoti, do'kon bahosi, 1 kg narxi, real sotuv). bot/api_consult.py"""
+    from bot import api_consult
+    return await api_consult.consult(request)
 
 
 @ROUTES.get("/api/products")

@@ -1421,3 +1421,19 @@
     .cl-store-rating { background: rgba(245,158,11,0.12); border-color: rgba(253,230,138,0.3); }
     .cl-store-rating div { color: #fcd34d; }
 }
+
+/* AI maslahatchi — taqqoslangan tanlovlar */
+.cl-picks { display: flex; flex-direction: column; gap: 8px; align-self: stretch; }
+.cl-pick { background: var(--card-bg); border: 1.5px solid var(--border, #e5e7eb); border-radius: 14px; padding: 10px; cursor: pointer; }
+.cl-pick.tier-sifatli { border-color: #f59e0b; }
+.cl-pick.tier-optimal { border-color: var(--primary-mid); }
+.cl-pick.tier-arzon { border-color: #60a5fa; }
+.cl-pick-tier { font-size: 12px; font-weight: 900; margin-bottom: 6px; }
+.cl-pick-row { display: flex; align-items: center; gap: 10px; }
+.cl-pick-info { flex: 1; min-width: 0; }
+.cl-pick-stars { color: #f59e0b; font-size: 12px; }
+.cl-pick-stars i { color: #e5e7eb; font-style: normal; }
+.cl-pick-stars span { color: var(--muted); font-size: 11px; }
+.cl-pick-why { font-size: 12.5px; line-height: 1.45; margin-top: 8px; color: var(--text-color); }
+.cl-compare { background: var(--primary-light); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.45; align-self: stretch; color: var(--text-color); }
+.cl-chat-box { max-height: 62vh; }
