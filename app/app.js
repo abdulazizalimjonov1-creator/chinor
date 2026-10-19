@@ -43,6 +43,10 @@
 
         // Session token — login'dan keyin saqlanadi, har so'rovga qo'shiladi
         let _sessionToken = '';
+        // Admin «mijoz sifatida ko'rish» rejimi — tanlangan mijozning id si.
+        // Faqat admin akkauntida ma'no bor: server boshqalar uchun e'tiborsiz qoldiradi.
+        let _viewAs = null;
+        try { _viewAs = JSON.parse(localStorage.getItem('chinor_view_as') || 'null'); } catch(_) {}
         try { _sessionToken = localStorage.getItem('chinor_session') || ''; } catch(_) {}
 
         // Lokal validatsiya — bot qoidalariga mos (8+, harf+son)
@@ -318,6 +322,11 @@
             }
             const u = (data && data.user) || {};
             const letter = (u.name || 'U').charAt(0).toUpperCase();
+            if (data && data.role === 'admin') _isAdminUser = true;
+            if (data && data.role === 'admin' && _viewAs) {
+                _enterClientView();
+                return;
+            }
             if (data && data.role === 'admin') {
                 adminAvatar.textContent = letter;
                 adminName.textContent = `Xush kelibsiz, ${u.name}!`;
@@ -330,6 +339,66 @@
                 initClientScreen();
             }
         }
+
+        // ── Admin: mijoz ko'rinishiga o'tish / qaytish ──────────────────
+        let _isAdminUser = false;
+
+        function _enterClientView() {
+            clientAvatar.textContent = (_viewAs.name || 'M').charAt(0).toUpperCase();
+            clientName.textContent = _viewAs.name || 'Mijoz';
+            const bar = $('viewAsBar');
+            if (bar) {
+                bar.style.display = '';
+                $('viewAsName').textContent = `${_viewAs.name} (${_viewAs.phone || ''})`;
+            }
+            showScreen(screenClient);
+            initClientScreen();
+        }
+
+        // prompt()/alert() Telegram webview'larida (ayniqsa iOS) ishonchsiz —
+        // telefon so'rash uchun o'z oynamiz.
+        window.openViewAs = function () {
+            let last = '';
+            try { last = localStorage.getItem('chinor_view_as_phone') || ''; } catch (_) {}
+            document.querySelectorAll('.cl-modal-overlay').forEach(o => o.remove());
+            const ov = document.createElement('div');
+            ov.className = 'cl-modal-overlay';
+            ov.innerHTML = `<div class="cl-modal" style="position:relative">
+                <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+                <div class="cl-sheet-title">👁 Mijoz ko'rinishi</div>
+                <div class="cl-note">Mini App'ni shu mijoz ko'zi bilan ko'rasiz. Bu rejimda berilgan
+                buyurtma "🧪 Admin sinovi" deb belgilanadi va tasdiq xabari mijozga emas, sizga keladi.
+                Sinovdan keyin buyurtmani botda bekor qiling — qoldiq va qarz qaytadi.</div>
+                <input id="viewAsPhone" class="cl-input" type="tel" placeholder="Mijoz telefoni" value="${escapeHtml(last || '778775533')}">
+                <div id="viewAsErr" class="cl-err"></div>
+                <button class="cl-cta" id="viewAsGo">Mijoz sifatida ochish →</button>
+            </div>`;
+            ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+            document.body.appendChild(ov);
+            $('viewAsGo').onclick = async () => {
+                const phone = $('viewAsPhone').value;
+                const { ok, data } = await apiFetch('/api/admin/view-as', {
+                    method: 'POST', body: JSON.stringify({ phone }) });
+                if (!ok || !data.ok) { $('viewAsErr').textContent = '⚠️ ' + ((data && data.error) || 'Topilmadi'); return; }
+                _viewAs = data.client;
+                try {
+                    localStorage.setItem('chinor_view_as', JSON.stringify(_viewAs));
+                    localStorage.setItem('chinor_view_as_phone', phone);
+                } catch (_) {}
+                ov.remove();
+                _enterClientView();
+            };
+        };
+
+        window.exitViewAs = function () {
+            _viewAs = null;
+            try { localStorage.removeItem('chinor_view_as'); } catch (_) {}
+            const bar = $('viewAsBar');
+            if (bar) bar.style.display = 'none';
+            document.querySelectorAll('.cl-modal-overlay').forEach(o => o.remove());
+            showScreen(screenAdmin);
+            loadDashboardStats();
+        };
 
         // ================================================================
         // AVTOMATIK KIRISH — Telegram initData orqali, parolsiz
@@ -462,7 +531,7 @@
                 'ngrok-skip-browser-warning': 'true',
                 'X-Telegram-Init-Data': (tg && tg.initData) || '',
                 'X-Session-Token': _sessionToken || ''
-            }, opts.headers || {});
+            }, _viewAs ? { 'X-View-As': String(_viewAs.id) } : {}, opts.headers || {});
             const resp = await fetch(`${API_BASE_URL}${path}`, {
                 ...opts, headers
             });

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=6">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -92,6 +92,7 @@
                 <button class="quick-card card-purple" onclick="openStats()"><span class="card-icon">📊</span><h4>Hisobotlar</h4><p>Moliyaviy tahlil</p></button>
                 <button class="quick-card card-blue" onclick="handleAction('Xodimlar')"><span class="card-icon">👔</span><h4>Xodimlar</h4><p>Xodimlar ro'yxati</p></button>
                 <button class="quick-card card-navy" onclick="handleAction('Sozlamalar')"><span class="card-icon">⚙️</span><h4>Sozlamalar</h4><p>Tizim sozlamalari</p></button>
+                <button class="quick-card card-orange" onclick="openViewAs()"><span class="card-icon">👁</span><h4>Mijoz ko'rinishi</h4><p>Mini App'ni mijoz ko'zi bilan sinash</p></button>
                 <button class="quick-card card-teal" onclick="openGuidesAdmin()"><span class="card-icon">🧐</span><h4>Maslahatlar</h4><p>Mijozlar uchun savol-javob</p></button>
                 <button class="quick-card card-orange" onclick="openReceipts()"><span class="card-icon">🧾</span><h4>Cheklar</h4><p>Barcha kassa cheklari</p></button>
                 <button class="quick-card card-red" onclick="openCashMoves()"><span class="card-icon">💸</span><h4>Kassa harakati</h4><p>Naqd kirim / rasxod</p></button>
@@ -100,6 +101,11 @@
         </div>
 
         <div class="screen" id="screenClient">
+            <!-- Admin «mijoz sifatida ko'rish» rejimida ko'rinadi -->
+            <div id="viewAsBar" class="viewas-bar" style="display:none">
+                <span>👁 Mijoz ko'rinishi: <b id="viewAsName"></b></span>
+                <button onclick="exitViewAs()">← Admin</button>
+            </div>
             <!-- Header -->
             <div class="cl-header">
                 <div class="cl-header-left">
@@ -493,6 +499,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=12"></script>
+    <script src="app.js?v=13"></script>
 </body>
 </html>

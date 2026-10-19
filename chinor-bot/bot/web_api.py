@@ -489,7 +489,7 @@ def _cors_headers(request: web.Request = None) -> dict:
         "Access-Control-Allow-Origin": allow,
         "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
         "Access-Control-Allow-Headers":
-            "Content-Type, ngrok-skip-browser-warning, X-Telegram-Init-Data, X-Session-Token",
+            "Content-Type, ngrok-skip-browser-warning, X-Telegram-Init-Data, X-Session-Token, X-View-As",
         "Access-Control-Max-Age": "86400",
         "Vary": "Origin",
     }
@@ -526,6 +526,24 @@ async def cors_middleware(request: web.Request, handler):
 # ─── Autentifikatsiya yordamchisi (har so'rovda initData orqali) ────────────
 
 async def _authenticate(request: web.Request, db):
+    """Asl autentifikatsiya + adminning «mijoz sifatida ko'rish» rejimi.
+
+    Admin `X-View-As: <client_id>` yuborsa, so'rov o'sha mijoz nomidan
+    bajariladi (Mini App'ni ikkinchi Telegram akkauntsiz sinash uchun).
+    Faqat admin uchun ishlaydi — mijoz bu sarlavhani yuborsa e'tiborsiz.
+    Natijada `as_admin` (adminning tg_id si) qoladi: buyurtma "sinov" deb
+    belgilanadi va tasdiq xabari mijozga emas, adminga boradi."""
+    auth = await _authenticate_raw(request, db)
+    view_as = (request.headers.get("X-View-As", "") or "").strip()
+    if auth and auth["role"] == "admin" and view_as.isdigit():
+        client = await db.get_client_by_id(int(view_as))
+        if client:
+            return {"role": "client", "tg_id": auth["tg_id"], "user": client,
+                    "is_glavniy": False, "as_admin": auth["tg_id"]}
+    return auth
+
+
+async def _authenticate_raw(request: web.Request, db):
     """Har bir himoyalangan so'rov uchun: session token yoki initData ni
     tekshirib, foydalanuvchini (admin yoki mijoz) va rolini aniqlaydi.
 
@@ -2153,6 +2171,37 @@ async def api_my_account(request: web.Request):
     })
 
 
+# ─── Admin: mijoz sifatida ko'rish (sinov) ─────────────────────────────────
+
+@ROUTES.post("/api/admin/view-as")
+async def api_admin_view_as(request: web.Request):
+    """Telefon raqami bo'yicha mijozni topadi — admin Mini App'ni o'sha
+    mijoz ko'zi bilan ko'rishi uchun (keyingi so'rovlarda X-View-As)."""
+    from database.channel_db import db as _db
+    auth = await _authenticate_raw(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "admin":
+        return _err("Faqat admin uchun", 403)
+    body = await _read_json(request)
+    digits = "".join(ch for ch in str(body.get("phone") or "") if ch.isdigit())
+    if len(digits) < 7:
+        return _err("Telefon raqamini to'liq yozing")
+    tail = digits[-9:]
+    found = None
+    for c in await _db.get_all_clients():
+        cd = "".join(ch for ch in str(c.get("phone") or "") if ch.isdigit())
+        if cd and cd[-9:] == tail:
+            found = c
+            break
+    if not found:
+        return _err("Bu raqamli mijoz topilmadi", 404)
+    return web.json_response({"ok": True, "client": {
+        "id": found["id"], "name": found.get("shop_name", ""),
+        "phone": found.get("phone", ""),
+        "client_type": (found.get("client_type") or "dona").lower()}})
+
+
 # ─── Mijoz Mini App'dan buyurtma beradi ────────────────────────────────────
 
 _PAY_LABELS = {"cash": "💵 Naqd", "card": "💳 Karta", "click": "📲 Click/Payme"}
@@ -2230,11 +2279,12 @@ async def api_client_order(request: web.Request):
         return _err("Telefon raqamingizni yozing")
     note_lines = [
         "🚚 Yetkazib berish" if delivery == "delivery" else "🏪 Do'kondan olib ketish",
-        f"📍 {address}" if address else "",
+        f"📍 {address}" if (address and delivery == "delivery") else "",
         f"📱 {phone}",
         f"To'lov: {_PAY_LABELS[pay]}",
         f"💬 {comment}" if comment else "",
         "(Mini App)",
+        "🧪 ADMIN SINOVI — mijoz ko'rinishidan berilgan" if auth.get("as_admin") else "",
     ]
     note = "\n".join(l for l in note_lines if l)
 
@@ -2264,10 +2314,11 @@ async def api_client_order(request: web.Request):
                 await bot.send_message(tid, notif, reply_markup=kb, parse_mode="HTML")
             except Exception:
                 pass
-        # Mijozning o'ziga ham chatda tasdiq — Mini App yopilsa ham iz qoladi
+        # Mijozning o'ziga ham chatda tasdiq — Mini App yopilsa ham iz qoladi.
+        # Admin sinovida haqiqiy mijozni bezovta qilmaymiz — adminga boradi.
         try:
             await bot.send_message(
-                c["telegram_id"],
+                auth.get("as_admin") or c["telegram_id"],
                 f"✅ <b>Buyurtmangiz #{oid} qabul qilindi!</b>\n\n"
                 f"{_html_esc(lines)}\n💰 Jami: <b>{total:,.0f} so'm</b>\n\n"
                 f"Tez orada siz bilan bog'lanamiz. Savollar: {CONTACT_PHONE_1}",

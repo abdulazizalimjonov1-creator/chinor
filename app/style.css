@@ -1370,3 +1370,15 @@
     .cl-guide-inline, .cl-calc-need { color: var(--text-color); background: rgba(82,183,136,0.18); }
     .cl-draft-flag { background: rgba(245,158,11,0.2); color: #fcd34d; }
 }
+
+/* Admin «mijoz sifatida ko'rish» chizig'i */
+.viewas-bar {
+    position: sticky; top: 0; z-index: 70; margin: -4px 0 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+    border-radius: 14px; padding: 8px 10px 8px 12px; font-size: 12px;
+}
+.viewas-bar button {
+    border: none; background: #92400e; color: #fff; font-weight: 800; font-size: 13px;
+    padding: 8px 12px; border-radius: 10px; cursor: pointer; flex-shrink: 0;
+}
