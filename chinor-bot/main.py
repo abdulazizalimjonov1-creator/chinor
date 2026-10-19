@@ -155,6 +155,8 @@ async def main():
     dp.include_router(catalog.router)         # kategoriya / yetkazib beruvchi
     dp.include_router(ai_analytics.router)    # 🤖 AI Analitika (Gemini)
     dp.include_router(auth_setup.router)      # 🔑 Mini App login/parol yaratish
+    from handlers import reels_compare_admin
+    dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq
     # ishlovchilar avval ishlaydi, bu yerga faqat "egasiz" matn tushadi.
     dp.include_router(client_ai.router)
@@ -187,6 +189,10 @@ async def main():
     # ── To'lov-link relay (kassa QR to'lovi) — fonda to'lov botini kuzatadi ──
     payment_task = asyncio.create_task(payment_relay.poll_loop())
 
+    # ── Kunlik «savol → taqqoslash» videosi (adminga tasdiq uchun) ──────
+    from bot import reels_compare
+    reels_task = asyncio.create_task(reels_compare.daily_loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -196,6 +202,7 @@ async def main():
     finally:
         retention_task.cancel()
         payment_task.cancel()
+        reels_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

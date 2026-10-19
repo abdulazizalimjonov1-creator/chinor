@@ -2346,6 +2346,17 @@
                 <div class="g-list">${rows || '<div class="list-status">Hali yo\'q</div>'}</div>`);
         };
 
+        window.guideVideo = async function (id) {
+            const b = $('gVideoBtn');
+            const { ok, data } = await apiFetch('/api/admin/guide/video', { method: 'POST', body: JSON.stringify({ id }) });
+            if (b) {
+                b.disabled = true;
+                b.textContent = ok && data.ok
+                    ? '✅ Video tayyorlanmoqda — 1–2 daqiqada Telegram\'ga keladi'
+                    : '⚠️ ' + ((data && data.error) || 'Xato');
+            }
+        };
+
         window.guideSuggest = async function () {
             const b = $('gSuggestBtn');
             if (b) { b.disabled = true; b.textContent = '⏳ AI savollar tuzmoqda… (30–90 soniya)'; }
@@ -2379,6 +2390,7 @@
                         <button class="save-btn" style="flex:1;background:#64748b" onclick="saveGuide(${g.id},'draft')">💾 Qoralama</button>
                         <button class="save-btn" style="flex:1" onclick="saveGuide(${g.id},'published')">✅ Nashr qilish</button>
                     </div>
+                    ${g.id && g.status === 'published' ? `<button class="more-btn" id="gVideoBtn" onclick="guideVideo(${g.id})">🎬 Shu savoldan video yasash</button>` : ''}
                     ${g.id ? `<button class="more-btn" onclick="clOpenGuide(${g.id})">👁 Mijoz ko'rinishida ko'rish</button>
                               <button class="more-btn" style="background:#fee2e2;color:#b91c1c" onclick="deleteGuide(${g.id})">🗑 O'chirish</button>` : ''}
                     <button class="more-btn" onclick="openGuidesAdmin()">← Ro'yxatga</button>

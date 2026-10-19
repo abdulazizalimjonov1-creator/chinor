@@ -486,6 +486,38 @@ async def api_admin_guide_draft(request: web.Request):
     return web.json_response({"ok": True, "answer": text})
 
 
+@GUIDE_ROUTES.post("/api/admin/guide/video")
+async def api_admin_guide_video(request: web.Request):
+    """Shu maslahat savolidan taqqoslash videosi — fonda yasaladi va adminga
+    Telegram'da tasdiq uchun keladi. Faqat NASHR qilingan savol: video
+    javobga tayanadi, tekshirilmagan javobdan video qilinmaydi."""
+    from bot.web_api import _err, _read_json
+    db, auth, err = await _admin(request)
+    if err is not None:
+        return err
+    b = await _read_json(request)
+    gid = int(b.get("id") or 0)
+    rows = await db._in_thread(_rows, db, "WHERE id=?", (gid,))
+    if not rows:
+        return _err("Topilmadi", 404)
+    if rows[0]["status"] != "published":
+        return _err("Avval savolni nashr qiling — video tasdiqlangan javobdan yasaladi")
+    from bot import reels_compare
+
+    async def _run():
+        res = await reels_compare.produce(db, guide_id=gid)
+        if not res.get("ok"):
+            bot = getattr(db, "_bot", None)
+            if bot:
+                from bot.config import GLAVNIY_ADMIN_ID
+                try:
+                    await bot.send_message(GLAVNIY_ADMIN_ID, "🎬 Video yasalmadi: " + res.get("error", ""))
+                except Exception:
+                    pass
+    asyncio.get_event_loop().create_task(_run())
+    return web.json_response({"ok": True})
+
+
 # ── AI savol takliflari (avtomatik) ───────────────────────────────────────
 # Tasdiqlangan yorliq kartochkasi yoki tavsifi bor tovarlardan AI xaridor
 # beradigan savollarni o'zi tuzadi. Hammasi QORALAMA (source='auto') —

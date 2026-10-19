@@ -677,6 +677,14 @@ class BaseDB:
     def set_channel_enabled(self, enabled: bool):
         self.set_setting("channel_enabled", "1" if enabled else "0")
 
+    def is_reels_enabled(self) -> bool:
+        """Kanalga ROLIK (avtomatik video) chiqarish yoqilganmi?
+        O'chirilsa video yasalmaydi — kanal oddiy postlar bilan ishlaydi."""
+        return self._flag_on(self.get_setting("reels_enabled", "1"))
+
+    def set_reels_enabled(self, enabled: bool):
+        self.set_setting("reels_enabled", "1" if enabled else "0")
+
     def is_client_orders_enabled(self) -> bool:
         """Mijoz buyurtmalari yoqilganmi? O'chirilsa — mijozlar bot orqali
         zakaz bera olmaydi, kanaldagi 'Sotib olish' havolasi ham yo'qoladi."""
