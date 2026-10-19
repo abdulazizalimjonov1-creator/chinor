@@ -4251,6 +4251,9 @@ def create_app() -> web.Application:
     # Mijoz Mini App'i tavsiyalari — o'xshash tovarlar va «Siz uchun» lenta
     from bot import api_recommend
     api_recommend.setup(app)
+    # «Ustalar maslahati» kartochkalari va bo'yoq kalkulyatori
+    from bot import api_guides
+    api_guides.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)

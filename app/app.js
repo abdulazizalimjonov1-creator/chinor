@@ -1543,12 +1543,14 @@
                     <span>💵 To'lov — tovarni olganingizda</span>
                     <span>📞 Savol bo'lsa: <a href="tel:${(_clShop.phone||'').replace(/\s/g,'')}">${escapeHtml(_clShop.phone||'')}</a></span>
                 </div>
+                <div id="clProdGuides"></div>
                 <div class="cl-feed-head">🔎 O'xshash tovarlar</div>
                 <div class="cl-grid" id="clSimGrid"></div>
                 <div class="cl-feed-more" id="clSimMore">Yuklanmoqda...</div>
             </div>`;
             const modal = $('clProdModal');
             modal.scrollTop = 0;
+            _clProductGuides(p.id);
             // O'xshashlar tugagach server davomini "sizga yoqishi mumkin"
             // tovarlar bilan beradi — lenta pastga cheksiz davom etadi.
             _clInfinite($('clSimGrid'), $('clSimMore'), modal,
@@ -2046,6 +2048,279 @@
                 page => `/api/client/feed?seed=${encodeURIComponent(seed)}&page=${page}`);
         }
 
+        // ── «Ustalar maslahati» va bo'yoq kalkulyatori (mijoz) ───────────
+        // Do'konda sotuvchidan so'raladigan savollar kartochka bo'lib turadi.
+        // Javobni admin tasdiqlagan; narx/qoldiq har safar katalogdan jonli.
+        let _clPaintTypes = {};
+
+        // Admin yozgan oddiy matn → xavfsiz HTML: **qalin**, "• " ro'yxat,
+        // bo'sh qator — yangi xatboshi. Boshqa HTML qabul qilinmaydi.
+        function _clMd(text) {
+            const blocks = String(text || '').trim().split(/\n\s*\n/);
+            return blocks.map(b => {
+                const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
+                const fmt = s => escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+                if (lines.length && lines.every(l => /^[•\-*]\s+/.test(l))) {
+                    return '<ul>' + lines.map(l => `<li>${fmt(l.replace(/^[•\-*]\s+/, ''))}</li>`).join('') + '</ul>';
+                }
+                return '<p>' + lines.map(fmt).join('<br>') + '</p>';
+            }).join('');
+        }
+
+        function _clSheet(id) {
+            document.querySelectorAll('.cl-modal-overlay').forEach(o => { if (o.id !== id) o.remove(); });
+            let ov = $(id);
+            if (!ov) {
+                ov = document.createElement('div');
+                ov.className = 'cl-modal-overlay';
+                ov.id = id;
+                ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+                document.body.appendChild(ov);
+            }
+            ov.innerHTML = `<div class="cl-modal" style="position:relative">
+                <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+                <div class="cl-sheet-body"><div class="cl-loading">Yuklanmoqda...</div></div></div>`;
+            return ov.querySelector('.cl-sheet-body');
+        }
+
+        async function _clLoadGuides() {
+            const box = $('clGuideList'), sec = $('clGuideSec');
+            if (!box) return;
+            const { ok, data } = await apiFetch('/api/client/guides');
+            if (!ok || !data.ok) { if (sec) sec.style.display = 'none'; return; }
+            _clPaintTypes = data.paint_types || {};
+            const cards = [`<div class="cl-guide-card calc" onclick="clOpenCalc()">
+                    <span class="ic">🧮</span><b>Necha kg bo'yoq kerak?</b><small>Kalkulyator →</small></div>`]
+                .concat((data.guides || []).map(g => `<div class="cl-guide-card" onclick="clOpenGuide(${g.id})">
+                    <span class="ic">🧐</span><b>${escapeHtml(g.question)}</b><small>Javobni ko'rish →</small></div>`));
+            box.innerHTML = cards.join('');
+            if (sec) sec.style.display = '';
+        }
+
+        window.clOpenGuide = async function (id) {
+            const body = _clSheet('clGuideSheet');
+            const { ok, data } = await apiFetch('/api/client/guide?id=' + id);
+            if (!ok || !data.ok) { body.innerHTML = '<div class="cl-loading">Yuklanmadi</div>'; return; }
+            (data.items || []).forEach(_clRemember);
+            const rows = (data.items || []).map(p => `<div class="cl-prod-row" onclick="clOpenProduct(${p.id})">
+                ${_cl_img_row(p)}
+                <div class="cl-prod-info">
+                    <div class="cl-prod-name">${escapeHtml(p.name)}</div>
+                    <div class="cl-prod-price">${_fmt_sum_cl(_clPrice(p))}</div>
+                    ${p.per_kg ? `<div class="cl-perkg">1 kg ≈ ${_fmt_sum_cl(p.per_kg)}</div>` : ''}
+                    ${_clStockTag(p)}
+                </div>
+                <div class="cl-row-buy" data-pid="${p.id}" onclick="event.stopPropagation()">${_clBuyCtl(p)}</div>
+            </div>`).join('');
+            body.innerHTML = `
+                ${data.status !== 'published' ? '<div class="cl-draft-flag">👁 Ko\'rib chiqish — mijozlar hali ko\'rmaydi</div>' : ''}
+                <div class="cl-guide-q">🧐 ${escapeHtml(data.question)}</div>
+                <div class="cl-guide-a">${_clMd(data.answer)}</div>
+                ${data.calc ? `<button class="cl-cta ghost" onclick="clOpenCalc('${data.calc}')">🧮 Necha kg kerakligini hisoblash</button>` : ''}
+                ${rows ? `<div class="cl-sheet-sub">Bizda bor — narxi bugungi</div><div class="cl-guide-prods">${rows}</div>` : ''}`;
+        };
+
+        const _clCalc = { type: 'emal', mode: 'area', area: '', l: '', w: '', h: '2.7', surf: 'walls', layers: 2, q: '' };
+
+        window.clOpenCalc = function (type) {
+            if (type) _clCalc.type = type;
+            const body = _clSheet('clCalcSheet');
+            body.innerHTML = `<div class="cl-sheet-title">🧮 Necha kg bo'yoq kerak?</div><div id="clCalcForm"></div><div id="clCalcRes"></div>`;
+            _clCalcForm();
+            if (_clCalcArea() > 0) clCalcRun();
+        };
+
+        function _clCalcArea() {
+            const c = _clCalc;
+            if (c.mode === 'area') return parseFloat(String(c.area).replace(',', '.')) || 0;
+            const l = parseFloat(String(c.l).replace(',', '.')) || 0;
+            const w = parseFloat(String(c.w).replace(',', '.')) || 0;
+            const h = parseFloat(String(c.h).replace(',', '.')) || 0;
+            return c.surf === 'floor' ? l * w : 2 * (l + w) * h;
+        }
+
+        function _clCalcForm() {
+            const c = _clCalc, box = $('clCalcForm');
+            if (!box) return;
+            const types = Object.keys(_clPaintTypes).length ? _clPaintTypes
+                : { emal: 'Emal', pol: 'Pol bo\'yog\'i', lak: 'Lak', emulsiya: 'Emulsiya', gruntovka: 'Gruntovka' };
+            const chip = (k, label, on, fn) => `<button class="cl-opt${on ? ' on' : ''}" onclick="${fn}">${label}</button>`;
+            box.innerHTML = `
+                <div class="cl-sheet-sub">Nima bilan bo'yaysiz?</div>
+                <div class="cl-chips">${Object.entries(types).map(([k, v]) => chip(k, escapeHtml(v), c.type === k, `clCalcSet('type','${k}')`)).join('')}</div>
+                <div class="cl-sheet-sub">Maydon</div>
+                <div class="cl-opts">
+                    ${chip('a', 'm² bilaman', c.mode === 'area', "clCalcSet('mode','area')")}
+                    ${chip('r', '📐 Xona o\'lchami', c.mode === 'room', "clCalcSet('mode','room')")}
+                </div>
+                ${c.mode === 'area'
+                    ? `<input class="cl-input" type="number" inputmode="decimal" placeholder="Masalan: 20 (m²)" value="${escapeHtml(c.area)}" oninput="clCalcSet('area',this.value,true)">`
+                    : `<div class="cl-opts" style="margin-top:8px">
+                            ${chip('w', 'Devorlar', c.surf === 'walls', "clCalcSet('surf','walls')")}
+                            ${chip('f', 'Pol / shift', c.surf === 'floor', "clCalcSet('surf','floor')")}
+                       </div>
+                       <div class="cl-room">
+                           <input class="cl-input" type="number" inputmode="decimal" placeholder="Uzunligi, m" value="${escapeHtml(c.l)}" oninput="clCalcSet('l',this.value,true)">
+                           <input class="cl-input" type="number" inputmode="decimal" placeholder="Eni, m" value="${escapeHtml(c.w)}" oninput="clCalcSet('w',this.value,true)">
+                           ${c.surf === 'walls' ? `<input class="cl-input" type="number" inputmode="decimal" placeholder="Balandligi, m" value="${escapeHtml(c.h)}" oninput="clCalcSet('h',this.value,true)">` : ''}
+                       </div>
+                       <div class="cl-note" id="clCalcAreaNote"></div>`}
+                <div class="cl-sheet-sub">Necha qatlam?</div>
+                <div class="cl-opts">${[1, 2, 3].map(n => chip(n, n + ' qatlam', c.layers === n, `clCalcSet('layers',${n})`)).join('')}</div>
+                <input class="cl-input" placeholder="Rang (ixtiyoriy): oq, qora, yashil..." value="${escapeHtml(c.q)}" oninput="clCalcSet('q',this.value,true)">
+                <button class="cl-cta big" onclick="clCalcRun()">Hisoblash</button>`;
+            _clCalcAreaNote();
+        }
+
+        function _clCalcAreaNote() {
+            const n = $('clCalcAreaNote');
+            if (n) { const a = _clCalcArea(); n.textContent = a > 0 ? `Maydon ≈ ${_clNum(Math.round(a * 10) / 10)} m² (eshik/deraza ayirilmagan)` : ''; }
+        }
+
+        window.clCalcSet = function (k, v, quiet) {
+            _clCalc[k] = v;
+            if (quiet) { _clCalcAreaNote(); return; }
+            _clCalcForm();
+            if (['type', 'layers'].includes(k) && $('clCalcRes') && $('clCalcRes').innerHTML) clCalcRun();
+        };
+
+        window.clCalcRun = async function () {
+            const res = $('clCalcRes');
+            const area = _clCalcArea();
+            if (!res) return;
+            if (area <= 0) { res.innerHTML = '<div class="cl-err">Maydonni kiriting</div>'; return; }
+            res.innerHTML = '<div class="cl-loading">Hisoblanmoqda...</div>';
+            const c = _clCalc;
+            const { ok, data } = await apiFetch(`/api/client/paint-calc?type=${c.type}&area=${area.toFixed(2)}&layers=${c.layers}&q=${encodeURIComponent(c.q.trim())}`);
+            if (!ok || !data.ok) { res.innerHTML = `<div class="cl-err">${escapeHtml((data && data.error) || 'Xato')}</div>`; return; }
+            window._clCalcOpts = data.options;
+            const opts = (data.options || []).map((o, i) => `<div class="cl-calc-opt">
+                <div class="cl-calc-opt-top">
+                    <b>${escapeHtml(o.title)}</b>
+                    <span class="cl-calc-total">${_fmt_sum_cl(o.total)}</span>
+                </div>
+                <div class="cl-calc-lines">${o.lines.map(l => `${l.qty} × ${_clNum(l.size_kg)} kg`).join(' + ')} = ${_clNum(o.total_kg)} kg</div>
+                <button class="cl-cta" id="clCalcBtn${i}" onclick="clCalcAdd(${i})">＋ Savatga solish</button>
+            </div>`).join('');
+            res.innerHTML = `
+                <div class="cl-calc-need">
+                    <div>Sizga taxminan kerak:</div>
+                    <b>${_clNum(data.need_kg)} kg</b>
+                    <small>${_clNum(Math.round(data.area * 10) / 10)} m² × ${data.layers} qatlam × ${data.rate} kg/m² + 10% zaxira.
+                    Sirt g'ovak yoki eski bo'lsa ko'proq ketadi.</small>
+                </div>
+                ${opts ? `<div class="cl-sheet-sub">Eng arzon variantlar</div>${opts}`
+                       : `<div class="cl-empty">Bu turdagi tovar hozir yo'q${c.q ? ' (rangni o\'zgartirib ko\'ring)' : ''}</div>`}`;
+        };
+
+        window.clCalcAdd = function (i) {
+            const o = (window._clCalcOpts || [])[i];
+            if (!o) return;
+            o.lines.forEach(l => {
+                const p = _clProd[l.product_id] || { id: l.product_id, name: l.name, price_sum: l.price_sum,
+                                                     unit: l.unit, qty: l.stock, image_url: o.image_url };
+                _clRemember(p);
+                const cur = _clCart[l.product_id] ? _clCart[l.product_id].qty : 0;
+                _clSet(_clProd[l.product_id] || p, Math.max(cur, l.qty));
+                _clTrackView(l.product_id);
+            });
+            _clHaptic('ok');
+            const b = $('clCalcBtn' + i);
+            if (b) { b.textContent = '✅ Savatda — rasmiylashtirish →'; b.onclick = () => clOpenCart(); }
+        };
+
+        // Tovar oynasida: shu tovarga oid maslahat va kalkulyator tugmasi
+        async function _clProductGuides(pid) {
+            const box = $('clProdGuides');
+            if (!box) return;
+            const { ok, data } = await apiFetch('/api/client/guides?pid=' + pid);
+            if (!ok || !data.ok || $('clProdSheet')?.dataset.pid != pid) return;
+            _clPaintTypes = data.paint_types || _clPaintTypes;
+            const parts = (data.guides || []).map(g =>
+                `<div class="cl-guide-inline" onclick="clOpenGuide(${g.id})">🧐 <b>${escapeHtml(g.question)}</b><span>→</span></div>`);
+            if (data.calc_type) parts.push(`<div class="cl-guide-inline" onclick="clOpenCalc('${data.calc_type}')">🧮 <b>Necha kg kerak? Hisoblab beramiz</b><span>→</span></div>`);
+            box.innerHTML = parts.join('');
+        }
+
+        // ── Admin: maslahatlarni boshqarish ─────────────────────────────
+        let _gAdmin = [];
+        let _gTypes = {};
+
+        window.openGuidesAdmin = async function () {
+            openTool('🧐 Ustalar maslahati');
+            const { ok, status, data } = await apiFetch('/api/admin/guides');
+            if (!ok || !data.ok) return openTool('🧐 Ustalar maslahati', toolError(status, data));
+            _gAdmin = data.guides || [];
+            _gTypes = data.paint_types || {};
+            const rows = _gAdmin.map(g => `<div class="g-row" onclick="editGuide(${g.id})">
+                <div><b>${escapeHtml(g.question)}</b>
+                <div class="g-meta">${g.status === 'published' ? '✅ Nashr qilingan' : (g.answer ? '📝 Qoralama — tekshiring' : '⚪ Javob yo\'q')}
+                 · 👁 ${g.views || 0}</div></div><span>›</span></div>`).join('');
+            openTool('🧐 Ustalar maslahati', `
+                <div class="stat-block g-help">Mijoz Mini App'da shu savollarni ko'radi. Javobni <b>✨ AI qoralama</b>
+                yozib beradi, siz tekshirib <b>Nashr qilish</b>ni bosasiz. Narx va qoldiq avtomatik qo'shiladi.</div>
+                <button class="more-btn" onclick="editGuide(0)">➕ Yangi savol</button>
+                <div class="g-list">${rows || '<div class="list-status">Hali yo\'q</div>'}</div>`);
+        };
+
+        window.editGuide = function (id) {
+            const g = _gAdmin.find(x => x.id === id) || { id: 0, question: '', answer: '', query: '', calc: '', status: 'draft' };
+            const opts = ['<option value="">— yo\'q —</option>'].concat(Object.entries(_gTypes).map(([k, v]) =>
+                `<option value="${k}"${g.calc === k ? ' selected' : ''}>${escapeHtml(v)}</option>`)).join('');
+            openTool(id ? '✏️ Maslahat' : '➕ Yangi maslahat', `
+                <div class="form-card g-form">
+                    <label>Savol (mijoz ko'radi)</label>
+                    <input type="text" id="gQ" value="${escapeHtml(g.question)}" placeholder="Qaysi emalni tanlash kerak?">
+                    <label>Tovarlarni topish so'zlari (vergul bilan)</label>
+                    <input type="text" id="gQuery" value="${escapeHtml(g.query)}" placeholder="emal, kraska">
+                    <label>Kalkulyator</label>
+                    <select id="gCalc">${opts}</select>
+                    <label>Javob</label>
+                    <textarea id="gA" rows="12" placeholder="**qalin**, '• ' bilan ro'yxat">${escapeHtml(g.answer)}</textarea>
+                    <div class="g-hint">AI ishonchsiz joylarni <b>[TEKSHIRING]</b> deb belgilaydi — ularni tekshirib, belgini o'chirmaguncha nashr qilinmaydi.</div>
+                    <button class="more-btn" id="gDraftBtn" onclick="guideDraft(${g.id})">✨ AI qoralama yozsin</button>
+                    <div class="form-row" style="gap:8px">
+                        <button class="save-btn" style="flex:1;background:#64748b" onclick="saveGuide(${g.id},'draft')">💾 Qoralama</button>
+                        <button class="save-btn" style="flex:1" onclick="saveGuide(${g.id},'published')">✅ Nashr qilish</button>
+                    </div>
+                    ${g.id ? `<button class="more-btn" onclick="clOpenGuide(${g.id})">👁 Mijoz ko'rinishida ko'rish</button>
+                              <button class="more-btn" style="background:#fee2e2;color:#b91c1c" onclick="deleteGuide(${g.id})">🗑 O'chirish</button>` : ''}
+                    <button class="more-btn" onclick="openGuidesAdmin()">← Ro'yxatga</button>
+                    <div id="gStatus" class="list-status"></div>
+                </div>`);
+        };
+
+        function _gForm() {
+            return { question: $('gQ').value, query: $('gQuery').value, calc: $('gCalc').value, answer: $('gA').value };
+        }
+
+        window.guideDraft = async function (id) {
+            const btn = $('gDraftBtn'), st = $('gStatus');
+            btn.disabled = true; btn.textContent = '⏳ AI yozmoqda... (20–40 soniya)';
+            const { ok, data } = await apiFetch('/api/admin/guide/draft', {
+                method: 'POST', body: JSON.stringify(Object.assign({ id }, _gForm())) });
+            btn.disabled = false; btn.textContent = '✨ AI qoralama yozsin';
+            if (!ok || !data.ok) { st.textContent = '⚠️ ' + ((data && data.error) || 'Xato'); return; }
+            $('gA').value = data.answer;
+            st.textContent = '✅ Qoralama tayyor — o\'qib chiqing, [TEKSHIRING] joylarini to\'g\'rilang.';
+        };
+
+        window.saveGuide = async function (id, status) {
+            const st = $('gStatus');
+            const { ok, data } = await apiFetch('/api/admin/guide/save', {
+                method: 'POST', body: JSON.stringify(Object.assign({ id, status }, _gForm())) });
+            if (!ok || !data.ok) { st.textContent = '⚠️ ' + ((data && data.error) || 'Xato'); return; }
+            await openGuidesAdmin();
+            const t = $('toolBody');
+            if (t) t.insertAdjacentHTML('afterbegin', `<div class="list-status">${status === 'published' ? '✅ Nashr qilindi — mijozlar ko\'radi' : '💾 Qoralama saqlandi'}</div>`);
+        };
+
+        window.deleteGuide = async function (id) {
+            if (!confirm('Maslahat o\'chirilsinmi?')) return;
+            await apiFetch('/api/admin/guide/delete', { method: 'POST', body: JSON.stringify({ id }) });
+            openGuidesAdmin();
+        };
+
         // AI Chat
         window.clSendHint = function(btn) {
             const inp = $('clChatInput');
@@ -2154,6 +2429,7 @@
             const grEl = $('clientGreeting');
             if (grEl) grEl.textContent = gr + '!';
             loadClientTop();
+            _clLoadGuides();
             _clLoadFeed(true);
         }
 
