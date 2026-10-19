@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=3">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -115,9 +115,18 @@
             <div class="cl-hero">
                 <div class="cl-hero-text">
                     <div class="cl-hero-title">🌳 Chinor Do'koni</div>
-                    <div class="cl-hero-sub">Sifatli mahsulotlar eng yaxshi narxda</div>
+                    <div class="cl-hero-sub">Tanlang, savatga soling — qolganini o'zimiz hal qilamiz</div>
                 </div>
                 <button class="cl-search-btn" onclick="openClientSearch()">🔍 Qidirish</button>
+            </div>
+
+            <!-- Qanday ishlaydi — mijoz birinchi qarashda tushunsin -->
+            <div class="cl-how">
+                <div><span>🛒</span>Tanlang</div>
+                <i>›</i>
+                <div><span>📞</span>Tasdiqlaymiz</div>
+                <i>›</i>
+                <div><span>🚚</span>Yetkazamiz</div>
             </div>
 
             <!-- Quick actions -->
@@ -197,6 +206,15 @@
             <!-- ACCOUNT TAB -->
             <div id="clTabAccount" style="display:none">
                 <div id="clAccountBody"><div class="cl-loading">Yuklanmoqda...</div></div>
+            </div>
+
+            <!-- Mijoz savati — tovar qo'shilganda pastda paydo bo'ladi -->
+            <div id="clCartBar" class="cl-cartbar" style="display:none" onclick="clOpenCart()">
+                <div>
+                    <div id="clCartBarCount" class="cl-cartbar-count">🛒 0</div>
+                    <div id="clCartBarTotal" class="cl-cartbar-total">0 so'm</div>
+                </div>
+                <span class="cl-cartbar-go">Rasmiylashtirish →</span>
             </div>
         </div>
 
@@ -453,6 +471,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
 </body>
 </html>

@@ -1355,7 +1355,7 @@
         function _cl_img(p) {
             const url = p.image_url ? API_BASE_URL + p.image_url : '';
             return url
-                ? `<img class="cl-card-img" src="${url}" loading="lazy" onerror="this.style.display='none'">`
+                ? `<img class="cl-card-img" src="${url}" loading="lazy" onerror="this.outerHTML='<div class=cl-card-img-ph>📦</div>'">`
                 : `<div class="cl-card-img-ph">📦</div>`;
         }
         function _cl_img_row(p) {
@@ -1386,22 +1386,16 @@
             if (!ok) return;
             const topEl = $('clTopList');
             const newEl = $('clNewList');
+            _clOrdersOn = data.orders_enabled !== false;
+            if (data.shop) _clShop = data.shop;
+            (data.top||[]).concat(data.new||[]).forEach(_clRemember);
             if (topEl) topEl.innerHTML = (data.top||[]).length
-                ? (data.top||[]).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})">
-                    ${_cl_img(p)}
-                    <div class="cl-card-body">
-                        <div class="cl-card-name">${p.name}</div>
-                        <div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
-                    </div></div>`).join('')
+                ? (data.top||[]).map(p => _clCardHtml(p, true)).join('')
                 : '<div class="cl-loading">Ma\'lumot yo\'q</div>';
             if (newEl) newEl.innerHTML = (data.new||[]).length
-                ? (data.new||[]).map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})">
-                    ${_cl_img(p)}
-                    <div class="cl-card-body">
-                        <div class="cl-card-name">${p.name}</div>
-                        <div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
-                    </div></div>`).join('')
+                ? (data.new||[]).map(p => _clCardHtml(p, false)).join('')
                 : '<div class="cl-loading">Hali yo\'q</div>';
+            _clRenderBar();
         }
 
         // ── Kategoriya tugmalari (mijoz katalogi) ────────────────────────
@@ -1449,13 +1443,16 @@
             const more = $('clCatalogMore');
             if (!ok || !data.ok) { if(el) el.innerHTML = '<div class="cl-loading">Xato</div>'; return; }
             const items = data.items || data.products || [];
+            items.forEach(_clRemember);
             const html = items.map(p => `<div class="cl-prod-row" onclick="clOpenProduct(${p.id})">
                 ${_cl_img_row(p)}
                 <div class="cl-prod-info">
-                    <div class="cl-prod-name">${p.name}</div>
-                    ${p.description ? `<div class="cl-prod-desc">${p.description}</div>` : ''}
-                    <div class="cl-prod-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
+                    <div class="cl-prod-name">${escapeHtml(p.name)}</div>
+                    ${p.description ? `<div class="cl-prod-desc">${escapeHtml(p.description)}</div>` : ''}
+                    <div class="cl-prod-price">${_fmt_sum_cl(_clPrice(p))}</div>
+                    ${_clStockTag(p)}
                 </div>
+                <div class="cl-row-buy" data-pid="${p.id}" onclick="event.stopPropagation()">${_clBuyCtl(p)}</div>
             </div>`).join('');
             if (reset) el.innerHTML = html || '<div class="cl-loading">Mahsulot topilmadi</div>';
             else el.innerHTML += html;
@@ -1486,6 +1483,8 @@
             const { ok, data } = await apiFetch(`/api/product/${pid}`);
             if (!ok || !data.ok) return;
             const p = data.product;
+            if (_clProd[p.id] && _clProd[p.id].sold) p.sold = _clProd[p.id].sold;
+            _clRemember(p);
             const url = p.image_url ? API_BASE_URL + p.image_url : '';
             // Asl rasm — foni kesilmagani. Ikkalasi bor bo'lsa o'tkazgich chiqadi:
             // mijoz tovar haqiqatda qanday ekanini ko'ra olsin.
@@ -1507,15 +1506,20 @@
                     <span class="cl-usage-lbl">🔧 Qayerda ishlatiladi</span>
                     <span>${p.usage_tags.map(t => `<b>${escapeHtml(t)}</b>`).join(' · ')}</span>
                 </div>` : ''}
-                <div class="cl-modal-name">${p.name}</div>
-                <div class="cl-modal-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div>
+                <div class="cl-modal-name">${escapeHtml(p.name)}</div>
+                <div class="cl-modal-price">${_fmt_sum_cl(_clPrice(p))}<span class="cl-modal-unit"> / ${escapeHtml(p.unit||'dona')}</span></div>
+                ${p.sold > 0 ? `<div class="cl-sold-line">🔥 ${_clNum(p.sold)} ${escapeHtml(p.unit||'dona')} sotilgan — xaridorlar tanlovi</div>` : ''}
                 ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
                 ${p.usage_info ? `<details class="cl-usage-info">
                     <summary>📖 Qanday ishlatiladi / Как использовать</summary>
                     <div>${escapeHtml(p.usage_info)}</div>
                 </details>` : ''}
-                ${p.qty > 0 ? `<div style="color:var(--primary);font-size:13px;font-weight:600;margin-bottom:16px">✅ Mavjud: ${p.qty} ${p.unit||'dona'}</div>` : '<div style="color:#e57373;font-size:13px;margin-bottom:16px">❌ Sotib bo\'lindi</div>'}
-                <button style="width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:16px;font-size:15px;font-weight:700;cursor:pointer" onclick="this.closest('.cl-modal-overlay').remove()">Yopish</button>
+                ${_clStockTag(p, true)}
+                <div class="cl-buybox" data-pid="${p.id}">${_clModalBuy(p)}</div>
+                <div class="cl-trust">
+                    <span>💵 To'lov — tovarni olganingizda</span>
+                    <span>📞 Savol bo'lsa: <a href="tel:${(_clShop.phone||'').replace(/\s/g,'')}">${escapeHtml(_clShop.phone||'')}</a></span>
+                </div>
             </div>`;
             overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
             document.body.appendChild(overlay);
@@ -1526,6 +1530,349 @@
             if (img) img.src = src;
             btn.parentNode.querySelectorAll('.cl-img-tab')
                .forEach(b => b.classList.toggle('active', b === btn));
+        };
+
+        // ── Mijoz savati va buyurtma ─────────────────────────────────────
+        // Mijoz katalogdan tovarni savatga soladi va Mini App ichida buyurtma
+        // beradi (POST /api/client/order). Savat brauzerda saqlanadi —
+        // Mini App yopilib qayta ochilsa ham yo'qolmaydi. Narx va qoldiq
+        // buyurtma paytida serverda qayta tekshiriladi.
+        //
+        // Jalb qilish faqat HAQIQIY ma'lumot bilan: real qoldiq ("Faqat 3 ta
+        // qoldi"), real sotilgan soni, bir bosishda qayta buyurtma. Soxta
+        // taymer yoki o'ylab topilgan chegirma yo'q — ishonch yo'qolsa,
+        // mijoz qaytib kelmaydi.
+        let _clOrdersOn = true;
+        let _clShop = {};
+        const _clProd = {};                 // id → oxirgi ko'rilgan tovar
+        const _CL_CART_KEY = 'chinor_cl_cart_v1';
+        const _CL_FORM_KEY = 'chinor_cl_form_v1';
+        const _CL_LOW = 5;                  // shundan kam qolsa ogohlantiramiz
+
+        function _clLoad(key, def) {
+            try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v || def; }
+            catch (_) { return def; }
+        }
+        function _clSave(key, v) {
+            try { localStorage.setItem(key, JSON.stringify(v)); } catch (_) {}
+        }
+        let _clCart = _clLoad(_CL_CART_KEY, {});   // id → {id,name,price,unit,image_url,stock,qty}
+        const _clForm = Object.assign(
+            { delivery: 'delivery', address: '', phone: '', payment: 'cash', comment: '' },
+            _clLoad(_CL_FORM_KEY, {}));
+
+        function _clPrice(p) {
+            const v = p.price_sum != null ? p.price_sum : (p.price != null ? p.price : p.sell_price);
+            return Number(v) || 0;
+        }
+        function _clNum(v) { return Number(v || 0).toLocaleString('uz-UZ', { maximumFractionDigits: 2 }); }
+        function _clStep(p) { return /^(kg|l|m)$/.test(p.unit || '') ? 0.5 : 1; }
+
+        function _clRemember(p) {
+            if (!p || !p.id) return;
+            const prev = _clProd[p.id] || {};
+            _clProd[p.id] = Object.assign({}, prev, p, { sold: p.sold != null ? p.sold : prev.sold });
+            // Savatdagi nusxani ham yangilaymiz (narx/qoldiq o'zgargan bo'lishi mumkin)
+            const c = _clCart[p.id];
+            if (c) { c.price = _clPrice(p); c.stock = Number(p.qty) || 0; c.name = p.name; }
+        }
+
+        function _clStockTag(p, big) {
+            const q = Number(p.qty) || 0;
+            const cls = big ? 'cl-stock big' : 'cl-stock';
+            if (q <= 0) return `<div class="${cls} out">❌ Hozir qolmagan</div>`;
+            if (q <= _CL_LOW) return `<div class="${cls} low">⚡ Faqat ${_clNum(q)} ${escapeHtml(p.unit||'dona')} qoldi</div>`;
+            return big ? `<div class="${cls} ok">✅ Omborda bor</div>` : '';
+        }
+
+        // Kichik boshqaruv: "+" yoki "− 2 +" (kartochka va qatorlarda)
+        function _clBuyCtl(p) {
+            if (!_clOrdersOn || (Number(p.qty) || 0) <= 0) return '';
+            const c = _clCart[p.id];
+            if (!c) return `<button class="cl-add" onclick="clAdd(${p.id})" aria-label="Savatga">＋</button>`;
+            return `<div class="cl-stepper">
+                <button onclick="clInc(${p.id},-1)">−</button>
+                <span>${_clNum(c.qty)}</span>
+                <button onclick="clInc(${p.id},1)">＋</button>
+            </div>`;
+        }
+
+        function _clCardHtml(p, showSold) {
+            return `<div class="cl-card" onclick="clOpenProduct(${p.id})">
+                <div class="cl-card-media">
+                    ${_cl_img(p)}
+                    ${showSold && p.sold > 0 ? `<span class="cl-badge">🔥 ${_clNum(p.sold)} sotilgan</span>` : ''}
+                    ${(Number(p.qty)||0) > 0 && (Number(p.qty)||0) <= _CL_LOW ? `<span class="cl-badge low">Oz qoldi</span>` : ''}
+                </div>
+                <div class="cl-card-body">
+                    <div class="cl-card-name">${escapeHtml(p.name)}</div>
+                    <div class="cl-card-foot">
+                        <div class="cl-card-price">${_fmt_sum_cl(_clPrice(p))}</div>
+                        <div class="cl-card-buy" data-pid="${p.id}" onclick="event.stopPropagation()">${_clBuyCtl(p)}</div>
+                    </div>
+                </div></div>`;
+        }
+
+        // Mahsulot oynasidagi katta tugma
+        function _clModalBuy(p) {
+            const tel = (_clShop.phone || '').replace(/\s/g, '');
+            if (!_clOrdersOn) {
+                return `<a class="cl-cta" href="tel:${tel}">📞 Buyurtma uchun qo'ng'iroq qiling</a>`;
+            }
+            if ((Number(p.qty) || 0) <= 0) {
+                return `<a class="cl-cta ghost" href="tel:${tel}">📞 Qachon kelishini so'rash</a>`;
+            }
+            const c = _clCart[p.id];
+            if (!c) {
+                return `<button class="cl-cta" onclick="clAdd(${p.id})">🛒 Savatga qo'shish · ${_fmt_sum_cl(_clPrice(p))}</button>`;
+            }
+            return `<div class="cl-modal-buy">
+                <div class="cl-stepper big">
+                    <button onclick="clInc(${p.id},-1)">−</button>
+                    <span>${_clNum(c.qty)} ${escapeHtml(p.unit||'dona')}</span>
+                    <button onclick="clInc(${p.id},1)">＋</button>
+                </div>
+                <button class="cl-cta" onclick="clOpenCart()">Rasmiylashtirish · ${_fmt_sum_cl(c.qty * c.price)} →</button>
+            </div>`;
+        }
+
+        function _clHaptic(kind) {
+            try {
+                if (!tg || !tg.HapticFeedback) return;
+                if (kind === 'ok') tg.HapticFeedback.notificationOccurred('success');
+                else if (kind === 'err') tg.HapticFeedback.notificationOccurred('error');
+                else tg.HapticFeedback.impactOccurred('light');
+            } catch (_) {}
+        }
+
+        function _clToast(msg) {
+            let t = $('clToast');
+            if (!t) { t = document.createElement('div'); t.id = 'clToast'; t.className = 'cl-toast'; document.body.appendChild(t); }
+            t.textContent = msg;
+            t.classList.add('show');
+            clearTimeout(t._h);
+            t._h = setTimeout(() => t.classList.remove('show'), 2200);
+        }
+
+        function _clSet(p, qty) {
+            const stock = Number(p.qty) || 0;
+            qty = Math.max(0, Math.min(Number(qty) || 0, stock));
+            if (qty <= 0) delete _clCart[p.id];
+            else _clCart[p.id] = { id: p.id, name: p.name, price: _clPrice(p), unit: p.unit || 'dona',
+                                   image_url: p.image_url || '', stock, qty };
+            _clSave(_CL_CART_KEY, _clCart);
+            _clRefresh(p.id);
+        }
+
+        // Savat o'zgarganda — sahifadagi barcha shu tovar tugmalarini yangilaymiz
+        function _clRefresh(pid) {
+            const p = _clProd[pid] || _clCart[pid];
+            if (p) {
+                document.querySelectorAll(`.cl-card-buy[data-pid="${pid}"], .cl-row-buy[data-pid="${pid}"]`)
+                    .forEach(el => el.innerHTML = _clBuyCtl(p));
+                document.querySelectorAll(`.cl-buybox[data-pid="${pid}"]`)
+                    .forEach(el => el.innerHTML = _clModalBuy(p));
+            }
+            _clRenderBar(true);
+            if ($('clCartSheet')) _clRenderCart();
+        }
+
+        window.clAdd = function (pid) {
+            const p = _clProd[pid];
+            if (!p) return;
+            if (_clCart[pid]) return clInc(pid, 1);
+            _clSet(p, _clStep(p) === 1 ? 1 : Math.min(1, Number(p.qty)));
+            _clHaptic();
+            _clToast(`✅ ${p.name} savatga qo'shildi`);
+        };
+
+        window.clInc = function (pid, dir) {
+            const p = _clProd[pid] || _clCart[pid] && Object.assign({ qty: _clCart[pid].stock }, _clCart[pid]);
+            const c = _clCart[pid];
+            if (!p || !c) return;
+            const next = +(c.qty + dir * _clStep(p)).toFixed(2);
+            if (dir > 0 && next > (Number(p.qty) || c.stock)) {
+                _clHaptic('err');
+                _clToast(`Omborda faqat ${_clNum(p.qty || c.stock)} ${p.unit || 'dona'} bor`);
+                return;
+            }
+            _clHaptic();
+            _clSet(Object.assign({}, p, { qty: Number(p.qty) || c.stock }), next);
+        };
+
+        function _clTotals() {
+            const items = Object.values(_clCart);
+            return {
+                items,
+                count: items.length,
+                sum: items.reduce((a, c) => a + c.qty * c.price, 0),
+            };
+        }
+
+        function _clRenderBar(bump) {
+            const bar = $('clCartBar');
+            if (!bar) return;
+            const t = _clTotals();
+            const scr = $('screenClient');
+            if (!t.count || !_clOrdersOn) {
+                bar.style.display = 'none';
+                if (scr) scr.classList.remove('has-cartbar');
+                return;
+            }
+            bar.style.display = '';
+            if (scr) scr.classList.add('has-cartbar');
+            $('clCartBarCount').textContent = `🛒 ${t.count} xil tovar`;
+            $('clCartBarTotal').textContent = _fmt_sum_cl(t.sum);
+            if (bump) { bar.classList.remove('bump'); void bar.offsetWidth; bar.classList.add('bump'); }
+        }
+
+        window.clOpenCart = function () {
+            document.querySelectorAll('.cl-modal-overlay').forEach(o => o.remove());
+            const ov = document.createElement('div');
+            ov.className = 'cl-modal-overlay';
+            ov.id = 'clCartSheet';
+            ov.innerHTML = `<div class="cl-modal" id="clCartBody" style="position:relative"></div>`;
+            ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+            document.body.appendChild(ov);
+            _clRenderCart();
+            // Telefonni mijoz hisobidan oldindan to'ldiramiz — bitta maydon kam
+            if (!_clForm.phone) {
+                apiFetch('/api/my-account').then(({ ok, data }) => {
+                    if (ok && data.ok && data.phone && !_clForm.phone) {
+                        _clForm.phone = data.phone;
+                        const el = $('clPhone');
+                        if (el && !el.value) el.value = data.phone;
+                    }
+                });
+            }
+        };
+
+        function _clRenderCart() {
+            const body = $('clCartBody');
+            if (!body) return;
+            const t = _clTotals();
+            if (!t.count) {
+                body.innerHTML = `<button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+                    <div class="cl-empty">
+                        <div style="font-size:44px">🛒</div>
+                        <div>Savat bo'sh</div>
+                        <button class="cl-cta" onclick="this.closest('.cl-modal-overlay').remove();clientTab(document.querySelectorAll('.cl-tab')[1],'catalog')">Tovar tanlash →</button>
+                    </div>`;
+                return;
+            }
+            const lines = t.items.map(c => {
+                const img = c.image_url ? `<img src="${API_BASE_URL + c.image_url}" onerror="this.outerHTML='<div class=ph>📦</div>'">` : '<div class="ph">📦</div>';
+                const low = c.stock > 0 && c.stock <= _CL_LOW ? `<div class="cl-cline-low">⚡ ${_clNum(c.stock)} ta qoldi</div>` : '';
+                return `<div class="cl-cline">
+                    ${img}
+                    <div class="cl-cline-info">
+                        <div class="cl-cline-name">${escapeHtml(c.name)}</div>
+                        <div class="cl-cline-price">${_fmt_sum_cl(c.price)} × ${_clNum(c.qty)} = <b>${_fmt_sum_cl(c.price * c.qty)}</b></div>
+                        ${low}
+                    </div>
+                    <div class="cl-stepper">
+                        <button onclick="clInc(${c.id},-1)">−</button>
+                        <span>${_clNum(c.qty)}</span>
+                        <button onclick="clInc(${c.id},1)">＋</button>
+                    </div>
+                </div>`;
+            }).join('');
+            const f = _clForm;
+            const opt = (name, val, label) =>
+                `<button class="cl-opt${f[name] === val ? ' on' : ''}" onclick="clFormSet('${name}','${val}')">${label}</button>`;
+            body.innerHTML = `
+                <button class="cl-modal-close" onclick="this.closest('.cl-modal-overlay').remove()">✕</button>
+                <div class="cl-sheet-title">🛒 Savatingiz</div>
+                <div class="cl-clines">${lines}</div>
+
+                <div class="cl-sheet-sub">Qanday olasiz?</div>
+                <div class="cl-opts">
+                    ${opt('delivery', 'delivery', '🚚 Yetkazib berish')}
+                    ${opt('delivery', 'pickup', '🏪 O\'zim olib ketaman')}
+                </div>
+                ${f.delivery === 'delivery'
+                    ? `<textarea id="clAddr" class="cl-input" rows="2" placeholder="Manzil: tuman, ko'cha, uy, mo'ljal" oninput="clFormSet('address',this.value,true)">${escapeHtml(f.address)}</textarea>`
+                    : `<div class="cl-note">📍 ${escapeHtml(_clShop.location || "Do'kon")}. Tayyor bo'lganda xabar beramiz.</div>`}
+                <input id="clPhone" class="cl-input" type="tel" placeholder="Telefon: +998 ..." value="${escapeHtml(f.phone)}" oninput="clFormSet('phone',this.value,true)">
+
+                <div class="cl-sheet-sub">To'lov</div>
+                <div class="cl-opts">
+                    ${opt('payment', 'cash', '💵 Naqd')}
+                    ${opt('payment', 'card', '💳 Karta')}
+                    ${opt('payment', 'click', '📲 Click')}
+                </div>
+                <input class="cl-input" placeholder="Izoh (ixtiyoriy)" value="${escapeHtml(f.comment)}" oninput="clFormSet('comment',this.value,true)">
+
+                <div class="cl-sum-row"><span>Jami (${t.count} xil)</span><b>${_fmt_sum_cl(t.sum)}</b></div>
+                <div id="clCartErr" class="cl-err"></div>
+                <button class="cl-cta big" id="clOrderBtn" onclick="clCheckout()">✅ Buyurtma berish · ${_fmt_sum_cl(t.sum)}</button>
+                <div class="cl-trust center">
+                    <span>💵 To'lov tovarni olganingizda</span>
+                    <span>📞 Operator buyurtmani tasdiqlash uchun qo'ng'iroq qiladi</span>
+                </div>`;
+        }
+
+        // `quiet` — matn yozilayotganda butun savatni qayta chizmaymiz
+        // (aks holda kursor/klaviatura yo'qoladi)
+        window.clFormSet = function (name, val, quiet) {
+            _clForm[name] = val;
+            _clSave(_CL_FORM_KEY, { delivery: _clForm.delivery, address: _clForm.address,
+                                    phone: _clForm.phone, payment: _clForm.payment });
+            if (!quiet) _clRenderCart();
+        };
+
+        window.clCheckout = async function () {
+            const t = _clTotals();
+            const err = $('clCartErr');
+            const btn = $('clOrderBtn');
+            const f = _clForm;
+            const fail = (msg) => { if (err) err.textContent = msg; _clHaptic('err'); };
+            if (!t.count) return;
+            if (f.delivery === 'delivery' && !f.address.trim()) { fail('📍 Yetkazish manzilini yozing'); $('clAddr') && $('clAddr').focus(); return; }
+            if (f.phone.replace(/\D/g, '').length < 9) { fail('📱 Telefon raqamingizni to\'liq yozing'); $('clPhone') && $('clPhone').focus(); return; }
+            if (err) err.textContent = '';
+            btn.disabled = true;
+            btn.textContent = '⏳ Yuborilmoqda...';
+            const { ok, status, data } = await apiFetch('/api/client/order', {
+                method: 'POST',
+                body: JSON.stringify({
+                    items: t.items.map(c => ({ product_id: c.id, qty: c.qty })),
+                    delivery: f.delivery, address: f.address, phone: f.phone,
+                    payment: f.payment, comment: f.comment,
+                }),
+            });
+            if (!ok || !data.ok) {
+                // Qoldiq o'zgargan bo'lsa — savatdagi raqamni yangilab, mijozga ko'rsatamiz
+                (data && data.problems || []).forEach(pr => {
+                    const c = _clCart[pr.product_id];
+                    if (c && pr.available != null) c.stock = Number(pr.available);
+                });
+                btn.disabled = false;
+                btn.textContent = `✅ Buyurtma berish · ${_fmt_sum_cl(t.sum)}`;
+                fail('⚠️ ' + ((data && data.error) || ('Xato: ' + status)));
+                return;
+            }
+            _clHaptic('ok');
+            _clCart = {};
+            _clSave(_CL_CART_KEY, _clCart);
+            f.comment = '';
+            Object.keys(_clProd).forEach(id => _clRefresh(+id));
+            _clRenderBar();
+            const tel = (data.contact_phone || _clShop.phone || '').replace(/\s/g, '');
+            $('clCartBody').innerHTML = `
+                <div class="cl-success">
+                    <div class="cl-success-ic">🎉</div>
+                    <div class="cl-sheet-title">Buyurtma #${data.order_id} qabul qilindi!</div>
+                    <div class="cl-success-sum">${_fmt_sum_cl(data.total)}</div>
+                    <div class="cl-steps">
+                        <div class="on">✅ Qabul qilindi</div>
+                        <div>📞 Operator qo'ng'iroq qiladi</div>
+                        <div>${f.delivery === 'pickup' ? '🏪 Tayyor — olib ketasiz' : '🚚 Yetkazib beriladi'}</div>
+                    </div>
+                    <div class="cl-note">Tasdiq Telegram chatingizga ham yuborildi.</div>
+                    <button class="cl-cta" onclick="this.closest('.cl-modal-overlay').remove();clientTab(document.querySelectorAll('.cl-tab')[3],'account')">📋 Buyurtmalarim</button>
+                    <a class="cl-cta ghost" href="tel:${tel}">📞 Qo'ng'iroq qilish</a>
+                </div>`;
         };
 
         // AI Chat
@@ -1555,33 +1902,79 @@
                 box.innerHTML += `<div class="cl-msg-ai">${data.answer || '...'}</div>`;
                 const _pl = data.items || data.products || [];
                 if (_pl.length) {
-                    const cards = _pl.map(p => `<div class="cl-card" onclick="clOpenProduct(${p.id})" style="min-width:120px">
-                        ${_cl_img(p)}
-                        <div class="cl-card-body"><div class="cl-card-name">${p.name}</div><div class="cl-card-price">${_fmt_sum_cl(p.price_sum != null ? p.price_sum : p.sell_price)}</div></div>
-                    </div>`).join('');
+                    _pl.forEach(_clRemember);
+                    const cards = _pl.map(p => _clCardHtml(p, false)).join('');
                     box.innerHTML += `<div class="cl-msg-ai-products">${cards}</div>`;
                 }
                 box.scrollTop = box.scrollHeight;
             }
         };
 
+        const _CL_STATUS = {
+            accepted:  ['✅ Qabul qilindi', 'st-acc'],
+            on_way:    ['🚚 Yo\'lda',        'st-way'],
+            delivered: ['📦 Yetkazildi',     'st-done'],
+            confirmed: ['🎉 Qabul qildingiz', 'st-done'],
+            cancelled: ['❌ Bekor qilindi',  'st-cancel'],
+        };
+        let _clOrders = [];
+
         async function loadClientAccount() {
             const el = $('clAccountBody');
             if (!el) return;
             const { ok, data } = await apiFetch('/api/my-account');
             if (!ok || !data.ok) { el.innerHTML = '<div class="cl-loading">Yuklanmadi</div>'; return; }
-            const c = data.client || {};
-            const debt = Number(c.debt || 0);
+            const debt = Number(data.debt_sum || 0);
+            if (data.phone && !_clForm.phone) _clForm.phone = data.phone;
+            _clOrders = data.orders || [];
+            const orders = _clOrders.map(o => {
+                const st = _CL_STATUS[o.status] || [o.status || '—', ''];
+                const names = (o.items||[]).map(i => escapeHtml(i.name)).join(', ');
+                return `<div class="cl-order">
+                    <div class="cl-order-top">
+                        <b>#${o.id}</b>
+                        <span class="cl-order-st ${st[1]}">${st[0]}</span>
+                    </div>
+                    <div class="cl-order-items">${names || '—'}</div>
+                    <div class="cl-order-bottom">
+                        <span class="cl-order-date">${escapeHtml(o.created_at||'')}</span>
+                        <b>${_fmt_sum_cl(o.total)}</b>
+                    </div>
+                    ${(o.items||[]).length && _clOrdersOn ? `<button class="cl-reorder" onclick="clReorder(${o.id})">🔁 Yana shuni buyurtma qilish</button>` : ''}
+                </div>`;
+            }).join('');
             el.innerHTML = `
                 <div class="stat-block" style="margin-bottom:12px">
-                    <div class="stat-row"><span class="lbl">👤 Ism</span><span class="val">${c.shop_name||'—'}</span></div>
-                    <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${c.phone||'—'}</span></div>
+                    <div class="stat-row"><span class="lbl">👤 Ism</span><span class="val">${escapeHtml(data.name||'—')}</span></div>
+                    <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${escapeHtml(data.phone||'—')}</span></div>
                     <div class="stat-row"><span class="lbl">💳 Qarz</span><span class="val" style="color:${debt>0?'#e57373':'var(--primary)'}">${debt>0?_fmt_sum_cl(debt):'✅ Qarzsiz'}</span></div>
                 </div>
-                <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">
-                    📋 Buyurtma berish va to'lovlar uchun<br><b>Telegram botdan</b> foydalaning
-                </div>`;
+                <div class="cl-section-head" style="margin-top:4px"><span>📋 Buyurtmalarim</span></div>
+                ${orders || `<div class="cl-empty">
+                    <div style="font-size:40px">🛍</div>
+                    <div>Hali buyurtma yo'q</div>
+                    <button class="cl-cta" onclick="clientTab(document.querySelectorAll('.cl-tab')[1],'catalog')">Katalogni ko'rish →</button>
+                </div>`}`;
         }
+
+        window.clReorder = async function (oid) {
+            const o = _clOrders.find(x => x.id === oid);
+            if (!o) return;
+            let added = 0, missing = 0;
+            // Har bir tovarning HOZIRGI narxi va qoldig'ini serverdan olamiz
+            await Promise.all((o.items || []).map(async it => {
+                const r = await apiFetch('/api/product/' + it.product_id);
+                const p = (r.ok && r.data.ok) ? r.data.product : null;
+                if (p && Number(p.qty) > 0) {
+                    _clRemember(p);
+                    _clSet(p, Math.min(Number(it.qty) || 1, Number(p.qty)));
+                    added++;
+                } else missing++;
+            }));
+            if (!added) { _clToast('Bu tovarlar hozir qolmagan 😔'); return; }
+            if (missing > 0) _clToast(`${missing} ta tovar hozir qolmagan`);
+            clOpenCart();
+        };
 
         // Client screen init
         function initClientScreen() {

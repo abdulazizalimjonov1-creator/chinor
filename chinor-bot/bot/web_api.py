@@ -746,9 +746,30 @@ async def api_client_top(request: web.Request):
             new_prods = new_prods + filler[:12 - len(new_prods)]
     except Exception:
         pass
+    # Mijoz turiga mos narx (optomchi optom narxni ko'radi — savatdagi va
+    # buyurtmadagi narx bilan bir xil bo'lishi shart).
+    u = auth.get("user") or {}
+    ctype = (u.get("client_type") or "dona").lower() if auth["role"] == "client" else "dona"
+    try:
+        rank = await _db._in_thread(_db._sales_rank_sync)
+    except Exception:
+        rank = {}
+
     def _clip(lst):
-        return [_product_json(p, "client", "dona") for p in lst]
-    return web.json_response({"ok": True, "top": _clip(top), "new": _clip(new_prods)})
+        out = []
+        for p in lst:
+            j = _product_json(p, "client", ctype)
+            # Haqiqiy sotilgan miqdor — "🔥 N ta sotilgan" (ijtimoiy isbot).
+            # Faqat real raqam; 0 bo'lsa ko'rsatilmaydi.
+            j["sold"] = float(rank.get(p["id"], 0) or 0)
+            out.append(j)
+        return out
+    return web.json_response({
+        "ok": True, "top": _clip(top), "new": _clip(new_prods),
+        "orders_enabled": _db.is_client_orders_enabled(),
+        "shop": {"phone": CONTACT_PHONE_1, "phone2": CONTACT_PHONE_2,
+                 "location": SHOP_LOCATION},
+    })
 
 
 @ROUTES.post("/api/client/consult")
@@ -2132,12 +2153,19 @@ async def api_my_account(request: web.Request):
         orders = await _db.get_client_orders(cid)
     except Exception:
         orders = []
+    # Eng yangisi birinchi. Tarkibi ham beriladi — Mini App'da "Yana
+    # buyurtma" tugmasi xuddi shu tovarlarni bir bosishda savatga soladi.
+    orders = sorted(orders or [], key=lambda o: o.get("id", 0), reverse=True)
     order_list = [{
         "id": o["id"],
         "total": float(o.get("total", 0) or 0),
         "status": o.get("status", ""),
         "created_at": (o.get("created_at", "") or "")[:16],
-    } for o in (orders or [])[:15]]
+        "items": [{"product_id": it.get("product_id"),
+                   "name": it.get("name", ""),
+                   "qty": float(it.get("qty", 0) or 0)}
+                  for it in (o.get("items") or [])],
+    } for o in orders[:15]]
 
     return web.json_response({
         "ok": True,
@@ -2151,6 +2179,137 @@ async def api_my_account(request: web.Request):
         "orders": order_list,
         "rate": _db.get_usd_rate(),
     })
+
+
+# ─── Mijoz Mini App'dan buyurtma beradi ────────────────────────────────────
+
+_PAY_LABELS = {"cash": "💵 Naqd", "card": "💳 Karta", "click": "📲 Click/Payme"}
+
+
+@ROUTES.post("/api/client/order")
+async def api_client_order(request: web.Request):
+    """Mini App savatidan buyurtma. Botdagi '🛒 Buyurtma berish' bilan BIR
+    XIL oqim (`create_order`): ombor kamayadi, mijoz hisobiga yoziladi,
+    adminlarga holat tugmalari bilan xabar boradi.
+
+    Narx va qoldiq FAQAT serverda olinadi — brauzerdan kelgan narxga
+    ishonmaymiz (aks holda mijoz narxni o'zi yozib yuborishi mumkin)."""
+    from database.channel_db import db as _db
+    from bot.keyboards import order_status_kb
+    auth = await _authenticate(request, _db)
+    if not auth:
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if auth["role"] != "client":
+        return _err("Faqat mijozlar buyurtma bera oladi", 403)
+    if not _db.is_client_orders_enabled():
+        return _err("Buyurtma qabul qilish hozircha o'chirilgan. "
+                    "Iltimos, do'konga qo'ng'iroq qiling.", 403)
+    body = await _read_json(request)
+    c = auth["user"]
+    ctype = (c.get("client_type") or "dona").lower()
+
+    raw_items = body.get("items") or []
+    if not isinstance(raw_items, list) or not raw_items:
+        return _err("Savat bo'sh")
+    merged: dict = {}
+    for it in raw_items[:100]:
+        try:
+            pid = int(it.get("product_id") or 0)
+            qty = float(it.get("qty") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if pid > 0 and qty > 0:
+            merged[pid] = merged.get(pid, 0) + qty
+    if not merged:
+        return _err("Savat bo'sh")
+
+    items, problems = [], []
+    for pid, qty in merged.items():
+        p = await _db.get_product(pid)
+        if not p or not p.get("is_active", 1):
+            problems.append({"product_id": pid, "error": "Tovar topilmadi"})
+            continue
+        name = (p.get("display_name") or "").strip() or p.get("name", "")
+        stock = float(p.get("qty", 0) or 0)
+        if qty > stock:
+            problems.append({"product_id": pid, "name": name, "available": stock,
+                             "error": f"{name}: faqat {stock:g} ta qoldi"})
+            continue
+        _, price = _price_pair(p, ctype)
+        if price <= 0:
+            problems.append({"product_id": pid, "name": name,
+                             "error": f"{name}: narxi belgilanmagan"})
+            continue
+        items.append({"product_id": pid, "qty": qty, "price": price})
+    if problems:
+        # Savatni o'zgartirmaymiz — mijoz nima o'zgarganini ko'rib, o'zi
+        # tuzatsin (jimgina kamaytirib yuborish ishonchni yo'qotadi).
+        return web.json_response({"ok": False, "error": problems[0]["error"],
+                                  "problems": problems}, status=409)
+
+    delivery = "pickup" if body.get("delivery") == "pickup" else "delivery"
+    pay = body.get("payment") if body.get("payment") in _PAY_LABELS else "cash"
+    phone = str(body.get("phone") or c.get("phone") or "").strip()[:32]
+    address = str(body.get("address") or "").strip()[:300]
+    comment = str(body.get("comment") or "").strip()[:300]
+    if delivery == "delivery" and not address:
+        return _err("Yetkazish manzilini yozing")
+    if not phone:
+        return _err("Telefon raqamingizni yozing")
+    note_lines = [
+        "🚚 Yetkazib berish" if delivery == "delivery" else "🏪 Do'kondan olib ketish",
+        f"📍 {address}" if address else "",
+        f"📱 {phone}",
+        f"To'lov: {_PAY_LABELS[pay]}",
+        f"💬 {comment}" if comment else "",
+        "(Mini App)",
+    ]
+    note = "\n".join(l for l in note_lines if l)
+
+    oid, total = await _db.create_order(c["id"], items, note=note)
+    if not oid:
+        return _err("Buyurtma yaratilmadi", 500)
+
+    # Adminlarga — botdagi buyurtma bilan bir xil xabar va holat tugmalari
+    bot = getattr(_db, "_bot", None)
+    if bot:
+        o = await _db.get_order(oid) or {}
+        lines = "".join(f"• {it['name']}: {float(it['qty']):g} × "
+                        f"{float(it['price']):,.0f} so'm\n"
+                        for it in (o.get("items") or []))
+        notif = (f"🔔 <b>Yangi buyurtma #{oid}</b> (Mini App)\n\n"
+                 f"👤 {_html_esc(c.get('shop_name', ''))}\n"
+                 f"{_html_esc(note)}\n\n{_html_esc(lines)}\n"
+                 f"💰 <b>Jami: {total:,.0f} so'm</b>")
+        kb = order_status_kb(oid, "accepted")
+        targets = {GLAVNIY_ADMIN_ID}
+        try:
+            targets |= {a["telegram_id"] for a in await _db.get_all_admins()}
+        except Exception:
+            pass
+        for tid in targets:
+            try:
+                await bot.send_message(tid, notif, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
+        # Mijozning o'ziga ham chatda tasdiq — Mini App yopilsa ham iz qoladi
+        try:
+            await bot.send_message(
+                c["telegram_id"],
+                f"✅ <b>Buyurtmangiz #{oid} qabul qilindi!</b>\n\n"
+                f"{_html_esc(lines)}\n💰 Jami: <b>{total:,.0f} so'm</b>\n\n"
+                f"Tez orada siz bilan bog'lanamiz. Savollar: {CONTACT_PHONE_1}",
+                parse_mode="HTML")
+        except Exception:
+            pass
+
+    return web.json_response({"ok": True, "order_id": oid, "total": total,
+                              "contact_phone": CONTACT_PHONE_1})
+
+
+def _html_esc(s) -> str:
+    import html as _html
+    return _html.escape(str(s or ""), quote=False)
 
 
 # ─── Login ─────────────────────────────────────────────────────────────────
