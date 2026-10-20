@@ -59,6 +59,8 @@ async def sync_once(bot=None) -> str:
         return f"YesPOS API xatosi ({rc}): {out.strip().splitlines()[-1:] if out.strip() else ''}"
     if what == "all":
         _last_catalog_day = today
+        # Katalog yangilandi (yangi tovar/nom) — cheklarni qayta bog'laymiz
+        await _run("marketplace.receipts", "relink", timeout=300)
     rc, out = await _run("marketplace.pos_bridge", "--apply")
     if rc == 3:
         if bot and _last_alert_day != today:

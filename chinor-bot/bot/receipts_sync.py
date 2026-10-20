@@ -52,6 +52,19 @@ async def sync_once() -> str:
         proc.kill()
         return "vaqt tugadi"
     tail = (out or b"").decode(errors="ignore").strip().splitlines()[-3:]
+    if proc.returncode == 0:
+        # Yangi chek qatorlarini katalogga bog'laymiz — bog'lanmagan qator
+        # buyurtma bashoratida «sotilmagan» bo'lib ko'rinadi (2026-10-20:
+        # cheklar katalogdan oldin yuklangani uchun 117 ming qatordan 8 tasi
+        # bog'langan edi, bashorat 45 pozitsiya ko'rsatardi).
+        rl = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "marketplace.receipts", "relink",
+            cwd=_REPO, env=env, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL)
+        try:
+            await asyncio.wait_for(rl.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            rl.kill()
     return ("OK " if proc.returncode == 0 else f"XATO({proc.returncode}) ") + " | ".join(tail)
 
 

@@ -296,8 +296,12 @@ def _from_receipts(r: Rate, rows: List[dict], rec: dict,
     r.bulk_max = max(bulk) if bulk else 0.0
 
     stock_by_day = {row["day"]: row["stock"] for row in rows}
-    start = max(rec_from, rows[0]["day"])
-    end = min(rec_to, rows[-1]["day"])
+    # Davr — CHEKLAR oralig'i. Qoldiq tarixi faqat «o'sha kuni sotuvda
+    # bormidi» degan savolga javob beradi (surat yo'q kun = bor deb olinadi).
+    # Ilgari davr qoldiq tarixi bilan kesishtirilardi: server ko'chib qoldiq
+    # tarixi qayta boshlanganda (2026-10-20, 1 kunlik) 30 kunlik chekdan faqat
+    # bugungisi sanalar, 6854 tovardan 122 tasida tezlik chiqardi.
+    start, end = rec_from, rec_to
     if start > end:
         return
 
