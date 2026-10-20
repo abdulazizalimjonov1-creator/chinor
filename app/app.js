@@ -1607,7 +1607,7 @@
                     <b>Do'kon bahosi</b>
                     ${p.store_rating_note ? `<div>${escapeHtml(p.store_rating_note)}</div>` : ''}
                 </div>` : ''}
-                ${p.description ? `<div class="cl-modal-desc">${p.description}</div>` : ''}
+                ${p.description ? `<div class="cl-modal-desc">${escapeHtml(p.description)}</div>` : ''}
                 ${p.usage_info ? `<details class="cl-usage-info">
                     <summary>📖 Qanday ishlatiladi / Как использовать</summary>
                     <div>${escapeHtml(p.usage_info)}</div>

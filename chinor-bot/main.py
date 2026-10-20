@@ -193,6 +193,10 @@ async def main():
     from bot import reels_compare
     reels_task = asyncio.create_task(reels_compare.daily_loop())
 
+    # ── Kunlik avtomatik zaxira (baza → data/backups + bosh adminga) ────
+    from bot.backup import auto_backup_loop
+    backup_task = asyncio.create_task(auto_backup_loop(bot))
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -203,6 +207,7 @@ async def main():
         retention_task.cancel()
         payment_task.cancel()
         reels_task.cancel()
+        backup_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

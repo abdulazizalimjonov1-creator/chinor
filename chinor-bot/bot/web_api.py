@@ -2184,6 +2184,7 @@ async def api_admin_view_as(request: web.Request):
 # ─── Mijoz Mini App'dan buyurtma beradi ────────────────────────────────────
 
 _PAY_LABELS = {"cash": "💵 Naqd", "card": "💳 Karta", "click": "📲 Click/Payme"}
+_ORDER_LOCK = asyncio.Lock()
 
 
 @ROUTES.post("/api/client/order")
@@ -2223,53 +2224,57 @@ async def api_client_order(request: web.Request):
     if not merged:
         return _err("Savat bo'sh")
 
-    items, problems = [], []
-    for pid, qty in merged.items():
-        p = await _db.get_product(pid)
-        if not p or not p.get("is_active", 1):
-            problems.append({"product_id": pid, "error": "Tovar topilmadi"})
-            continue
-        name = (p.get("display_name") or "").strip() or p.get("name", "")
-        stock = float(p.get("qty", 0) or 0)
-        if qty > stock:
-            problems.append({"product_id": pid, "name": name, "available": stock,
-                             "error": f"{name}: faqat {stock:g} ta qoldi"})
-            continue
-        _, price = _price_pair(p, ctype)
-        if price <= 0:
-            problems.append({"product_id": pid, "name": name,
-                             "error": f"{name}: narxi belgilanmagan"})
-            continue
-        items.append({"product_id": pid, "qty": qty, "price": price})
-    if problems:
-        # Savatni o'zgartirmaymiz — mijoz nima o'zgarganini ko'rib, o'zi
-        # tuzatsin (jimgina kamaytirib yuborish ishonchni yo'qotadi).
-        return web.json_response({"ok": False, "error": problems[0]["error"],
-                                  "problems": problems}, status=409)
+    # Qoldiq tekshiruvi va yaratish BITTA navbatda: aks holda ikki mijoz
+    # oxirgi donaga bir vaqtda buyurtma bersa, ikkalasi ham tekshiruvdan
+    # o'tib, qoldiq minusga tushardi.
+    async with _ORDER_LOCK:
+        items, problems = [], []
+        for pid, qty in merged.items():
+            p = await _db.get_product(pid)
+            if not p or not p.get("is_active", 1):
+                problems.append({"product_id": pid, "error": "Tovar topilmadi"})
+                continue
+            name = (p.get("display_name") or "").strip() or p.get("name", "")
+            stock = float(p.get("qty", 0) or 0)
+            if qty > stock:
+                problems.append({"product_id": pid, "name": name, "available": stock,
+                                 "error": f"{name}: faqat {stock:g} ta qoldi"})
+                continue
+            _, price = _price_pair(p, ctype)
+            if price <= 0:
+                problems.append({"product_id": pid, "name": name,
+                                 "error": f"{name}: narxi belgilanmagan"})
+                continue
+            items.append({"product_id": pid, "qty": qty, "price": price})
+        if problems:
+            # Savatni o'zgartirmaymiz — mijoz nima o'zgarganini ko'rib, o'zi
+            # tuzatsin (jimgina kamaytirib yuborish ishonchni yo'qotadi).
+            return web.json_response({"ok": False, "error": problems[0]["error"],
+                                      "problems": problems}, status=409)
 
-    delivery = "pickup" if body.get("delivery") == "pickup" else "delivery"
-    pay = body.get("payment") if body.get("payment") in _PAY_LABELS else "cash"
-    phone = str(body.get("phone") or c.get("phone") or "").strip()[:32]
-    address = str(body.get("address") or "").strip()[:300]
-    comment = str(body.get("comment") or "").strip()[:300]
-    if delivery == "delivery" and not address:
-        return _err("Yetkazish manzilini yozing")
-    if not phone:
-        return _err("Telefon raqamingizni yozing")
-    note_lines = [
-        "🚚 Yetkazib berish" if delivery == "delivery" else "🏪 Do'kondan olib ketish",
-        f"📍 {address}" if (address and delivery == "delivery") else "",
-        f"📱 {phone}",
-        f"To'lov: {_PAY_LABELS[pay]}",
-        f"💬 {comment}" if comment else "",
-        "(Mini App)",
-        "🧪 ADMIN SINOVI — mijoz ko'rinishidan berilgan" if auth.get("as_admin") else "",
-    ]
-    note = "\n".join(l for l in note_lines if l)
+        delivery = "pickup" if body.get("delivery") == "pickup" else "delivery"
+        pay = body.get("payment") if body.get("payment") in _PAY_LABELS else "cash"
+        phone = str(body.get("phone") or c.get("phone") or "").strip()[:32]
+        address = str(body.get("address") or "").strip()[:300]
+        comment = str(body.get("comment") or "").strip()[:300]
+        if delivery == "delivery" and not address:
+            return _err("Yetkazish manzilini yozing")
+        if not phone:
+            return _err("Telefon raqamingizni yozing")
+        note_lines = [
+            "🚚 Yetkazib berish" if delivery == "delivery" else "🏪 Do'kondan olib ketish",
+            f"📍 {address}" if (address and delivery == "delivery") else "",
+            f"📱 {phone}",
+            f"To'lov: {_PAY_LABELS[pay]}",
+            f"💬 {comment}" if comment else "",
+            "(Mini App)",
+            "🧪 ADMIN SINOVI — mijoz ko'rinishidan berilgan" if auth.get("as_admin") else "",
+        ]
+        note = "\n".join(l for l in note_lines if l)
 
-    oid, total = await _db.create_order(c["id"], items, note=note)
-    if not oid:
-        return _err("Buyurtma yaratilmadi", 500)
+        oid, total = await _db.create_order(c["id"], items, note=note)
+        if not oid:
+            return _err("Buyurtma yaratilmadi", 500)
 
     # Adminlarga — botdagi buyurtma bilan bir xil xabar va holat tugmalari
     bot = getattr(_db, "_bot", None)

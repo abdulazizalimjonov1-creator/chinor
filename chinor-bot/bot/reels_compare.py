@@ -1075,6 +1075,34 @@ async def publish(db, rid: int) -> str:
     return ""
 
 
+def cleanup(keep_videos: int = 30, label_days: int = 21) -> int:
+    """Disk asta to'lib bormasin: eski taqqoslash videolari (oxirgi
+    `keep_videos` tasi qoladi) va `label_days` kundan beri tasdiqlanmagan
+    yorliq suratlari o'chiriladi. O'chirilganlar sonini qaytaradi."""
+    import shutil
+    from bot import reels as R
+    from database._helpers import DB_PATH
+    gone = 0
+    try:
+        vids = sorted((os.path.join(R.REELS_DIR, f) for f in os.listdir(R.REELS_DIR)
+                       if f.startswith("cmp_") and f.endswith(".mp4")),
+                      key=os.path.getmtime, reverse=True)
+        for p in vids[keep_videos:]:
+            os.remove(p)
+            gone += 1
+    except FileNotFoundError:
+        pass
+    lbl = os.path.join(os.path.dirname(DB_PATH), "labels")
+    cutoff = time.time() - label_days * 86400
+    if os.path.isdir(lbl):
+        for d in os.listdir(lbl):
+            p = os.path.join(lbl, d)
+            if os.path.isdir(p) and os.path.getmtime(p) < cutoff:
+                shutil.rmtree(p, ignore_errors=True)
+                gone += 1
+    return gone
+
+
 async def daily_loop(hour: int = None):
     """Har kuni belgilangan soatda bitta video tayyorlab adminga yuboradi."""
     from database.channel_db import db as _db
@@ -1090,6 +1118,9 @@ async def daily_loop(hour: int = None):
                 _db.set_setting("reels_compare_day", today)
                 res = await produce(_db)
                 logger.info("🎬 Kunlik taqqoslash videosi: %s", res)
+                n = await asyncio.get_event_loop().run_in_executor(None, cleanup)
+                if n:
+                    logger.info("🧹 Eski video/yorliq fayllari o'chirildi: %d", n)
         except Exception:
             logger.exception("🎬 Kunlik video xatosi")
         await asyncio.sleep(600)
