@@ -400,8 +400,13 @@ class BaseDB:
                 "INSERT INTO settings(key, value) VALUES('sum_canonical_v1','1')"
             )
 
-        # ── SKU tartibga solish: 5 xonadan katta idlar 5 xonaliga ko'chadi ──
-        self._renumber_big_skus(conn)
+        # ── SKU tartibga solish O'CHIRILDI (2026-10-20) ─────────────────────
+        # Chinor `products.id` == YesPOS `sku` (marketplace/pos_bridge.py shu
+        # bo'yicha bog'laydi). Katta idlarni 5 xonaliga ko'chirish YesPOS'dagi
+        # boshqa tovarlarning SKU'lari bilan to'qnashardi (16877 YesPOS'da
+        # "Gel sovun idish", Chinor'da esa "parol" bo'lib qolgan edi) —
+        # sinxron ikki xil tovarni bitta qilib yuborardi. Id'lar YesPOS'dagidek
+        # qoladi. Funksiya tarix uchun saqlangan, chaqirilmaydi.
 
     def _renumber_big_skus(self, conn: sqlite3.Connection):
         """Importdan qolgan juda katta mahsulot idlarini (>99999) bo'sh 5 xonali

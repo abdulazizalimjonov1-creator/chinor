@@ -33,20 +33,18 @@ class ProductsMixin:
     # ── SKU (mahsulot ID) ────────────────────────────────────────────────────
     @staticmethod
     def _next_sku_sync(conn) -> int:
-        """Keyingi SKU — 5 xonali (10000–99999) oraliqda ketma-ket.
-        AUTOINCREMENT'ga ishonmaymiz: importdan qolgan katta (masalan 33 mln)
-        idlar sequence'ni buzib, yangi tovarlarga sakragan raqam berardi.
-        5 xonali oraliq to'lib qolsa — umumiy MAX(id)+1 ga tushamiz."""
+        """Chinor'da QO'LDA qo'shiladigan tovar id'si.
+
+        Asosiy katalog YesPOS'dan keladi va `id` = YesPOS `sku` (5 xonali
+        ketma-ket: 10000…). Chinor'da qo'shilgan tovarga keyingi bo'sh 5 xonali
+        raqam berilsa, YesPOS o'sha raqamni o'z yangi tovariga berganda
+        sinxron ikkalasini bitta qilib yuborardi. Shuning uchun Chinor'ning
+        o'z tovarlari alohida 900001–999999 oralig'ida."""
         row = conn.execute(
-            "SELECT COALESCE(MAX(id), 9999) FROM products WHERE id <= 99999"
+            "SELECT COALESCE(MAX(id), 900000) FROM products "
+            "WHERE id BETWEEN 900001 AND 999999"
         ).fetchone()
-        nid = max(9999, int(row[0] or 9999)) + 1
-        if nid > 99999:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(id), 9999) FROM products"
-            ).fetchone()
-            nid = int(row[0] or 9999) + 1
-        return nid
+        return max(900000, int(row[0] or 900000)) + 1
 
     def next_product_sku(self) -> int:
         """Keyingi beriladigan SKU (admin UI oldindan ko'rsatishi uchun)."""
