@@ -197,6 +197,10 @@ async def main():
     from bot.backup import auto_backup_loop
     backup_task = asyncio.create_task(auto_backup_loop(bot))
 
+    # ── YesPOS cheklari (userbot, har 30 daqiqa) → haqiqiy savdo tarixi ──
+    from bot import receipts_sync
+    receipts_task = asyncio.create_task(receipts_sync.loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -208,6 +212,7 @@ async def main():
         payment_task.cancel()
         reels_task.cancel()
         backup_task.cancel()
+        receipts_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:
