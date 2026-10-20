@@ -288,6 +288,19 @@ table.tbl tr:hover td { background: #f7faf6; }
 .np-inp:focus { border-color: var(--brand); background: #fff; }
 .np-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .np-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+/* ── Ko'p shtrix-kod (chip) kiritish maydoni ─────────────────────────────── */
+.bc-wrap { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 6px 8px; border: 1.5px solid var(--line); border-radius: 10px;
+  background: #fafdf9; cursor: text; min-height: 42px; }
+.bc-wrap:focus-within { border-color: var(--brand); background: #fff; }
+.bc-chip { display: inline-flex; align-items: center; gap: 6px;
+  background: #eef6ef; color: var(--brand-d); border-radius: 8px;
+  padding: 4px 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.bc-chip b { cursor: pointer; color: var(--muted); font-weight: 700; }
+.bc-chip b:hover { color: #c0392b; }
+.bc-inp { flex: 1; min-width: 130px; border: none; outline: none;
+  background: transparent; font-size: 14px; padding: 4px 2px; }
 .np-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); }
 
 /* ── AI Prixod — rasmdan to'ldirish ───────────────────────────────────────── */

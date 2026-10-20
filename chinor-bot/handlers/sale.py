@@ -795,16 +795,23 @@ async def sale_price_input(message: Message, state: FSMContext):
         )
         return
     rate = db.get_usd_rate()
+    custom_sum = None
     if cur == "usd":
         custom_usd = amount
     else:
+        # So'mda kiritilgan narx AYNAN shundayligicha saqlanadi (USDga
+        # bo'lib-ko'paytirilsa 16 000 → 15 999.72 bo'lib ketardi)
         custom_usd = round(sum_to_usd(amount, rate), 4)
-    await _add_to_cart_and_continue(message, state, custom_usd=custom_usd)
+        custom_sum = round(float(amount), 2)
+    await _add_to_cart_and_continue(message, state, custom_usd=custom_usd,
+                                    custom_sum=custom_sum)
 
 
-async def _add_to_cart_and_continue(target, state: FSMContext, custom_usd):
+async def _add_to_cart_and_continue(target, state: FSMContext, custom_usd,
+                                    custom_sum=None):
     """Savatga qo'shish va mahsulot ro'yxatiga qaytish.
-    custom_usd None — standart narxni ishlatamiz."""
+    custom_usd None — standart narxni ishlatamiz.
+    custom_sum — so'mda kiritilgan aniq narx (kanonik)."""
     data = await state.get_data()
     pid = data["sale_pid"]
     qty = float(data.get("sale_qty", 0) or 0)
@@ -826,7 +833,9 @@ async def _add_to_cart_and_continue(target, state: FSMContext, custom_usd):
         summ = default_sum
     else:
         usd = float(custom_usd)
-        summ = round(usd_to_sum(usd, rate), 2)
+        # So'mda kiritilgan bo'lsa — o'sha aniq qiymat; $ da bo'lsa aylantiramiz
+        summ = round(float(custom_sum), 2) if custom_sum is not None \
+            else round(usd_to_sum(usd, rate))
     cart = data.get("cart", {})
     key = str(pid)
     if key in cart:
@@ -1160,7 +1169,10 @@ async def _finalize_sale(target, state: FSMContext, *,
     bot = target.bot if isinstance(target, CallbackQuery) else target.bot
     answer_msg = target.message if isinstance(target, CallbackQuery) else target
 
-    items = [{"product_id": v["product_id"], "qty": v["qty"], "price": v["price"]}
+    # SO'M kanonik — savatdagi so'm narxini to'g'ridan-to'g'ri uzatamiz
+    # (USD ham qoladi: narx $ da kiritilgan holatlar uchun zaxira).
+    items = [{"product_id": v["product_id"], "qty": v["qty"],
+              "price": v["price"], "price_sum": v.get("price_sum")}
              for v in cart.values()]
     ov_usd = float(data.get("override_total_usd", 0) or 0)
     ov_sum = float(data.get("override_total_sum", 0) or 0)

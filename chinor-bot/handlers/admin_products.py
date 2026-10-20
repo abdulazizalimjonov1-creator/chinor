@@ -14,7 +14,7 @@ from bot.permissions import (
     has_permission, get_user_menu, get_currency_mode, show_usd, show_uzs,
     is_admin_or_glavniy, deny, require,
 )
-from database.channel_db import db, fmt_usd, fmt_sum, usd_to_sum
+from database.channel_db import db, fmt_sum
 
 router = Router()
 
@@ -235,9 +235,14 @@ async def ap_desc(message: Message, state: FSMContext):
     await state.set_state(AddProductStates.unit)
 
 
-def _parse_usd(txt: str) -> float:
-    """1.25 / 1,25 / $1.25 → 1.25. Bo'sh / — bo'lsa ValueError."""
-    s = (txt or "").strip().lstrip("$").replace(" ", "").replace(",", ".")
+def _parse_sum(txt: str) -> float:
+    """'16000' / '16 000' / '16,000' / '16000 so'm' → 16000.0.
+    Narxlar SO'M da kiritiladi va so'mda saqlanadi (kanonik).
+    Bo'sh yoki noto'g'ri bo'lsa ValueError."""
+    s = (txt or "").strip().lower()
+    for junk in ("so'm", "so‘m", "som", "сум", "uzs"):
+        s = s.replace(junk, "")
+    s = s.replace(" ", "").replace(" ", "").replace(",", "")
     if not s:
         raise ValueError
     return float(s)
@@ -247,11 +252,9 @@ def _parse_usd(txt: str) -> float:
 async def ap_unit(cb: CallbackQuery, state: FSMContext):
     unit = cb.data.split("_", 1)[1]
     await state.update_data(unit=unit)
-    rate = db.get_usd_rate()
     await cb.message.answer(
-        f"💰 Sotish narxini <b>USD</b> da kiriting (sentlar bilan, {unit} uchun).\n"
-        f"Masalan: <code>1.25</code> yoki <code>0.85</code>\n"
-        f"💱 Joriy kurs: <b>1$ = {rate:,.0f} so'm</b> (kassa avtomatik so'mga aylantiradi).",
+        f"💰 Sotish narxini <b>so'mda</b> kiriting ({unit} uchun).\n"
+        f"Masalan: <code>16000</code> yoki <code>16 000</code>",
         reply_markup=cancel_kb(), parse_mode="HTML"
     )
     await state.set_state(AddProductStates.sell_price)
@@ -265,19 +268,18 @@ async def ap_sell(message: Message, state: FSMContext):
         await message.answer("Bekor.", reply_markup=admin_menu())
         return
     try:
-        usd = _parse_usd(message.text)
-        if usd < 0:
+        summ = _parse_sum(message.text)
+        if summ < 0:
             raise ValueError
     except ValueError:
-        await message.answer("⚠️ USD da raqam kiriting (masalan: 1.25):")
+        await message.answer("⚠️ So'mda raqam kiriting (masalan: 16000):")
         return
-    await state.update_data(sell_price_usd=usd)
+    await state.update_data(sell_price_sum=summ)
     data = await state.get_data()
     unit = data.get("unit", "dona")
-    rate = db.get_usd_rate()
     await message.answer(
-        f"✅ {fmt_usd(usd)}/{unit}  (≈ {fmt_sum(usd_to_sum(usd, rate))})\n\n"
-        f"📦 <b>Optom narxini USD da kiriting</b> (sentlar bilan, {unit} uchun):\n"
+        f"✅ {fmt_sum(summ)}/{unit}\n\n"
+        f"📦 <b>Optom narxini so'mda kiriting</b> ({unit} uchun):\n"
         f"💡 Optom mijozlar uchun. Optomda sotmasangiz — <b>0</b> yoki <b>—</b> yozing.",
         reply_markup=cancel_kb(), parse_mode="HTML"
     )
@@ -295,14 +297,14 @@ async def ap_wholesale(message: Message, state: FSMContext):
         whs = 0.0
     else:
         try:
-            whs = _parse_usd(txt)
+            whs = _parse_sum(txt)
         except ValueError:
-            await message.answer("⚠️ USD da raqam kiriting (yoki — / 0):")
+            await message.answer("⚠️ So'mda raqam kiriting (yoki — / 0):")
             return
-    await state.update_data(wholesale_price_usd=whs)
+    await state.update_data(wholesale_price_sum=whs)
     await message.answer(
-        "🏷️ Tannarxini <b>USD</b> da kiriting (sentlar bilan, faqat adminga ko'rinadi):\n"
-        "Masalan: <code>0.95</code>",
+        "🏷️ Tannarxini <b>so'mda</b> kiriting (faqat adminga ko'rinadi):\n"
+        "Masalan: <code>12000</code>",
         reply_markup=cancel_kb(), parse_mode="HTML"
     )
     await state.set_state(AddProductStates.cost_price)
@@ -315,13 +317,13 @@ async def ap_cost(message: Message, state: FSMContext):
         await message.answer("Bekor.", reply_markup=admin_menu())
         return
     try:
-        usd = _parse_usd(message.text)
-        if usd < 0:
+        summ = _parse_sum(message.text)
+        if summ < 0:
             raise ValueError
     except ValueError:
-        await message.answer("⚠️ USD da raqam kiriting (masalan: 0.95):")
+        await message.answer("⚠️ So'mda raqam kiriting (masalan: 12000):")
         return
-    await state.update_data(cost_price_usd=usd)
+    await state.update_data(cost_price_sum=summ)
     data = await state.get_data()
     unit = data.get("unit", "dona")
     await message.answer(f"📦 Boshlang'ich miqdorini kiriting ({unit}):\n(Masalan: 10 yoki 2.5)")
@@ -453,24 +455,25 @@ async def _finalize_add_product(message: Message, state: FSMContext, barcode: st
     data = await state.get_data()
     file_id = data.get("image_file_id", "") or ""
     unit = data.get("unit", "dona")
-    sell_usd = float(data.get("sell_price_usd", 0))
-    whs_usd = float(data.get("wholesale_price_usd", 0))
-    cost_usd = float(data.get("cost_price_usd", 0))
+    # Narxlar SO'M da kiritiladi va so'mda saqlanadi (kanonik)
+    sell_sum = float(data.get("sell_price_sum", 0))
+    whs_sum = float(data.get("wholesale_price_sum", 0))
+    cost_sum = float(data.get("cost_price_sum", 0))
     category_id = int(data.get("category_id", 0) or 0)
     supplier_id = int(data.get("supplier_id", 0) or 0)
     pid = await db.add_product(
         name=data["name"], description=data.get("description", ""),
-        sell_price_usd=sell_usd, cost_price_usd=cost_usd,
+        sell_price=sell_sum, cost_price=cost_sum,
         qty=data["qty"], image_file_id=file_id, unit=unit,
-        wholesale_price_usd=whs_usd,
+        wholesale_price=whs_sum,
         barcode=barcode,
         category_id=category_id, supplier_id=supplier_id,
     )
     await state.clear()
     rate = db.get_usd_rate()
     whs_line = (
-        f"\n📦 Optom: <b>{fmt_usd(whs_usd)}/{unit}</b> (≈ {fmt_sum(usd_to_sum(whs_usd, rate))})"
-        if whs_usd and whs_usd > 0 else ""
+        f"\n📦 Optom: <b>{fmt_sum(whs_sum)}/{unit}</b>"
+        if whs_sum and whs_sum > 0 else ""
     )
     bc_line = f"\n🔖 Shtrix-kod: <code>{barcode}</code>" if barcode else ""
     cat_name = ""
@@ -493,13 +496,12 @@ async def _finalize_add_product(message: Message, state: FSMContext, barcode: st
     await message.answer(
         f"✅ Mahsulot qo'shildi!\n\n"
         f"📦 <b>{data['name']}</b>\n"
-        f"💰 Donada: <b>{fmt_usd(sell_usd)}/{unit}</b> (≈ {fmt_sum(usd_to_sum(sell_usd, rate))})"
+        f"💰 Donada: <b>{fmt_sum(sell_sum)}/{unit}</b>"
         f"{whs_line}\n"
         f"📦 Qoldi: {data['qty']:g} {unit}"
         f"{bc_line}"
         f"{cat_line}{sup_line}\n"
-        f"💱 Joriy kurs: 1$ = {rate:,.0f} so'm\n"
-        f"🆔 ID: {pid}"
+        f"🆔 SKU: {pid}"
         f"{channel_line}",
         reply_markup=await get_user_menu(db, message.from_user.id), parse_mode="HTML"
     )
@@ -566,30 +568,19 @@ async def view_product(cb: CallbackQuery):
         await cb.answer("Topilmadi!")
         return
     unit = p.get("unit", "dona")
-    rate = db.get_usd_rate()
-    sell_usd = float(p.get("sell_price_usd", 0) or 0)
+    # Narxlar SO'M da saqlanadi — shundayligicha ko'rsatamiz
     sell_sum = float(p.get("sell_price", 0) or 0)
-    cost_usd = float(p.get("cost_price_usd", 0) or 0)
     cost_sum = float(p.get("cost_price", 0) or 0)
-    whs_usd = float(p.get("wholesale_price_usd", 0) or 0)
     whs_sum = float(p.get("wholesale_price", 0) or 0)
-    if whs_usd > 0 or whs_sum > 0:
-        if whs_usd > 0:
-            whs_line = f"\n📦 Optom: <b>{fmt_usd(whs_usd)}/{unit}</b> (≈ {fmt_sum(whs_sum)})"
-        else:
-            whs_line = f"\n📦 Optom: <b>{fmt_sum(whs_sum)}/{unit}</b>"
+    whs_line = (f"\n📦 Optom: <b>{fmt_sum(whs_sum)}/{unit}</b>" if whs_sum > 0
+                else "\n📦 Optom: <i>belgilanmagan</i>")
+    sell_line = f"💰 Donada: <b>{fmt_sum(sell_sum)}/{unit}</b>"
+    cost_line = f"🏷️ Tannarx: <b>{fmt_sum(cost_sum)}</b>"
+    codes = p.get("barcodes") or ([p["barcode"]] if p.get("barcode") else [])
+    if codes:
+        bc_line = "\n🔖 Shtrix-kod: " + " · ".join(f"<code>{c}</code>" for c in codes)
     else:
-        whs_line = "\n📦 Optom: <i>belgilanmagan</i>"
-    if sell_usd > 0:
-        sell_line = f"💰 Donada: <b>{fmt_usd(sell_usd)}/{unit}</b> (≈ {fmt_sum(sell_sum)})"
-    else:
-        sell_line = f"💰 Donada: <b>{fmt_sum(sell_sum)}/{unit}</b>"
-    if cost_usd > 0:
-        cost_line = f"🏷️ Tannarx: <b>{fmt_usd(cost_usd)}</b> (≈ {fmt_sum(cost_sum)})"
-    else:
-        cost_line = f"🏷️ Tannarx: <b>{fmt_sum(cost_sum)}</b>"
-    bc = (p.get("barcode") or "").strip()
-    bc_line = f"\n🔖 Shtrix-kod: <code>{bc}</code>" if bc else "\n🔖 Shtrix-kod: <i>belgilanmagan</i>"
+        bc_line = "\n🔖 Shtrix-kod: <i>belgilanmagan</i>"
     # Kategoriya / Yetkazib beruvchi — funksiya yoqilgan bo'lsa ko'rsatamiz
     cat_line = ""
     sup_line = ""
@@ -616,8 +607,7 @@ async def view_product(cb: CallbackQuery):
         f"📦 Qoldi: <b>{p.get('qty', 0):g} {unit}</b>"
         f"{bc_line}"
         f"{cat_line}{sup_line}\n"
-        f"💱 Joriy kurs: 1$ = {rate:,.0f} so'm\n"
-        f"🆔 ID: {pid}"
+        f"🆔 SKU: {pid}"
     )
     kb = product_actions_kb(pid)
     if p.get("image_file_id"):
@@ -657,12 +647,12 @@ async def edit_field_start(cb: CallbackQuery, state: FSMContext):
     # aks holda "pedit_3_sell_price" → field "sell" bo'lib qolardi (bug).
     parts = cb.data.split("_", 2)
     pid = int(parts[1]); field = parts[2]
-    # Eski "sell_price" / "wholesale_price" / "cost_price" tugmalari
-    # endi USD ustunlarni tahrirlaydi.
+    # Narxlar SO'M ustunlarida (kanonik) tahrirlanadi. Eski USD tugmalari
+    # kelib qolsa — so'm ustuniga yo'naltiramiz.
     field_map = {
-        "sell_price":      "sell_price_usd",
-        "wholesale_price": "wholesale_price_usd",
-        "cost_price":      "cost_price_usd",
+        "sell_price_usd":      "sell_price",
+        "wholesale_price_usd": "wholesale_price",
+        "cost_price_usd":      "cost_price",
     }
     field = field_map.get(field, field)
     await state.update_data(edit_pid=pid, edit_field=field)
@@ -711,13 +701,14 @@ async def edit_field_start(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
         return
 
-    rate = db.get_usd_rate()
     if field == "barcode":
         await cb.message.answer(
-            "🔖 <b>Yangi shtrix-kod</b>\n\n"
+            "🔖 <b>Shtrix-kod(lar)</b>\n\n"
             "• 📷 Shtrix-kod <b>rasmini</b> yuboring — kod avtomatik o'qib olinadi\n"
             "• ⌨️ Yoki kod raqamini <b>matn</b> qilib yozing\n"
-            "• 🗑️ Olib tashlash uchun <b>—</b> yoki <b>-</b> yozing",
+            "• ➕ Bir nechta kod — <b>probel</b> yoki <b>vergul</b> bilan ajrating\n"
+            "   (masalan: <code>4780000000017, 4780000000024</code>)\n"
+            "• 🗑️ Hammasini olib tashlash uchun <b>—</b> yoki <b>-</b> yozing",
             reply_markup=cancel_kb(), parse_mode="HTML"
         )
         await state.set_state(EditProductStates.waiting)
@@ -725,9 +716,9 @@ async def edit_field_start(cb: CallbackQuery, state: FSMContext):
         return
     labels = {
         "name": "yangi nom", "description": "yangi tavsif",
-        "sell_price_usd":      f"yangi donada narxi (USD, sentlar bilan).\n💱 1$ = {rate:,.0f} so'm",
-        "wholesale_price_usd": f"yangi optom narxi (USD, 0 — optomda sotmaslik).\n💱 1$ = {rate:,.0f} so'm",
-        "cost_price_usd":      f"yangi tannarx (USD, sentlar bilan).\n💱 1$ = {rate:,.0f} so'm",
+        "sell_price":      "yangi donada narxi (so'mda, masalan: 16000)",
+        "wholesale_price": "yangi optom narxi (so'mda, 0 — optomda sotmaslik)",
+        "cost_price":      "yangi tannarx (so'mda, masalan: 12000)",
         "qty": "yangi miqdor (kasr bo'lishi mumkin, masalan: 2.5)", "image": "yangi rasm"
     }
     await cb.message.answer(f"✏️ {labels.get(field, field)} kiriting:",
@@ -788,28 +779,32 @@ async def edit_field_done(message: Message, state: FSMContext, bot: Bot):
         else:
             txt = (message.text or "").strip()
             barcode = "" if txt in ("-", "—") else txt
-        # Bir xil kod boshqa mahsulotda bo'lmasligi kerak
-        if barcode:
-            existing = await db.get_product_by_barcode(barcode)
-            if existing and existing.get("id") != pid:
-                await message.answer(
-                    f"⚠️ Bu shtrix-kod (<code>{barcode}</code>) allaqachon "
-                    f"<b>{existing['name']}</b> (ID {existing['id']}) ga biriktirilgan.",
-                    parse_mode="HTML"
-                )
-                return
-        await db.update_product(pid, barcode=barcode)
-    elif field in ("sell_price_usd", "cost_price_usd", "wholesale_price_usd"):
+        # Bir nechta kod: probel yoki vergul bilan ajratilgan bo'lishi mumkin
+        codes, seen = [], set()
+        for c in barcode.replace(",", " ").replace(";", " ").split():
+            c = c.strip()
+            if c and c not in seen:
+                seen.add(c)
+                codes.append(c)
+        # Rasmdan o'qilgan kod — mavjudlarini o'chirmay, ustiga QO'SHILADI
+        if message.photo and codes:
+            old_codes = await db.get_product_barcodes(pid)
+            codes = old_codes + [c for c in codes if c not in old_codes]
+        ok, bc_err = await db.set_product_barcodes(pid, codes)
+        if not ok:
+            await message.answer(f"⚠️ {bc_err}", parse_mode="HTML")
+            return
+    elif field in ("sell_price", "cost_price", "wholesale_price"):
         txt = message.text.strip()
-        if field == "wholesale_price_usd" and txt in ("-", "—"):
+        if field == "wholesale_price" and txt in ("-", "—"):
             txt = "0"
         try:
-            val = _parse_usd(txt)
+            val = _parse_sum(txt)
             if val < 0:
                 raise ValueError
             await db.update_product(pid, **{field: val})
         except ValueError:
-            await message.answer("⚠️ USD da raqam kiriting (masalan: 1.25)!")
+            await message.answer("⚠️ So'mda raqam kiriting (masalan: 16000)!")
             return
     elif field == "qty":
         try:

@@ -757,7 +757,7 @@ function drawProducts(c) {
   if (q) list = all.filter((p) =>
     (p.name || '').toLowerCase().includes(q) ||
     String(p.id).includes(q) ||
-    (p.barcode || '').includes(q));
+    prodCodes(p).some((cd) => cd.includes(q)));
   if (st._onlyOut) list = list.filter((p) => (p.qty || 0) <= 0);
   // Katalog minglab tovar bo'lishi mumkin — jadvalga birinchi 400 tasini
   // chiqaramiz (qidiruv baribir TO'LIQ ro'yxatdan izlaydi).
@@ -834,14 +834,67 @@ function drawProducts(c) {
   }));
 }
 
+// Tovarning shtrix-kodlari — massiv (eski yakka `barcode` bilan ham mos)
+function prodCodes(p) {
+  const out = [];
+  const push = (c) => { c = String(c || '').trim(); if (c && !out.includes(c)) out.push(c); };
+  push(p && p.barcode);
+  if (p && Array.isArray(p.barcodes)) p.barcodes.forEach(push);
+  return out;
+}
+
+// Ko'p shtrix-kod kiritish maydoni: kod yozib Enter bosilsa "chip" bo'lib
+// qo'shiladi (bir nechta kod yig'iladi), ✕ bilan o'chiriladi. Saqlashda
+// hali Enter bosilmagan oxirgi yozuv ham avtomatik hisobga olinadi.
+function bcChips(wrapId, inpId, initial) {
+  const wrap = document.getElementById(wrapId);
+  const inp = document.getElementById(inpId);
+  const codes = (initial || []).slice();
+  const draw = () => {
+    wrap.querySelectorAll('.bc-chip').forEach((n) => n.remove());
+    codes.forEach((cd, i) => {
+      const s = document.createElement('span');
+      s.className = 'bc-chip';
+      s.innerHTML = `${esc(cd)}<b title="O'chirish">✕</b>`;
+      s.querySelector('b').addEventListener('click', () => { codes.splice(i, 1); draw(); inp.focus(); });
+      wrap.insertBefore(s, inp);
+    });
+  };
+  const commit = () => {
+    const v = inp.value.trim();
+    if (!v) return;
+    if (!codes.includes(v)) codes.push(v);
+    inp.value = '';
+    draw();
+  };
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+    else if (e.key === 'Backspace' && !inp.value && codes.length) { codes.pop(); draw(); }
+  });
+  inp.addEventListener('blur', commit);
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) inp.focus(); });
+  draw();
+  return {
+    // Saqlash bosilganda: chiplar + inputda qolgan (Enter bosilmagan) kod
+    get: () => {
+      const v = inp.value.trim();
+      return (v && !codes.includes(v)) ? codes.concat([v]) : codes.slice();
+    },
+  };
+}
+
 // Serverga to'liq obyekt yuboriladi (server hamma maydonni yangilaydi) —
 // shuning uchun keshdagi joriy qiymatlar + o'zgargan bitta maydon jo'natiladi.
+// DIQQAT: `barcodes` ATAYIN yuborilmaydi — uni yuborish serverda kodlarni
+// TO'LIQ ALMASHTIRISH rejimini yoqadi, va kesh eskirgan bo'lsa boshqa joyda
+// qo'shilgan kodlar o'chib ketardi. Shtrix-kodlarni faqat tahrir modallari
+// (foydalanuvchi haqiqatan o'zgartirganda) yuboradi.
 function productSavePayload(p) {
   return {
     id: p.id,
     name: p.name || '',
     unit: p.unit || 'dona',
-    barcode: p.barcode || '',
+    barcode: prodCodes(p)[0] || '',
     description: p.description || '',
     qty: Number(p.qty) || 0,
     cost_price_sum: Number(p.cost_price_sum) || 0,
@@ -895,7 +948,8 @@ function openProductEditModal(p, onSaved) {
         <div class="np-2">
           <div><label class="np-l">O'lchov</label>
             <select id="peUnit" class="np-inp">${unitOpts}</select></div>
-          <div><label class="np-l">Barkod</label><input id="peBarcode" class="np-inp" type="text" value="${esc(p.barcode || '')}"></div>
+          <div><label class="np-l">Barkodlar <small>— yozib Enter (bir nechta bo'lishi mumkin)</small></label>
+            <div class="bc-wrap" id="peBcWrap"><input id="peBarcode" class="bc-inp" type="text" placeholder="skanerlang yoki yozing"></div></div>
         </div>
         <div class="np-3">
           <div><label class="np-l">Tannarx (so'm)</label><input id="peCost" class="np-inp" type="number" min="0" step="any" value="${Number(p.cost_price_sum) || 0}"></div>
@@ -920,15 +974,18 @@ function openProductEditModal(p, onSaved) {
   re('peX').addEventListener('click', close);
   re('peCancel').addEventListener('click', close);
   ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  const peBc = bcChips('peBcWrap', 'peBarcode', prodCodes(p));
   re('peName').focus();
   re('peSave').addEventListener('click', async () => {
     const name = re('peName').value.trim();
     const msg = re('peMsg');
     if (!name) { msg.className = 'px-msg err'; msg.textContent = 'Nomini kiriting'; return; }
+    const codes = peBc.get();
     const payload = Object.assign(productSavePayload(p), {
       name,
       unit: re('peUnit').value,
-      barcode: re('peBarcode').value.trim(),
+      barcode: codes[0] || '',
+      barcodes: codes,
       qty: Math.max(0, parseFloat(re('peQty').value) || 0),
       cost_price_sum: Math.max(0, parseFloat(re('peCost').value) || 0),
       sell_price_sum: Math.max(0, parseFloat(re('peSell').value) || 0),
@@ -1658,7 +1715,7 @@ async function renderSettings(c) {
           <span>so'm</span>
           <button class="btn-soft" id="setRateSave">Saqlash</button>
         </div>
-        <div class="set-hint">Narxlar bazada dollarda saqlanadi — so'mdagi barcha narxlar (kassa, Mini App, hisobotlar) shu kurs bilan hisoblanadi. O'zgartirsangiz darhol hammasiga ta'sir qiladi.</div>
+        <div class="set-hint">Narxlar bazada SO'MDA saqlanadi — kurs o'zgarsa so'mdagi narxlar O'ZGARMAYDI. Kurs faqat prixodda dollar bilan kiritish va $ ko'rsatkichlar uchun ishlatiladi.</div>
         <div id="setRateMsg" class="px-msg"></div>
       </div>
 
@@ -1716,7 +1773,7 @@ async function renderSettings(c) {
     const ok = window.confirm(
       `USD kursi o'zgartirilsinmi?\n\n` +
       `Eski: 1$ = ${money(oldRate)} so'm\nYangi: 1$ = ${money(newRate)} so'm\n\n` +
-      `Barcha tovarlarning so'mdagi narxi yangi kurs bilan qayta hisoblanadi.`);
+      `So'mdagi narxlar O'ZGARMAYDI — kurs faqat dollar bilan kiritish/ko'rsatishga ta'sir qiladi.`);
     if (!ok) return;
     const btn = re('setRateSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
     const rr = await api.saveSettings({ usd_rate: newRate });
@@ -1800,6 +1857,9 @@ async function fetchAllProducts(force) {
   }
   const first = await api.getProducts(0, 500);
   if (!first.ok) return { ok: false, error: first.error, authRequired: first.authRequired };
+  // Server «keyingi SKU» ni aniq biladi (nofaol tovarlar ham hisobda) —
+  // yangi tovar modalida ko'rsatish uchun saqlab qo'yamiz.
+  if (Number(first.next_sku) > 0) S.nextSku = Number(first.next_sku);
   let all = first.items || [];
   const ps = Number(first.page_size) || all.length || 20;
   const total = Number(first.total) || all.length;
@@ -2262,8 +2322,14 @@ function phRowHtml(p) {
 }
 
 function pxNextSku() {
+  // Server aytgan aniq qiymat (nofaol tovarlar ham hisobda) — birinchi navbatda
+  if (Number(S.nextSku) > 0) return Number(S.nextSku);
+  // Eski server bilan fallback: keshdan taxminiy (faqat 5 xonali idlar)
   const items = renderPrixod._items || [];
-  const max = items.reduce((m, p) => Math.max(m, Number(p.id) || 0), 9999);
+  const max = items.reduce((m, p) => {
+    const id = Number(p.id) || 0;
+    return (id <= 99999) ? Math.max(m, id) : m;
+  }, 9999);
   return max + 1;
 }
 
@@ -2343,7 +2409,8 @@ function drawPrixod(c) {
     const q = (search.value || '').trim().toLowerCase();
     if (!q) { results.classList.add('hidden'); results.innerHTML = ''; return; }
     const hits = (st._items || []).filter((p) =>
-      (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q) || (p.barcode || '').includes(q)
+      (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q)
+      || prodCodes(p).some((cd) => cd.includes(q))
     ).slice(0, 8);
     results.innerHTML = hits.length
       ? hits.map((p) => `<div class="px-res" data-id="${p.id}">
@@ -2372,9 +2439,10 @@ function drawPrixod(c) {
   c.querySelectorAll('.px-inp').forEach((inp) => inp.addEventListener('input', () => {
     const i = Number(inp.dataset.i), field = inp.dataset.f;
     if (field === 'tannarx' && st._currency === 'usd') {
-      // Input USD da kiritiladi — modelga so'mga aylantirib saqlaymiz (kursga ko'paytirib)
+      // Input USD da kiritiladi — modelga so'mga aylantirib saqlaymiz
+      // (kursga ko'paytirib, BUTUN so'mga: narx kasrli bo'lib qolmasin)
       const rate = Number(st._rate) || 12500;
-      st._lines[i].tannarx = (parseFloat(inp.value) || 0) * rate;
+      st._lines[i].tannarx = Math.round((parseFloat(inp.value) || 0) * rate);
     } else {
       st._lines[i][field] = inp.value;
     }
@@ -2707,7 +2775,8 @@ function openNewProductModal(c, prefill) {
               <option value="dona">Dona</option><option value="kg">Kilogramm</option>
               <option value="litr">Litr</option><option value="metr">Metr</option><option value="upak">Upakovka</option>
             </select></div>
-          <div><label class="np-l">Barkod</label><input id="npBarcode" class="np-inp" type="text" placeholder="ixtiyoriy"></div>
+          <div><label class="np-l">Barkodlar <small>— yozib Enter (bir nechta bo'lishi mumkin)</small></label>
+            <div class="bc-wrap" id="npBcWrap"><input id="npBarcode" class="bc-inp" type="text" placeholder="ixtiyoriy — skanerlang yoki yozing"></div></div>
         </div>
         <div class="np-3">
           <div><label class="np-l">Tannarx (so'm)</label><input id="npCost" class="np-inp" type="number" min="0" step="any" placeholder="0"></div>
@@ -2735,6 +2804,7 @@ function openNewProductModal(c, prefill) {
   if (prefill.unit) re('npUnit').value = prefill.unit;
   if (prefill.cost) re('npCost').value = prefill.cost;
   if (prefill.sell) re('npSell').value = prefill.sell;
+  const npBc = bcChips('npBcWrap', 'npBarcode', []);
   re('npName').focus();
   // Yetkazib beruvchilar ro'yxatini dropdownga yuklaymiz (async)
   loadSuppliers().then(() => {
@@ -2747,8 +2817,10 @@ function openNewProductModal(c, prefill) {
     const msg = re('npMsg');
     if (!name) { msg.className = 'px-msg err'; msg.textContent = 'Nomini kiriting'; return; }
     const btn = re('npSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
+    const codes = npBc.get();
     const prod = {
-      id: 0, name, unit: re('npUnit').value, barcode: re('npBarcode').value.trim(),
+      id: 0, name, unit: re('npUnit').value,
+      barcode: codes[0] || '', barcodes: codes,
       cost_price_sum: parseFloat(re('npCost').value) || 0,
       sell_price_sum: parseFloat(re('npSell').value) || 0,
       wholesale_sum: parseFloat(re('npWhs').value) || 0,
@@ -2758,8 +2830,9 @@ function openNewProductModal(c, prefill) {
     const r = await api.productSave(prod);
     btn.disabled = false; btn.textContent = 'Saqlash va qo\'shish';
     if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Xatolik'; return; }
-    const np = r.product || { id: r.id, name, unit: prod.unit, qty: 0, barcode: prod.barcode,
+    const np = r.product || { id: r.id, name, unit: prod.unit, qty: 0, barcode: prod.barcode, barcodes: codes,
       cost_price_sum: prod.cost_price_sum, sell_price_sum: prod.sell_price_sum, wholesale_sum: prod.wholesale_sum };
+    if (Number(np.id) > 0) S.nextSku = Number(np.id) + 1;   // keyingi modal to'g'ri raqam ko'rsatsin
     renderPrixod._items.push(np);     // keshga qo'shamiz
     invalidateProducts();             // umumiy katalog keshi ham yangilansin
     close();

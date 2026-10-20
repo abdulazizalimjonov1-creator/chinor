@@ -319,13 +319,13 @@ def product_edit_fields_kb(pid: int):
     fields = [
         ("Nomi",                "name"),
         ("Tavsifi",             "description"),
-        ("Donada narxi (USD)",  "sell_price"),
-        ("Optom narxi (USD)",   "wholesale_price"),
-        ("Tannarxi (USD)",      "cost_price"),
+        ("Donada narxi (so'm)", "sell_price"),
+        ("Optom narxi (so'm)",  "wholesale_price"),
+        ("Tannarxi (so'm)",     "cost_price"),
         ("Miqdori",             "qty"),
         ("O'lchov birligi",     "unit"),
         ("Rasm",                "image"),
-        ("Shtrix-kod",          "barcode"),
+        ("Shtrix-kodlar",       "barcode"),
         ("Kategoriya",          "category"),
         ("Yetkazib beruvchi",   "supplier"),
     ]

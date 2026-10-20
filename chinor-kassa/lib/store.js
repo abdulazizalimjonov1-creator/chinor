@@ -131,12 +131,26 @@ class Store {
     this.data.catalogSyncedAt = new Date().toISOString();
     this.save();
   }
+  // Tovarning barcha shtrix-kodlari (asosiy + serverdan kelgan qo'shimchalar)
+  static _codes(p) {
+    const out = [];
+    const push = (c) => { c = String(c || '').trim(); if (c && !out.includes(c)) out.push(c); };
+    push(p && p.barcode);
+    if (p && Array.isArray(p.barcodes)) p.barcodes.forEach(push);
+    return out;
+  }
   // Kassada biriktirilgan shtrixlarni joriy katalogga qo'llaydi (server pulldan keyin chaqiriladi)
   _applyBarcodeOverrides() {
     const ov = this.data.barcodeOverrides || {};
     for (const p of this.data.catalog || []) {
       const b = ov[String(p.id)];
-      if (b) p.barcode = b;
+      if (b) {
+        // Lokal biriktirilgan kod asosiy bo'ladi; server kodlari ham
+        // ro'yxatda qoladi (skaner istalganini topsin)
+        p.barcodes = Store._codes(p);
+        if (!p.barcodes.includes(b)) p.barcodes.unshift(b);
+        p.barcode = b;
+      }
     }
   }
   // Mahsulotga shtrix-kod biriktiradi (lokal — offlayn ishlaydi, qurilmada saqlanadi).
@@ -147,12 +161,16 @@ class Store {
     if (!barcode) return { ok: false, error: 'Shtrix-kod bo\'sh' };
     // Bu shtrix boshqa mahsulotda bormi? (skanerda chalkashmasligi uchun)
     const clash = (this.data.catalog || []).find((p) =>
-      Number(p.id) !== productId && String(p.barcode || '').trim() === barcode);
+      Number(p.id) !== productId && Store._codes(p).includes(barcode));
     if (clash) return { ok: false, error: `Bu shtrix «${clash.name}» da bor` };
     this.data.barcodeOverrides = this.data.barcodeOverrides || {};
     this.data.barcodeOverrides[String(productId)] = barcode;
     const p = (this.data.catalog || []).find((x) => Number(x.id) === productId);
-    if (p) p.barcode = barcode;
+    if (p) {
+      p.barcodes = Store._codes(p);
+      if (!p.barcodes.includes(barcode)) p.barcodes.unshift(barcode);
+      p.barcode = barcode;
+    }
     this.save();
     return { ok: true, product: p ? { id: p.id, name: p.name, barcode: barcode } : { id: productId, barcode } };
   }

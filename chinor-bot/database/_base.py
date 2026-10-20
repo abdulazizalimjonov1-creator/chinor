@@ -347,6 +347,141 @@ class BaseDB:
                  WHERE COALESCE(debt_usd, 0) = 0 AND COALESCE(debt, 0) > 0
             """, (cur_rate,))
 
+        # ── Ko'p shtrix-kod: bitta tovarga bir nechta kod ────────────────────
+        # products.barcode (asosiy kod) saqlanib qoladi — eski kod/kassa
+        # versiyalari buzilmasin; qo'shimcha kodlar shu jadvalda turadi.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS product_barcodes ("
+            " code       TEXT PRIMARY KEY,"
+            " product_id INTEGER NOT NULL,"
+            " created_at TEXT DEFAULT '')"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pbc_pid ON product_barcodes(product_id)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO product_barcodes(code, product_id, created_at) "
+            "SELECT TRIM(barcode), id, created_at FROM products "
+            " WHERE barcode IS NOT NULL AND TRIM(barcode) != ''"
+        )
+
+        # ── SO'M — KANONIK (bir martalik) ────────────────────────────────────
+        # Ilgari USD kanonik bo'lib, so'm narxlar kursdan qayta hisoblanardi —
+        # 16 000 so'm 15 999.72 bo'lib qolardi. Endi: so'mdagi narxlarni butun
+        # so'mga yaxlitlaymiz va USD ustunlarini keshga aylantiramiz.
+        done = conn.execute(
+            "SELECT value FROM settings WHERE key='sum_canonical_v1'"
+        ).fetchone()
+        if not done:
+            # Kurs aylanishidan kelgan xato eng ko'pi bilan ~1 so'm bo'ladi
+            # (masalan 6 000 → 5 999.67, 33 000 → 32 999.40). Shuning uchun:
+            # qiymat 100 ga karrali sondan 1 so'mdan yaqin bo'lsa — o'sha
+            # butun songa qaytaramiz (haqiqiy narx tiklanadi), aks holda
+            # oddiy butun so'mga yaxlitlaymiz (masalan 1 550.34 → 1 550).
+            def _snap(col):
+                return (f"CASE WHEN COALESCE({col},0) > 0 AND "
+                        f" ABS({col} - ROUND({col}/100.0)*100) < 1 "
+                        f" THEN ROUND({col}/100.0)*100 "
+                        f" ELSE ROUND(COALESCE({col},0)) END")
+            conn.execute(f"""
+                UPDATE products
+                   SET sell_price = {_snap('sell_price')},
+                       wholesale_price = {_snap('wholesale_price')},
+                       cost_price = {_snap('cost_price')}
+            """)
+            if cur_rate > 0:
+                conn.execute("""
+                    UPDATE products
+                       SET sell_price_usd = ROUND(sell_price / ?, 4),
+                           wholesale_price_usd = ROUND(wholesale_price / ?, 4),
+                           cost_price_usd = ROUND(cost_price / ?, 4)
+                """, (cur_rate, cur_rate, cur_rate))
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES('sum_canonical_v1','1')"
+            )
+
+        # ── SKU tartibga solish: 5 xonadan katta idlar 5 xonaliga ko'chadi ──
+        self._renumber_big_skus(conn)
+
+    def _renumber_big_skus(self, conn: sqlite3.Connection):
+        """Importdan qolgan juda katta mahsulot idlarini (>99999) bo'sh 5 xonali
+        raqamlarga ko'chiradi va BARCHA havolalarni yangilaydi: sotuv/buyurtma
+        item JSONlari, prixod jurnali, shtrix-kod jadvali, sqlite_sequence.
+        Aks holda AUTOINCREMENT har yangi tovarga 33 mln+ raqam beraverardi."""
+        rogues = [r[0] for r in conn.execute(
+            "SELECT id FROM products WHERE id > 99999 ORDER BY id"
+        ).fetchall()]
+        if rogues:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 9999) FROM products WHERE id <= 99999"
+            ).fetchone()
+            nxt = max(9999, int(row[0] or 9999)) + 1
+            mapping = {}
+            for old in rogues:
+                if nxt > 99999:
+                    break  # 5 xonali joy qolmadi — qolganlari joyida qoladi
+                mapping[old] = nxt
+                conn.execute("UPDATE products SET id=? WHERE id=?", (nxt, old))
+                conn.execute(
+                    "UPDATE product_barcodes SET product_id=? WHERE product_id=?",
+                    (nxt, old)
+                )
+                nxt += 1
+            if mapping:
+                self._remap_item_refs(conn, mapping)
+                print(f"[migratsiya] {len(mapping)} ta katta SKU 5 xonaliga "
+                      f"ko'chirildi: {mapping}")
+        # sequence har doim haqiqiy maksimumga tushiriladi (katta idlar ketgach)
+        conn.execute(
+            "UPDATE sqlite_sequence "
+            "   SET seq=(SELECT COALESCE(MAX(id), 9999) FROM products) "
+            " WHERE name='products'"
+        )
+
+    @staticmethod
+    def _remap_item_refs(conn: sqlite3.Connection, mapping: Dict[int, int]):
+        """Sotuv/buyurtma items JSONlarida va prixod jurnalida eski
+        product_id/sku raqamlarini yangisiga almashtiradi (tarix buzilmasin)."""
+        def _to_int(v):
+            try:
+                return int(str(v))
+            except (TypeError, ValueError):
+                return None
+
+        for table, col, keys in (
+            ("sales",     "items",      ("product_id", "sku", "id")),
+            ("orders",    "items",      ("product_id", "sku", "id")),
+            ("purchases", "items_json", ("product_id", "sku", "id")),
+        ):
+            try:
+                rows = conn.execute(f"SELECT id, {col} FROM {table}").fetchall()
+            except sqlite3.OperationalError:
+                continue  # jadval hali yaratilmagan (masalan purchases)
+            for r in rows:
+                raw = r[1]
+                if not raw:
+                    continue
+                try:
+                    items = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(items, list):
+                    continue
+                changed = False
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    for k in keys:
+                        old = _to_int(it.get(k))
+                        if old is not None and old in mapping:
+                            it[k] = mapping[old]
+                            changed = True
+                if changed:
+                    conn.execute(
+                        f"UPDATE {table} SET {col}=? WHERE id=?",
+                        (json.dumps(items, ensure_ascii=False), r[0])
+                    )
+
     def _conn(self):
         """DOIMIY ulanishni qaytaradi (har safar yangi ochilmaydi).
 
@@ -524,7 +659,9 @@ class BaseDB:
                     ).fetchall()
                 else:
                     rows = conn.execute("SELECT * FROM products ORDER BY id").fetchall()
-                return [self._row_to_product(r) for r in rows]
+                prods = [self._row_to_product(r) for r in rows]
+                # Ko'p shtrix-kodlar ro'yxatini biriktiramiz (ProductsMixin)
+                return self._attach_barcodes_sync(conn, prods)
             finally:
                 conn.close()
 

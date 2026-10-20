@@ -646,6 +646,8 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         "qty": float(p.get("qty", 0) or 0),
         "unit": p.get("unit", "dona"),
         "barcode": p.get("barcode", "") or "",
+        "barcodes": p.get("barcodes")
+                    or ([p["barcode"]] if p.get("barcode") else []),
         "price_usd": usd,
         "price_sum": summ,
         "image_url": p.get("image_url", "") or "",
@@ -826,7 +828,7 @@ async def api_products(request: web.Request):
     start = page * page_size
     page_items = prods[start:start + page_size]
     items = [_product_json(p, role, ctype) for p in page_items]
-    return web.json_response({
+    resp = {
         "ok": True,
         "total": total,
         "page": page,
@@ -835,7 +837,12 @@ async def api_products(request: web.Request):
         "rate": _db.get_usd_rate(),
         "role": role,
         "items": items,
-    })
+    }
+    if role == "admin":
+        # Admin UI «keyingi SKU» ni aniq ko'rsatishi uchun (nofaol tovarlar
+        # ham hisobga olinadi — mijoz keshidan hisoblasa xato chiqardi).
+        resp["next_sku"] = _db.next_product_sku()
+    return web.json_response(resp)
 
 
 # ─── OCHIQ katalog (do'kon sayti uchun) ─────────────────────────────────────
@@ -996,10 +1003,11 @@ def _to_float(v, default=0.0):
 @ROUTES.post("/api/product/save")
 async def api_product_save(request: web.Request):
     """Yangi mahsulot qo'shadi (id=0) yoki mavjudini tahrirlaydi.
-    Narxlar SO'M da keladi (admin so'mda kiritadi) — USD kanonik qiymat
-    joriy kurs bo'yicha hisoblanadi."""
+    Narxlar SO'M da keladi va SO'M da saqlanadi (kanonik) — USD ustunlari
+    faqat ko'rsatkich keshi.
+    Shtrix-kodlar: `barcodes` (ro'yxat — to'liq almashtiriladi) yoki eski
+    `barcode` (yakka — asosiy kod sifatida qo'shiladi, qolganlari saqlanadi)."""
     from database.channel_db import db as _db
-    from database._helpers import sum_to_usd
     body = await _read_json(request)
     pid = int(body.get("id") or 0)
     perm = "products_edit" if pid else "products_add"
@@ -1013,7 +1021,6 @@ async def api_product_save(request: web.Request):
     display_name = (body.get("display_name") or "").strip()[:120]
     if not name:
         return _err("Mahsulot nomi bo'sh")
-    rate = _db.get_usd_rate()
     sell_sum = _to_float(body.get("sell_price_sum"))
     cost_sum = _to_float(body.get("cost_price_sum"))
     whs_sum  = _to_float(body.get("wholesale_sum"))
@@ -1024,15 +1031,24 @@ async def api_product_save(request: web.Request):
     cat_id   = int(body.get("category_id") or 0)
     sup_id   = int(body.get("supplier_id") or 0)
 
-    sell_usd = round(sum_to_usd(sell_sum, rate), 4) if sell_sum else 0
-    cost_usd = round(sum_to_usd(cost_sum, rate), 4) if cost_sum else 0
-    whs_usd  = round(sum_to_usd(whs_sum, rate), 4) if whs_sum else 0
+    # Shtrix-kodlar: ro'yxat kelsa — to'liq almashtirish rejimi.
+    raw_codes = body.get("barcodes")
+    replace_codes = isinstance(raw_codes, list)
+    if replace_codes:
+        codes, seen = [], set()
+        for c in raw_codes:
+            c = str(c or "").strip()
+            if c and c not in seen:
+                seen.add(c)
+                codes.append(c)
+    else:
+        codes = [barcode] if barcode else []
 
-    # Shtrix-kod boshqa mahsulotda bormi?
-    if barcode:
-        ex = await _db.get_product_by_barcode(barcode)
+    # Har bir kod boshqa mahsulotda band emasmi? (nofaol tovarlar ham hisobda)
+    for c in codes:
+        ex = await _db.barcode_owner(c)
         if ex and ex.get("id") != pid:
-            return _err(f"Bu shtrix-kod «{ex['name']}» da bor", 409)
+            return _err(f"«{c}» shtrix-kod «{ex['name']}» da bor", 409)
 
     if pid:
         p = await _db.get_product_any(pid)
@@ -1040,18 +1056,26 @@ async def api_product_save(request: web.Request):
             return _err("Mahsulot topilmadi", 404)
         await _db.update_product(
             pid, name=name, display_name=display_name, description=desc,
-            sell_price_usd=sell_usd, cost_price_usd=cost_usd,
-            wholesale_price_usd=whs_usd,
-            qty=qty, unit=unit, barcode=barcode,
+            sell_price=sell_sum, cost_price=cost_sum,
+            wholesale_price=whs_sum,
+            qty=qty, unit=unit,
             category_id=cat_id, supplier_id=sup_id,
         )
+        if replace_codes:
+            ok, bc_err = await _db.set_product_barcodes(pid, codes)
+            if not ok:
+                return _err(bc_err, 409)
+        elif barcode != (p.get("barcode") or "").strip():
+            # Eski mijoz (yakka kod): asosiy kodni yangilaymiz, bo'sh bo'lsa
+            # update_product hamma kodni tozalaydi (avvalgi xulq bilan mos).
+            await _db.update_product(pid, barcode=barcode)
         new_id = pid
     else:
         new_id = await _db.add_product(
             name=name, description=desc,
-            sell_price_usd=sell_usd, cost_price_usd=cost_usd,
-            qty=qty, unit=unit, wholesale_price_usd=whs_usd,
-            barcode=barcode, category_id=cat_id, supplier_id=sup_id,
+            sell_price=sell_sum, cost_price=cost_sum,
+            qty=qty, unit=unit, wholesale_price=whs_sum,
+            barcodes=codes, category_id=cat_id, supplier_id=sup_id,
         )
     p = await _db.get_product_any(new_id)
 
@@ -1352,7 +1376,7 @@ async def api_prixod_save(request: web.Request):
     """Prixod hujjatini saqlaydi: har tovar qoldig'iga qo'shadi + narxlarni
     yangilaydi, so'ng hujjatni `purchases` jurnaliga yozadi (tarix uchun)."""
     from database.channel_db import db as _db
-    from database._helpers import sum_to_usd, now_local
+    from database._helpers import now_local
     auth, err = await _admin_guard(request, _db, "products_qty")
     if err is not None:
         return err
@@ -1388,14 +1412,16 @@ async def api_prixod_save(request: web.Request):
             cost = _to_float(ln.get("cost"))
             sell = _to_float(ln.get("sell"))
             whs = _to_float(ln.get("wholesale"))
-            # Yetkazib beruvchini har qabul qilingan tovarga biriktiramiz
+            # Yetkazib beruvchini har qabul qilingan tovarga biriktiramiz.
+            # Narxlar SO'M da to'g'ridan-to'g'ri saqlanadi (USD kesh
+            # update_product ichida avtomatik yangilanadi).
             upd = {"supplier_id": supplier_id}
             if cost > 0:
-                upd["cost_price_usd"] = round(sum_to_usd(cost, rate), 4)
+                upd["cost_price"] = cost
             if sell > 0:
-                upd["sell_price_usd"] = round(sum_to_usd(sell, rate), 4)
+                upd["sell_price"] = sell
             if whs > 0:
-                upd["wholesale_price_usd"] = round(sum_to_usd(whs, rate), 4)
+                upd["wholesale_price"] = whs
             if upd:
                 await _db.update_product(pid, **upd)
             saved.append({
@@ -2733,7 +2759,7 @@ async def api_ai_analyze(request: web.Request):
 @ROUTES.post("/api/sale")
 async def api_sale(request: web.Request):
     from database.channel_db import db as _db
-    from database._helpers import sum_to_usd
+    from database._helpers import sum_to_usd, usd_to_sum
     from bot.permissions import has_permission
     auth = await _authenticate(request, _db)
     if not auth:
@@ -2818,16 +2844,12 @@ async def api_sale(request: web.Request):
         avail = float(p.get("qty", 0) or 0)
         if qty > avail:
             return _err(f"«{p['name']}» — faqat {avail:g} {p.get('unit','dona')} bor")
-        # Narx so'mda kanonik (YesPOS marketplace sinxroni — pos_bridge.py).
-        # Avval so'mdagi narx olinadi; USD faqat so'm bo'lmasa ishlatiladi.
-        # Ilgari teskarisi edi — shu sabab ekranda yangi narx turib, chek eski
-        # (USD'dan hisoblangan) narxda urilardi.
+        # SO'M kanonik — katalog narxi to'g'ridan-to'g'ri olinadi (USDga
+        # bo'lib-ko'paytirish 16 000 ni 15 999.72 qilib yuborardi)
         price_sum = float(p.get("sell_price", 0) or 0)
-        if price_sum > 0:
-            price_usd = round(sum_to_usd(price_sum, rate), 4)
-        else:
-            price_usd = float(p.get("sell_price_usd", 0) or 0)
-        sale_items.append({"product_id": pid, "qty": qty, "price": price_usd})
+        if price_sum <= 0:
+            price_sum = round(usd_to_sum(float(p.get("sell_price_usd", 0) or 0), rate))
+        sale_items.append({"product_id": pid, "qty": qty, "price_sum": price_sum})
 
     if not sale_items:
         return _err("Savat bo'sh")
@@ -2835,7 +2857,7 @@ async def api_sale(request: web.Request):
     # Jami (chegirma bilan)
     subtotal_sum = 0.0
     for si in sale_items:
-        subtotal_sum += round(si["price"] * rate, 2) * si["qty"]
+        subtotal_sum += si["price_sum"] * si["qty"]
     override_sum = 0
     if discount_sum > 0 and discount_sum < subtotal_sum:
         override_sum = subtotal_sum - discount_sum
@@ -3100,6 +3122,8 @@ async def api_sync_catalog(request: web.Request):
             "id": p["id"],
             "name": p.get("name", ""),
             "barcode": str(p.get("barcode") or "").strip(),
+            "barcodes": p.get("barcodes")
+                        or ([str(p["barcode"]).strip()] if str(p.get("barcode") or "").strip() else []),
             "unit": p.get("unit", "dona"),
             "qty": float(p.get("qty", 0) or 0),
             "sell_price_sum": float(p.get("sell_price", 0) or 0),
@@ -3143,7 +3167,7 @@ async def api_sync_sales(request: web.Request):
     Internet uzilib qaytsa, kassa faqat YUBORILMAGAN sotuvlarni qayta yuboradi,
     shuning uchun bu yerda dublikat bo'lmasligi kassa tomonida ta'minlanadi."""
     from database.channel_db import db as _db
-    from database._helpers import sum_to_usd
+    from database._helpers import sum_to_usd, usd_to_sum
     auth = await _authenticate(request, _db)
     if not auth or auth["role"] != "admin":
         return _err("Avtorizatsiya talab qilinadi", 401)
@@ -3214,19 +3238,18 @@ async def api_sync_sales(request: web.Request):
                     continue
                 # Kassir narxni o'zgartirgan bo'lishi mumkin — avval kassadan
                 # kelgan haqiqiy narxni ishlatamiz; bo'lmasa katalog narxi.
-                price_sum_in = float(it.get("price_sum") or 0)
-                if price_sum_in > 0:
-                    price_usd = round(sum_to_usd(price_sum_in, rate), 4)
-                else:
+                # SO'M kanonik: kelgan so'm narxi USDga aylantirilmaydi.
+                price_sum = float(it.get("price_sum") or 0)
+                if price_sum <= 0:
                     p = await _db.get_product_any(pid)
-                    price_usd = float(p.get("sell_price_usd", 0) or 0) if p else 0.0
-                    if price_usd <= 0:
-                        base_sum = float(p.get("sell_price", 0) or 0) if p else 0.0
-                        price_usd = round(sum_to_usd(base_sum, rate), 4)
+                    price_sum = float(p.get("sell_price", 0) or 0) if p else 0.0
+                    if price_sum <= 0:
+                        base_usd = float(p.get("sell_price_usd", 0) or 0) if p else 0.0
+                        price_sum = round(usd_to_sum(base_usd, rate))
                 sale_items.append({
-                    "product_id": pid, "qty": qty, "price": price_usd,
+                    "product_id": pid, "qty": qty, "price_sum": price_sum,
                 })
-                subtotal_sum += round(price_usd * rate, 2) * qty
+                subtotal_sum += price_sum * qty
 
             if not sale_items:
                 results.append({"local_id": local_id, "ok": False,
@@ -4142,9 +4165,9 @@ async def api_settings_save(request: web.Request):
         try:
             new_rate = float(rate)
             _db.set_usd_rate(new_rate)
-            # Bot oqimi bilan bir xil: so'mdagi narxlar/qarz keshi USD (kanonik)
-            # qiymatlardan yangi kursda qayta hisoblanadi. Busiz kurs faqat
-            # yozilib, mavjud narxlar eski kursda qolib ketardi.
+            # SO'M — kanonik: kurs o'zgarganda so'mdagi narx/qarzlar
+            # O'ZGARMAYDI, faqat USD ko'rsatkich keshlari yangilanadi
+            # (prixodda $ kiritish va $ ko'rinishlar to'g'ri bo'lsin).
             if new_rate > 0:
                 await _db.reprice_all_with_rate(new_rate)
         except (TypeError, ValueError):

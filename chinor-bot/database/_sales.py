@@ -73,7 +73,11 @@ class SalesMixin:
                           receipt_no: str = "",
                           is_internal: bool = False) -> dict:
         """Sotuv yaratadi.
-        items — dictlar ro'yxati: {product_id, qty, price (USD)}.
+        items — dictlar ro'yxati: {product_id, qty, price_sum (SO'M)}.
+                `price_sum` — afzal (kanonik). Eski chaqiriqlar uchun `price`
+                (USD) ham qabul qilinadi va bir marta so'mga aylantiriladi.
+                MUHIM: so'mdagi narxni USDga bo'lib qaytarmaymiz — aks holda
+                16 000 so'm chekda 15 999.72 bo'lib chiqardi.
         override_total_* — sotuvchining 'yumaloqlangan' jami summasi (chegirma).
                           Faqat birini bersangiz, ikkinchisi joriy kurs bo'yicha hisoblanadi.
         paid_*_usd — agar to'lov USDda qabul qilingan bo'lsa, USD qiymati bilan birga keladi.
@@ -104,9 +108,14 @@ class SalesMixin:
             cost_sum = float(p.get("cost_price", 0)) if p else 0.0
             if is_internal:
                 # «Chinor» rasxodi — tovar tannarx narxida hisobdan chiqadi
+                price_sum = cost_sum if cost_sum > 0 else round(usd_to_sum(cost_usd, rate))
                 price_usd = cost_usd if cost_usd > 0 else round(sum_to_usd(cost_sum, rate), 4)
-                price_sum = cost_sum if cost_sum > 0 else round(usd_to_sum(cost_usd, rate), 2)
+            elif it.get("price_sum") is not None:
+                # SO'M kanonik — kelgan qiymat aynan shundayligicha yoziladi
+                price_sum = round(float(it["price_sum"]), 2)
+                price_usd = round(sum_to_usd(price_sum, rate), 4)
             else:
+                # Eski chaqiriq: narx USD da kelgan
                 price_usd = float(it["price"])
                 price_sum = round(usd_to_sum(price_usd, rate), 2)
             line_usd = price_usd * it["qty"]
@@ -455,8 +464,13 @@ class SalesMixin:
             unit = p.get("unit", "dona") if p else "dona"
             cost_usd = float(p.get("cost_price_usd", 0)) if p else 0.0
             cost_sum = float(p.get("cost_price", 0)) if p else 0.0
-            price_usd = float(it.get("price") or 0)
-            price_sum = round(usd_to_sum(price_usd, rate), 2)
+            # SO'M kanonik — `price_sum` afzal; eski chaqiriqlarda `price` (USD)
+            if it.get("price_sum") is not None:
+                price_sum = round(float(it["price_sum"]), 2)
+                price_usd = round(sum_to_usd(price_sum, rate), 4)
+            else:
+                price_usd = float(it.get("price") or 0)
+                price_sum = round(usd_to_sum(price_usd, rate), 2)
             # Qaytarish — manfiy miqdor/summalar
             line_usd = -price_usd * qty
             line_sum = round(-price_sum * qty, 2)
