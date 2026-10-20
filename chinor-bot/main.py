@@ -201,6 +201,10 @@ async def main():
     from bot import receipts_sync
     receipts_task = asyncio.create_task(receipts_sync.loop())
 
+    # ── YesPOS → Chinor: tovar/qoldiq/narx (har 15 daqiqa, himoyali) ────
+    from bot import yespos_sync
+    yespos_task = asyncio.create_task(yespos_sync.loop(bot))
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -213,6 +217,7 @@ async def main():
         reels_task.cancel()
         backup_task.cancel()
         receipts_task.cancel()
+        yespos_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

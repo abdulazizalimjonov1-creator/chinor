@@ -282,10 +282,30 @@ def _report(p: dict, pos_db_path: str, day: str) -> None:
             print(f"    [{pid}] {name[:34]:<34} {old:>10,.0f} → {new:>10,.0f}")
 
 
+CLASH_SIMILARITY = 0.3
+
+
+def _id_clashes(p: dict) -> list:
+    """Nomi o'zgargan, lekin eskisiga deyarli o'xshamaydigan qatorlar."""
+    import difflib
+    import re as _re
+
+    def norm(x):
+        return _re.sub(r"\s+", " ", (x or "").lower().replace("’", "'")).strip()
+    out = []
+    for pid, old, new in p.get("name_changes", []):
+        r = difflib.SequenceMatcher(None, norm(old), norm(new)).ratio()
+        if r < CLASH_SIMILARITY:
+            out.append((pid, old, new, r))
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="YesPOS → Chinor POS ko'prigi")
     ap.add_argument("--apply", action="store_true", help="haqiqatan yozish")
     ap.add_argument("--pos-db", default=config.POS_DB)
+    ap.add_argument("--force", action="store_true",
+                    help="id to'qnashuvi bo'lsa ham yozish (faqat qo'lda, tekshirib)")
     args = ap.parse_args(argv)
 
     if not os.path.exists(args.pos_db):
@@ -300,6 +320,19 @@ def main(argv=None) -> int:
 
         p = plan(args.pos_db, mp_rows, db.get_barcodes())
         _report(p, args.pos_db, day)
+
+        # HIMOYA: bir xil id ostida BUTUNLAY boshqa nomli tovar — bu nom
+        # o'zgarishi emas, id to'qnashuvi (2026-10-20: Chinor 16877 «parol»,
+        # YesPOS 16877 «Gel sovun idish»). Yozilsa ikki tovar bitta bo'lib
+        # ketadi va tarix aralashadi. Avtomatik rejimda yozmaymiz.
+        clash = _id_clashes(p)
+        if clash:
+            print(f"\n  ⚠ ID TO'QNASHUVI: {len(clash)} ta (nomlar umuman o'xshamaydi)")
+            for pid, old, new, r in clash[:20]:
+                print(f"    [{pid}] «{old}» ≠ «{new}»  (o'xshashlik {r:.2f})")
+            if args.apply and not args.force:
+                print("\n[to'xtatildi] To'qnashuvni hal qiling yoki --force bilan yozing.")
+                return 3
 
         if not args.apply:
             print("\n[dry-run] Hech narsa yozilmadi. Yozish uchun: --apply")
