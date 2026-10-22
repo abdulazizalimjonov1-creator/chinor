@@ -384,7 +384,9 @@ def pending(limit: int = 5) -> list:
     try:
         rows = c.execute(
             "SELECT * FROM reels_queue WHERE status='pending' "
-            "AND (next_try IS NULL OR next_try='' OR next_try <= datetime('now')) "
+            # next_try MAHALLIY vaqtda yoziladi (time.localtime) — 'now' esa UTC;
+            # 'localtime'siz qoldirilgan rolik 5 soat ortiqcha kutardi.
+            "AND (next_try IS NULL OR next_try='' OR next_try <= datetime('now','localtime')) "
             "ORDER BY id LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -2523,6 +2525,91 @@ async def _send_for_approval(db, product: dict, video_path: str, caption: str):
         await bot.send_message(GLAVNIY_ADMIN_ID, caption)
     except Exception as e:
         logger.warning("🎬 Adminga yuborilmadi: %s", e)
+
+
+# ─── Kunlik avtomatik tanlov (Instagram) ─────────────────────────────────────
+# Har kuni AUTO_HOURS soatlarida bittadan tovar tanlanib, rolik navbatiga
+# qo'yiladi (2026-10-22: kuniga 2 ta, egasining so'rovi). Tanlov HAQIQIY
+# savdodan — YesPOS cheklari (`api_recommend`), eski kassa `sales` emas.
+# Yoqish: sozlama `reels_autopost=1`; joylash `reels_auto=1` (Instagram),
+# `reels_channel=0` bo'lsa rolik Telegram kanalga tushmaydi.
+AUTO_HOURS = [int(h) for h in os.getenv("REELS_AUTO_HOURS", "11,18").split(",")
+              if h.strip().isdigit()]
+AUTO_GAP_DAYS = int(os.getenv("REELS_AUTO_GAP_DAYS", "45") or 45)
+
+
+def auto_pick(db) -> int:
+    """Rolikka eng arziydigan tovarni tanlab navbatga qo'yadi (rid, 0 — yo'q).
+
+    Shartlar: faol, qoldig'i bor, narxi bor, rasmi diskda, oxirgi
+    AUTO_GAP_DAYS kunda rolik chiqmagan. Ball: YesPOS sotuv reytingi,
+    qaytarishlar minus, tavsif/teglar plyus, ozgina tasodif (har kuni bir
+    xil tovarlar navbat kutib turmasin)."""
+    import random
+    from bot import api_recommend
+    from bot.web_api import UPLOAD_DIR
+    try:
+        rank, _co, returns = api_recommend._recent_sales_sync(db)
+    except Exception as e:
+        logger.info("🎯 Savdo reytingi o'qilmadi: %s", e)
+        rank, returns = {}, {}
+    c = _conn()
+    try:
+        seen = {r[0] for r in c.execute(
+            "SELECT DISTINCT product_id FROM reels_queue "
+            "WHERE created_at > datetime('now', ?)", ("-%d days" % AUTO_GAP_DAYS,))}
+        rows = c.execute(
+            "SELECT id, image_url, image_orig_url, qty, description, usage_tags "
+            "FROM products WHERE is_active=1 AND qty > 0 AND sell_price > 0 "
+            "AND (image_orig_url != '' OR image_url != '')").fetchall()
+    finally:
+        c.close()
+    top = max([float(v) for v in rank.values()] or [1.0]) or 1.0
+    best, best_score, best_img = 0, -1e9, ""
+    for r in rows:
+        pid = r["id"]
+        if pid in seen:
+            continue
+        name = os.path.basename(((r["image_orig_url"] or r["image_url"]) or "").split("?")[0])
+        img = os.path.join(UPLOAD_DIR, name) if name else ""
+        if not img or not os.path.isfile(img):
+            continue
+        score = 5.0 * float(rank.get(pid, 0)) / top
+        score -= 2.0 * min(float(returns.get(pid, 0)), 3)
+        if (r["description"] or "").strip():
+            score += 0.5
+        if (r["usage_tags"] or "").strip():
+            score += 0.3
+        if float(r["qty"] or 0) >= 3:
+            score += 0.3
+        score += random.random() * 1.5
+        if score > best_score:
+            best, best_score, best_img = pid, score, img
+    if not best:
+        return 0
+    rid = enqueue_manual(best, best_img)
+    logger.info("🎯 Avto-rolik: #%s tanlandi (ball %.2f)", best, best_score)
+    return rid
+
+
+async def autopick_loop(interval: int = 300):
+    """Har kuni AUTO_HOURS da bittadan tovarni rolik navbatiga qo'yadi."""
+    from database.channel_db import db as _db
+    await asyncio.sleep(120)
+    while True:
+        try:
+            if _flag_on(_db, "reels_autopost", "0") and is_available():
+                now = time.localtime()
+                day = time.strftime("%Y-%m-%d", now)
+                for h in AUTO_HOURS:
+                    key = "reels_autopick_%d" % h
+                    if now.tm_hour >= h and _db.get_setting(key, "") != day:
+                        _db.set_setting(key, day)
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, auto_pick, _db)
+        except Exception as e:
+            logger.warning("🎯 Avto-rolik tanlovida xato: %s", e)
+        await asyncio.sleep(interval)
 
 
 async def worker_loop(interval: int = 45):

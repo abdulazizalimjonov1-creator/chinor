@@ -193,6 +193,11 @@ async def main():
     from bot import reels_compare
     reels_task = asyncio.create_task(reels_compare.daily_loop())
 
+    # Tovar roliklari: navbat ishchisi + kuniga 2 ta avto-tanlov (Instagram)
+    from bot import reels as reels_mod
+    reels_worker_task = asyncio.create_task(reels_mod.worker_loop())
+    reels_pick_task = asyncio.create_task(reels_mod.autopick_loop())
+
     # ── Kunlik avtomatik zaxira (baza → data/backups + bosh adminga) ────
     from bot.backup import auto_backup_loop
     backup_task = asyncio.create_task(auto_backup_loop(bot))
@@ -219,6 +224,8 @@ async def main():
         retention_task.cancel()
         payment_task.cancel()
         reels_task.cancel()
+        reels_worker_task.cancel()
+        reels_pick_task.cancel()
         backup_task.cancel()
         receipts_task.cancel()
         yespos_task.cancel()
