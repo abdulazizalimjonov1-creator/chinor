@@ -2385,7 +2385,9 @@ async def _process(row: dict, db) -> None:
     # Instagram'ga avtomatik joylash ataylab O'CHIRIQ turibdi (`reels_auto`).
     # Avval rolik kanalda ishlaydi, uslub va matn barqarorlashgach
     # Instagram yoqiladi — o'shanda bu yerda hech narsa o'zgarmaydi.
-    posted = await _post_to_channel(db, p, out, cat)
+    # `reels_channel=0` — rolik faqat Instagram'ga (kanalga tushmaydi)
+    posted = (await _post_to_channel(db, p, out, cat)
+              if _flag_on(db, "reels_channel", "1") else False)
     if isinstance(posted, int) and posted > 1:
         _set(rid, msg_id=posted)
 
