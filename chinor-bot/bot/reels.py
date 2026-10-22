@@ -98,38 +98,64 @@ _TOKEN_FILE = os.path.join(_DATA_DIR, "ig_token.json")
 _REFRESH_AFTER = 30 * 86400      # 30 kundan eski bo'lsa yangilaymiz
 
 
-def _token_cache() -> dict:
+def _token_file(uid: str = "") -> str:
+    """Asosiy akkaunt — eski `ig_token.json`; qo'shimchalari `ig_token_<id>.json`."""
+    if not uid or uid == _cfg("IG_USER_ID"):
+        return _TOKEN_FILE
+    return os.path.join(_DATA_DIR, f"ig_token_{uid}.json")
+
+
+def _token_cache(uid: str = "") -> dict:
     try:
-        with open(_TOKEN_FILE, encoding="utf-8") as f:
+        with open(_token_file(uid), encoding="utf-8") as f:
             d = json.load(f)
         return d if d.get("token") else {}
     except Exception:
         return {}
 
 
-def _token_save(token: str) -> None:
+def _token_save(token: str, uid: str = "") -> None:
+    path = _token_file(uid)
     try:
         os.makedirs(_DATA_DIR, exist_ok=True)
-        tmp = _TOKEN_FILE + ".tmp"
+        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"token": token, "saved_at": int(time.time())}, f)
-        os.replace(tmp, _TOKEN_FILE)
-        os.chmod(_TOKEN_FILE, 0o600)
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
     except Exception as e:
         logger.warning("🎬 Instagram tokenini saqlab bo'lmadi: %s", e)
 
 
-def ig_token() -> str:
+def ig_token(uid: str = "", base: str = "") -> str:
     """Amaldagi token — keshdagisi .env dagisidan ustun."""
-    return _token_cache().get("token") or _cfg("IG_ACCESS_TOKEN")
+    return _token_cache(uid).get("token") or base or _cfg("IG_ACCESS_TOKEN")
 
 
-def refresh_ig_token() -> bool:
+def ig_accounts() -> list:
+    """[(ig_user_id, token)] — rolik chiqadigan BARCHA Instagram profillar.
+
+    Asosiysi: IG_USER_ID / IG_ACCESS_TOKEN. Qo'shimchasi (2026-10-23,
+    @chinors_market): IG2_USER_ID / IG2_ACCESS_TOKEN. Har biri o'z tokenini
+    alohida yangilaydi (`ig_token_<id>.json`)."""
+    out = []
+    uid = _cfg("IG_USER_ID")
+    if uid and ig_token():
+        out.append((uid, ig_token()))
+    for n in (2, 3):
+        u = (os.getenv(f"IG{n}_USER_ID") or "").strip()
+        t = (os.getenv(f"IG{n}_ACCESS_TOKEN") or "").strip()
+        if u and t:
+            out.append((u, ig_token(u, t)))
+    return out
+
+
+def refresh_ig_token(uid: str = "", base: str = "") -> bool:
     """Token 30 kundan eski bo'lsa yangilaydi. True = yangilandi."""
-    cur = ig_token()
+    cur = ig_token(uid, base)
     if not cur:
         return False
-    c = _token_cache()
+    c = _token_cache(uid)
     if c.get("token") and (time.time() - int(c.get("saved_at") or 0)) < _REFRESH_AFTER:
         return False
     try:
@@ -139,9 +165,9 @@ def refresh_ig_token() -> bool:
         if not new:
             logger.warning("🎬 Instagram token yangilanmadi: %s", r)
             return False
-        _token_save(new)
-        logger.info("🎬 Instagram tokeni yangilandi (%s kun)",
-                    r.get("expires_in", 0) // 86400)
+        _token_save(new, uid)
+        logger.info("🎬 Instagram tokeni yangilandi%s (%s kun)",
+                    f" ({uid})" if uid else "", r.get("expires_in", 0) // 86400)
         return True
     except Exception as e:
         logger.warning("🎬 Instagram token yangilashda xato: %s", e)
@@ -2197,14 +2223,29 @@ def _get(url: str) -> dict:
 
 
 def publish_instagram(video_url: str, caption: str) -> tuple:
-    """Reels joylaydi. Qaytaradi: (media_id, xato).
+    """Reels'ni BARCHA ulangan profillarga joylaydi (`ig_accounts`).
 
-    Instagram videoni O'ZI yuklab oladi, shuning uchun `video_url` ochiq
-    HTTPS manzil bo'lishi shart (bizda `/api/reel/<fayl>`)."""
-    refresh_ig_token()          # 30 kundan eski bo'lsa yangilanadi
-    ig_id, token = _cfg("IG_USER_ID"), ig_token()
-    if not (ig_id and token):
+    Qaytaradi: (birinchi muvaffaqiyatli media_id, xatolar). Bitta profil
+    yiqilsa qolganlari baribir joylanadi. Instagram videoni O'ZI yuklab
+    oladi, shuning uchun `video_url` ochiq HTTPS manzil bo'lishi shart."""
+    accounts = ig_accounts()
+    if not accounts:
         return "", "Instagram sozlanmagan"
+    first, errs = "", []
+    for i, (ig_id, base) in enumerate(accounts):
+        refresh_ig_token("" if i == 0 else ig_id, "" if i == 0 else base)
+        token = ig_token() if i == 0 else ig_token(ig_id, base)
+        mid, err = _publish_one(ig_id, token, video_url, caption)
+        if mid:
+            logger.info("🎬 Instagram (%s): %s", ig_id, mid)
+            first = first or mid
+        else:
+            errs.append(f"{ig_id}: {err}")
+            logger.warning("🎬 Instagram (%s) joylanmadi: %s", ig_id, err)
+    return first, "; ".join(errs)
+
+
+def _publish_one(ig_id: str, token: str, video_url: str, caption: str) -> tuple:
     try:
         cr = _post(f"{_graph()}/{ig_id}/media", {
             "media_type": "REELS", "video_url": video_url,
