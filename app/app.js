@@ -793,6 +793,7 @@
 
         window.openProductForm = async function (id) {
             _editingId = id || 0;
+            _qeReturn = _qeArm; _qeArm = false;
             _pendingImageUrl = '';
             _pendingLabelFiles = [];
             _pfLabelStatus('');
@@ -863,7 +864,48 @@
             return true;
         }
 
+        // ── «Tovarni to'ldirish»: BOR tovarni skaner/qidiruv bilan topib,
+        // bitta ekranda rasm + yo'riqnoma + tavsifni yangilash ──────────
+        let _qeReturn = false;      // forma yopilganda shu ekranga qaytamiz
+        let _qeArm = false;         // keyingi openProductForm shu ekrandan ochildi
+
+        window.openQuickEdit = function () {
+            openTool('📸 Tovarni to\'ldirish', `
+                <div class="lbl-explain small">Tovarni <b>shtrix-kod</b> bilan skanerlang yoki nomini yozing.
+                    Ochilgan ekranda rasm, yo'riqnoma va tavsifni birga yangilaysiz.</div>
+                <div class="search-bar" style="margin:12px 0">
+                    <span class="search-ic">🔍</span>
+                    <input type="text" id="qeSearch" placeholder="Tovar nomi yoki shtrix-kodi..." autocomplete="off">
+                    <button type="button" class="scan-btn" onclick="scanInto('qedit')" title="Shtrix-kodni skanerlash">📷</button>
+                </div>
+                <div id="qeResults"></div>
+                <button class="more-btn" onclick="qeOpen(0)">➕ Yangi tovar qo'shish</button>`);
+            let timer;
+            $('qeSearch').addEventListener('input', e => {
+                clearTimeout(timer);
+                timer = setTimeout(() => qeSearch(e.target.value.trim()), 300);
+            });
+            setTimeout(() => { const i = $('qeSearch'); if (i) i.focus(); }, 150);
+        };
+
+        window.qeSearch = async function (q, autoOpen) {
+            const box = $('qeResults');
+            if (!box) return;
+            if (!q) { box.innerHTML = ''; return; }
+            box.innerHTML = '<div class="list-status">Qidirilmoqda...</div>';
+            const { ok, data } = await apiFetch('/api/products?page=0&q=' + encodeURIComponent(q));
+            const items = (ok && data.ok) ? (data.items || data.products || []).slice(0, 12) : [];
+            if (autoOpen && items.length === 1) { qeOpen(items[0].id); return; }
+            box.innerHTML = items.map(p => `<div class="g-row" onclick="qeOpen(${p.id})">
+                <div><b>${escapeHtml(p.name)}</b><div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}
+                ${p.image_url ? '' : ' · <span style="color:#dc2626">rasmsiz</span>'}</div></div><span>›</span></div>`).join('')
+                || '<div class="list-status">Topilmadi</div>';
+        };
+
+        window.qeOpen = function (id) { _qeArm = true; openProductForm(id); };
+
         window.prodFormBack = function () {
+            if (_qeReturn) { _qeReturn = false; openQuickEdit(); return; }
             showScreen(_editingId ? 'screenProdDetail' : 'screenProducts');
         };
 
@@ -930,6 +972,7 @@
                 if (tg && tg.HapticFeedback) { try{tg.HapticFeedback.notificationOccurred('success');}catch(_){} }
                 setTimeout(() => {
                     _editingId = 0;
+                    if (_qeReturn) { _qeReturn = false; openQuickEdit(); return; }
                     showScreen('screenProducts');
                     loadProducts(true);
                 }, 800);
@@ -4241,6 +4284,10 @@
                 if (typeof loadClientCategories === 'function') loadClientCategories();
                 _clScanOpen = true;      // bitta tovar topilsa — kartochkani ochamiz
                 if (typeof loadClientCatalog === 'function') loadClientCatalog();
+            } else if (_scanTarget === 'qedit') {
+                const inp = $('qeSearch');
+                if (inp) inp.value = cleaned;
+                qeSearch(cleaned, true);
             } else if (_scanTarget === 'label') {
                 // Yorliq o'qitish — tovarni shtrix-kod bilan topamiz
                 const inp = $('lblSearch');
