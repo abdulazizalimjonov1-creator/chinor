@@ -61,6 +61,9 @@ _DEFAULT_CHAIN = (
     "openrouter:meta-llama/llama-3.2-11b-vision-instruct:free,"
     "github:gpt-4o-mini,"
     "mistral:pixtral-12b-2409,"
+    # 2026-10-22 sinovi: mistral-small-3.1 rasmdagi brend va turini to'g'ri
+    # o'qidi (Uzcolor bo'yoq); llava esa so'ralgan shaklda javob bermaydi.
+    "cloudflare:@cf/mistralai/mistral-small-3.1-24b-instruct,"
     "cloudflare:@cf/llava-hf/llava-1.5-7b-hf"
 )
 
@@ -220,24 +223,43 @@ def _call_with_keys(env_name: str, fn):
     if not live:
         live = [(len(keys), keys[-1])]
 
-    last = None
-    for i, key in live:
+    last = quota_err = None
+    for n, (i, key) in enumerate(live):
+        more = n < len(live) - 1
         try:
-            return fn(key)
+            try:
+                return fn(key)
+            except urllib.error.HTTPError as e:
+                # 503 — Google serveri vaqtincha band; bir marta kutib qayta.
+                if e.code != 503:
+                    raise
+                time.sleep(2)
+                return fn(key)
         except Exception as e:
             last = e
             secs = _cooldown_for(e)
-            # Faqat kvota/limit uchun kalitni chetlab o'tamiz. Model yo'qligi
-            # yoki tarmoq xatosi kalitga bog'liq emas — boshqa kalit ham
-            # xuddi shunday yiqiladi, urinib o'tirish vaqtni yeydi.
             if secs == _COOLDOWN_QUOTA and len(live) > 1:
+                quota_err = e
                 cooldown[f"key:{env_name}:{i}"] = now + secs
                 st["cooldown"] = cooldown
                 _save_state(st)
                 logger.info("🔑 %s #%d kvotasi tugadi — keyingi kalitga", env_name, i)
                 continue
-            raise
+            # 404 ham kalitga bog'liq bo'lishi mumkin: Google yangi akkauntlarga
+            # eski modellarni bermaydi (2026-10-22: gemini-2.5-flash faqat
+            # 1-kalitda ishlaydi). Keyingi kalitni sinaymiz.
+            if secs == _COOLDOWN_GONE and more:
+                continue
+            break
+    # Ishlaydigan kalit kvota sovishida turgan bo'lsa yoki biri kvotaga urilgan
+    # bo'lsa — modelni 24 soatga «yo'q» deb o'chirmaymiz: qisqa (kvota) sovish.
+    if _cooldown_for(last) == _COOLDOWN_GONE and (quota_err or len(live) < len(keys)):
+        raise _KeysBusy(f"{env_name}: model faqat kvotasi tugagan kalitda — quota")
     raise last
+
+
+class _KeysBusy(Exception):
+    """Model mavjud, lekin uni beradigan kalit hozir kvota sovishida."""
 
 
 def _gemini_text(d: dict) -> str:
@@ -437,9 +459,17 @@ def _call_cloudflare(model: str, prompt: str, img_b64: str = "") -> str:
     if u.get("day") == time.strftime("%Y-%m-%d") and sum(
             int(v) for k, v in u.items() if "cloudflare" in k) >= cap:
         raise _NoKey(f"Cloudflare kunlik chegarasi ({cap}) — rolik uchun zaxira")
-    if img_b64:
+    if img_b64 and ("llava" in model or "uform" in model):
+        # Eski rasm modellari: xom baytlar ro'yxati
         payload = {"prompt": prompt, "max_tokens": 400,
                    "image": list(base64.b64decode(img_b64))}
+    elif img_b64:
+        # Yangi multimodal modellar (mistral-small-3.1, llama-4): OpenAI uslubi
+        payload = {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/jpeg;base64," + img_b64}}]}],
+            "max_tokens": 600}
     else:
         # Matn modellari: `prompt` berilsa chat shablonisiz "davom ettirish"
         # rejimida ishlaydi va savolni takrorlaydi (2026-10-22 sinovi) —
