@@ -243,8 +243,22 @@ async def _post_product_to_channel(db, p: dict, pid: int,
             if os.path.exists(op):
                 desc_path = op
 
-        # Gemini bilan rasm tahlili
-        ai_desc = await _gemini_describe_image(desc_path, p.get("name", "") or "")
+        # Tavsif manbai (birinchisi bor bo'lsa — AI chaqirilmaydi, token tejaladi):
+        #   1) tasdiqlangan yo'riqnoma kartochkasi — zavod yozgan aniq fakt;
+        #   2) tovarning saqlangan tavsifi (qo'lda yozilgan yoki oldingi postdagi);
+        #   3) faqat ikkalasi ham bo'lmasa — AI rasmga qarab yozadi.
+        from bot import api_labels
+        ai_desc, desc_from_ai = "", False
+        try:
+            facts = await db._in_thread(api_labels.approved_facts, db, pid)
+            ai_desc = api_labels.channel_desc(facts) if facts else ""
+        except Exception as e:
+            logger.warning(f"📄 Yo'riqnoma o'qilmadi (#{pid}): {e}")
+        if not ai_desc:
+            ai_desc = (p.get("description") or "").strip()
+        if not ai_desc:
+            ai_desc = await _gemini_describe_image(desc_path, p.get("name", "") or "")
+            desc_from_ai = bool(ai_desc)
 
         from database._formatters import _fmt_product
         # Bo'lim nomi — kaptiondagi hashtag uchun (#santexnika kabi).
@@ -333,7 +347,7 @@ async def _post_product_to_channel(db, p: dict, pid: int,
                 cur_desc = (conn.execute(
                     "SELECT description FROM products WHERE id=?", (pid,)
                 ).fetchone() or [""])[0] or ""
-                if ai_desc and not cur_desc.strip():
+                if desc_from_ai and not cur_desc.strip():
                     conn.execute(
                         "UPDATE products SET image_file_id=?, channel_msg_id=?, "
                         "channel_msg_ids=?, description=? WHERE id=?",
@@ -1791,6 +1805,13 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
         p = await _db.get_product_any(pid)
         if not p or not (p.get("image_url") or ""):
             return
+        # Yo'riqnoma yuklangan-u, hali tasdiqlanmagan — AI taxmini bilan post
+        # yubormaymiz: admin tasdiqlaganda aniq ma'lumot bilan o'zi chiqadi.
+        from bot import api_labels
+        if api_labels._photos(pid) and not await _db._in_thread(
+                api_labels.approved_facts, _db, pid):
+            logger.info(f"📢 Post yo'riqnoma tasdig'ini kutmoqda (#{pid})")
+            return
         _last_post[pid] = now
         await _post_product_to_channel(_db, p, pid)
     except Exception as e:
@@ -1843,6 +1864,16 @@ async def _enrich_steps(pid: int, image_path: str, _db, ai_category):
 
     # ── «Qanday ishlatiladi» qo'llanmasi (internetdan) ────────────────────
     # Bir marta topiladi va bazada qoladi; keyingi e'lonlarda qayta izlanmaydi.
+    # Tasdiqlangan yo'riqnoma bo'lsa — qo'llanma o'shandan, internet va AI'siz.
+    try:
+        from bot import api_labels
+        facts = await _db._in_thread(api_labels.approved_facts, _db, pid)
+        guide = api_labels.usage_text(facts) if facts else ""
+        if guide:
+            await _db._in_thread(api_labels._save_usage, pid, guide)
+    except Exception as e:
+        logger.warning(f"📄 Yo'riqnoma qo'llanmasi yozilmadi (#{pid}): {e}")
+
     try:
         p = await _db.get_product_any(pid)
         if p and not (p.get("usage_info") or "").strip():

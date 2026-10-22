@@ -794,6 +794,8 @@
         window.openProductForm = async function (id) {
             _editingId = id || 0;
             _pendingImageUrl = '';
+            _pendingLabelFiles = [];
+            _pfLabelStatus('');
             $('prodFormTitle').textContent = _editingId ? '✏️ Tahrirlash' : '➕ Yangi mahsulot';
             $('pfStatus').textContent = '';
             // Maydonlarni tozalaymiz
@@ -825,6 +827,41 @@
             }
             showScreen('screenProdForm');
         };
+
+        // ── Tovar formasida yo'riqnoma ───────────────────────────────────
+        // Tovar rasmi bilan BIR JOYDA: alohida «Yorliq o'qitish» bo'limiga
+        // kirmasdan yuklanadi. Mavjud tovarda darrov o'qiladi; yangi tovarda
+        // saqlangandan keyin. O'qilgach — tekshirib tasdiqlash ekrani.
+        let _pendingLabelFiles = [];
+
+        function _pfLabelStatus(html) { const s = $('pfLblStatus'); if (s) s.innerHTML = html; }
+
+        window.pfLabelPick = async function (input) {
+            const files = Array.from((input && input.files) || []);
+            if (input) input.value = '';
+            if (!files.length) return;
+            _pendingLabelFiles = _pendingLabelFiles.concat(files).slice(0, 6);
+            if (_editingId) {
+                await _pfLabelSend(_editingId);
+            } else {
+                _pfLabelStatus(`📄 ${_pendingLabelFiles.length} ta surat tanlandi — saqlashda o'qiladi`);
+            }
+        };
+
+        async function _pfLabelSend(pid) {
+            const files = _pendingLabelFiles;
+            _pendingLabelFiles = [];
+            _pfLabelStatus('⏳ AI yo\'riqnomani o\'qimoqda… (10–40 soniya)');
+            const { status, data } = await _labelRead(pid, files);
+            if (!data.ok) {
+                _pfLabelStatus('⚠️ ' + escapeHtml(data.error || ('Xato ' + status)) +
+                    `<br><button type="button" class="more-btn" onclick="openLabelFor(${pid})">📄 Yorliq ekranida qayta urinish</button>`);
+                return false;
+            }
+            _pfLabelStatus(`✅ ${data.read_photos || files.length} ta surat o'qildi.` +
+                `<br><button type="button" class="save-btn" onclick="openLabelFor(${pid})">Tekshirib tasdiqlash ›</button>`);
+            return true;
+        }
 
         window.prodFormBack = function () {
             showScreen(_editingId ? 'screenProdDetail' : 'screenProducts');
@@ -859,6 +896,17 @@
                     btn.disabled = false; return;
                 }
                 const newId = data.id;
+                // Yo'riqnoma tanlangan bo'lsa — RASMDAN OLDIN o'qitamiz: server
+                // rasm yuklanganda kutilayotgan yo'riqnomani ko'radi va kanalga
+                // AI taxmini bilan post yubormaydi (tasdiqlanganda aniq ma'lumot
+                // bilan o'zi yuboradi). AI tokeni ham ikki marta sarflanmaydi.
+                let okLbl = false;
+                const hadLabels = _pendingLabelFiles.length > 0;
+                if (hadLabels) {
+                    $('pfStatus').textContent = '✅ Saqlandi. Yo\'riqnoma o\'qilmoqda…';
+                    _editingId = newId;
+                    okLbl = await _pfLabelSend(newId);
+                }
                 // Agar yangi mahsulotga rasm tanlangan bo'lsa — endi yuklaymiz
                 if (_pendingImageFile) {
                     $('pfStatus').textContent = '⏳ Rasm yuklanmoqda...';
@@ -870,6 +918,12 @@
                         btn.disabled = false;
                         return;
                     }
+                }
+                if (hadLabels) {
+                    btn.disabled = false;
+                    if (okLbl) openLabelFor(newId);
+                    else $('pfStatus').textContent = '✅ Saqlandi (yo\'riqnoma o\'qilmadi — pastdagi tugma orqali qayta urining)';
+                    return;
                 }
                 $('pfStatus').textContent = '✅ Saqlandi!';
                 btn.disabled = false;
@@ -2575,17 +2629,14 @@
             });
         }
 
-        window.lblUpload = async function (files) {
-            if (!_lbl || !_lbl.product) return;
-            _lblCollect();
-            const busy = $('lblBusy');
-            if (busy) busy.innerHTML = '<div class="lbl-busy">⏳ AI yorliqni o\'qimoqda va o\'zbekchaga o\'girmoqda… (10–40 soniya)</div>';
+        // Yorliq suratlarini serverga yuborib o'qitadi (yorliq ekrani ham,
+        // tovar formasi ham shu bitta yo'ldan foydalanadi).
+        async function _labelRead(pid, files) {
             const fd = new FormData();
-            fd.append('pid', String(_lbl.product.id));
+            fd.append('pid', String(pid));
             for (const f of Array.from(files || []).slice(0, 6)) {
                 fd.append('photo', await _lblCompress(f), 'label.jpg');
             }
-            let data = {}, status = 0;
             try {
                 const resp = await fetch(API_BASE_URL + '/api/admin/label/read', {
                     method: 'POST',
@@ -2593,9 +2644,17 @@
                                'X-Telegram-Init-Data': (tg && tg.initData) || '',
                                'X-Session-Token': _sessionToken || '' },
                     body: fd });
-                status = resp.status;
-                data = await resp.json().catch(() => ({}));
-            } catch (e) { data = { error: 'Internet xatosi' }; }
+                const data = await resp.json().catch(() => ({}));
+                return { status: resp.status, data };
+            } catch (e) { return { status: 0, data: { error: 'Internet xatosi' } }; }
+        }
+
+        window.lblUpload = async function (files) {
+            if (!_lbl || !_lbl.product) return;
+            _lblCollect();
+            const busy = $('lblBusy');
+            if (busy) busy.innerHTML = '<div class="lbl-busy">⏳ AI yorliqni o\'qimoqda va o\'zbekchaga o\'girmoqda… (10–40 soniya)</div>';
+            const { status, data } = await _labelRead(_lbl.product.id, files);
             if (!data.ok) {
                 // Suratlar serverda qoldi — yangisini qo'shish yoki qayta o'qitish mumkin
                 const r = await apiFetch('/api/admin/label?pid=' + _lbl.product.id);
@@ -2619,7 +2678,7 @@
             const r = await apiFetch('/api/admin/label?pid=' + d.product.id);
             if (r.ok && r.data.ok) _lbl = r.data;
             _lblRender(status === 'approved'
-                ? `✅ Tasdiqlandi${data.photos_removed ? ` — ${data.photos_removed} ta yorliq surati o'chirildi` : ''}${data.category_applied ? ` · bo'lim: ${escapeHtml(data.category_applied)}` : ''}<br>🤖 AI shu tovar bo'yicha maslahat savoli tayyorlayapti — bir daqiqadan keyin «🧐 Maslahatlar»da ko'rasiz`
+                ? `✅ Tasdiqlandi${data.photos_removed ? ` — ${data.photos_removed} ta yorliq surati o'chirildi` : ''}${data.category_applied ? ` · bo'lim: ${escapeHtml(data.category_applied)}` : ''}${data.reposted ? '<br>📢 Kanal posti yo\'riqnomadagi ma\'lumot bilan yangilanmoqda' : ''}<br>🤖 AI shu tovar bo'yicha maslahat savoli tayyorlayapti — bir daqiqadan keyin «🧐 Maslahatlar»da ko'rasiz`
                 : '💾 Qoralama saqlandi');
         };
 

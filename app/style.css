@@ -1437,3 +1437,11 @@
 .cl-pick-why { font-size: 12.5px; line-height: 1.45; margin-top: 8px; color: var(--text-color); }
 .cl-compare { background: var(--primary-light); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.45; align-self: stretch; color: var(--text-color); }
 .cl-chat-box { max-height: 62vh; }
+
+/* Tovar formasida yo'riqnoma — tovar rasmidan keyin, alohida bo'limga kirmasdan */
+.pf-label-box { margin: 12px 0 6px; padding: 10px 12px; border-radius: 12px;
+    border: 1px dashed rgba(127,127,127,.45); background: rgba(127,127,127,.06); }
+.pf-label-title { font-weight: 700; font-size: 14px; }
+.pf-label-hint { font-size: 12px; opacity: .75; margin-top: 3px; line-height: 1.35; }
+.pf-label-status { font-size: 13px; margin-top: 6px; line-height: 1.4; }
+.pf-label-status button { margin-top: 6px; }

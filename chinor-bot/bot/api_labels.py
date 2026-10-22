@@ -164,6 +164,67 @@ def _decode(row: dict) -> dict:
             "specs": [s for s in specs if isinstance(s, dict) and s.get("k")]}
 
 
+def approved_facts(db, pid: int) -> dict:
+    """Tasdiqlangan kartochka maydonlari ({} — kartochka yo'q yoki qoralama)."""
+    row = _get_row(db, pid)
+    if not row or row.get("status") != "approved":
+        return {}
+    facts = _decode(row)["facts"]
+    return facts if any(facts.values()) else {}
+
+
+def _short(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    dot = cut.rfind(". ")
+    return (cut[:dot + 1] if dot > limit * 0.5 else cut.rstrip() + "…")
+
+
+def channel_desc(facts: dict) -> str:
+    """Kanal posti tavsifi — yo'riqnomadan, AI'siz (token sarflanmaydi).
+
+    Yo'riqnomada zavod o'zi yozgan fakt bor; rasmga qarab AI taxmin
+    qilganidan aniqroq. Faqat to'ldirilgan maydonlar chiqadi."""
+    lines = []
+    if facts.get("purpose"):
+        lines.append("✅ " + _short(facts["purpose"], 220))
+    origin = " · ".join(v for v in (facts.get("brand"), facts.get("country"),
+                                     facts.get("technology")) if v)
+    if origin:
+        lines.append("🏭 " + _short(origin, 120))
+    for key, icon in (("volume", "📦"), ("consumption", "📏"), ("drying", "⏱")):
+        if facts.get(key):
+            lines.append(f"{icon} {_short(facts[key], 90)}")
+    return "\n".join(lines)
+
+
+def usage_text(facts: dict) -> str:
+    """«Qanday ishlatiladi» izohi — yo'riqnomaning o'zidan (internetdan emas)."""
+    parts = []
+    for key, title in (("usage", "📖 Qanday ishlatiladi"), ("consumption", "📏 Sarfi"),
+                       ("drying", "⏱ Qurish vaqti"), ("warnings", "⚠️ Ehtiyot choralari"),
+                       ("storage", "🗄 Saqlash")):
+        if facts.get(key):
+            parts.append(f"{title}:\n{facts[key].strip()}")
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n\nℹ️ Manba: zavod yo'riqnomasi"
+
+
+def _save_usage(pid: int, text: str) -> None:
+    # `update_product` EMAS — u kanal kaptionini qayta yozib yuboradi.
+    import sqlite3
+    from database._helpers import DB_PATH
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        conn.execute("UPDATE products SET usage_info=? WHERE id=?", (text, pid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def public_info(db, pid: int) -> dict:
     """Mijozga va AI maslahatchiga: faqat TASDIQLANGAN kartochka + do'kon bahosi."""
     row = _get_row(db, pid)
@@ -443,6 +504,7 @@ async def api_admin_label_save(request: web.Request):
         applied = category
 
     removed = 0
+    reposted = False
     if status == "approved":
         # Yangi fakt paydo bo'ldi — shu bo'lim uchun AI savol taklif qilsin
         # (fonda, qoralama sifatida; admin «🧐 Maslahatlar»da ko'radi)
@@ -452,13 +514,30 @@ async def api_admin_label_save(request: web.Request):
         d = _labels_dir(pid)
         removed = len(_photos(pid))
         shutil.rmtree(d, ignore_errors=True)
+        # Kanal posti endi yo'riqnomadagi faktlar bilan qayta chiqadi: tovar
+        # avval rasmdan (AI taxmini bilan) e'lon qilingan bo'lsa, eski post
+        # o'chib, aniq ma'lumotli yangisi ketadi. Qo'llanma izohi ham
+        # internetdan emas, yo'riqnomaning o'zidan olinadi.
+        guide = usage_text(facts)
+        if guide:
+            await db._in_thread(_save_usage, pid, guide)
+        try:
+            from bot import web_api
+            p = await db.get_product_any(pid)
+            if p and (p.get("image_url") or "") and db.is_channel_enabled():
+                web_api._last_post.pop(pid, None)
+                asyncio.get_event_loop().create_task(
+                    web_api._post_debounced(db, p, pid, gap=0))
+                reposted = True
+        except Exception as e:
+            logger.warning(f"📢 Yo'riqnomadan qayta post bo'lmadi (#{pid}): {e}")
     try:
         from bot import api_recommend
         api_recommend._cache["at"] = 0           # kategoriya o'zgargan bo'lishi mumkin
     except Exception:
         pass
     return web.json_response({"ok": True, "status": status, "photos_removed": removed,
-                              "category_applied": applied})
+                              "category_applied": applied, "reposted": reposted})
 
 
 @LABEL_ROUTES.get("/api/admin/labels")

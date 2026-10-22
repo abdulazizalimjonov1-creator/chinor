@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=9">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -288,6 +288,18 @@
                 </div>
                 <input type="file" id="prodImgInput" accept="image/*" style="display:none">
                 <input type="file" id="prodImgCam" accept="image/*" capture="environment" style="display:none">
+                <div class="pf-label-box">
+                    <div class="pf-label-title">📄 Yo'riqnoma / yorliq surati</div>
+                    <div class="pf-label-hint">Ixtiyoriy. Tovar rasmi emas — AI undagi matnni o'qiydi, kanal posti va
+                        «qanday ishlatiladi» shundan yoziladi. Bir nechta surat mumkin (old, orqa, yo'riqnoma).</div>
+                    <div class="img-pick-row">
+                        <button type="button" class="img-pick-btn" onclick="$('pfLblCam').click()">📷 Suratga olish</button>
+                        <button type="button" class="img-pick-btn" onclick="$('pfLblGal').click()">🖼 Galereya</button>
+                    </div>
+                    <input type="file" id="pfLblCam" accept="image/*" capture="environment" style="display:none" onchange="pfLabelPick(this)">
+                    <input type="file" id="pfLblGal" accept="image/*" multiple style="display:none" onchange="pfLabelPick(this)">
+                    <div id="pfLblStatus" class="pf-label-status"></div>
+                </div>
                 <label>Nomi *</label><input type="text" id="pfName" placeholder="Mahsulot nomi">
                 <label>Mijozga ko'rinadigan nom</label>
                 <input type="text" id="pfDisplayName" placeholder="Bo'sh qoldirilsa — yuqoridagi nom">
@@ -500,6 +512,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=19"></script>
 </body>
 </html>
