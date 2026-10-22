@@ -1,0 +1,8 @@
+tunnel: <TUNNEL-UUID>
+credentials-file: C:\chinor\secrets\<TUNNEL-UUID>.json
+protocol: http2
+no-autoupdate: true
+ingress:
+  - hostname: kassa.chinorpos.com
+    service: http://127.0.0.1:8765
+  - service: http_status:404
