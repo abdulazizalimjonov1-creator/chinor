@@ -428,6 +428,15 @@ def _call_cloudflare(model: str, prompt: str, img_b64: str = "") -> str:
     acc = os.getenv("CF_ACCOUNT_ID", "").strip()
     if not acc or not _keys("CF_API_TOKEN"):
         raise _NoKey("CF_ACCOUNT_ID/CF_API_TOKEN yo'q")
+    # Cloudflare'ning bepul kunlik kvotasi (~10 000 birlik) rolik sahnalari
+    # (flux, bot/reels.py) bilan UMUMIY. Matn/rasm zaxirasi uni yeb qo'ymasin:
+    # kuniga CF_AI_DAILY_MAX chaqiruvdan keyin bu provayder o'tkazib yuboriladi
+    # (~80 chaqiruv ≈ 6 000 birlik — rolik uchun yetarli joy qoladi).
+    cap = int(os.getenv("CF_AI_DAILY_MAX", "80") or 80)
+    u = _load_state().get("usage", {})
+    if u.get("day") == time.strftime("%Y-%m-%d") and sum(
+            int(v) for k, v in u.items() if "cloudflare" in k) >= cap:
+        raise _NoKey(f"Cloudflare kunlik chegarasi ({cap}) — rolik uchun zaxira")
     payload = {"prompt": prompt, "max_tokens": 400}
     if img_b64:
         payload["image"] = list(base64.b64decode(img_b64))
