@@ -67,7 +67,10 @@ BG_BOTTOM = (13, 38, 26)
 ACCENT = (116, 198, 157)
 CARD_BG = (243, 251, 244)
 
-GRAPH = "https://graph.facebook.com/v21.0"
+# Instagram API manzili — "Instagram login" tokeni (IGA...) uchun
+# graph.instagram.com, Facebook sahifasi tokeni (EAA...) uchun esa
+# graph.facebook.com. config.IG_GRAPH_BASE orqali almashtiriladi.
+_GRAPH_DEFAULT = "https://graph.instagram.com/v23.0"
 
 
 def _cfg(name: str, default: str = "") -> str:
@@ -78,13 +81,75 @@ def _cfg(name: str, default: str = "") -> str:
         return os.getenv(name, default)
 
 
+def _graph() -> str:
+    return _cfg("IG_GRAPH_BASE", _GRAPH_DEFAULT).rstrip("/")
+
+
 def is_available() -> bool:
     """ffmpeg bormi? Bo'lmasa butun mexanizm jim o'chadi."""
     return bool(shutil.which("ffmpeg"))
 
 
+# ── Token: uzoq muddatli, lekin ~60 kunda tugaydi ──────────────────────────
+# Instagram "long-lived" tokenini tugashidan oldin yangilab turish kerak.
+# Yangi token .env ga emas, `data/ig_token.json` ga yoziladi (DATA_DIR kod
+# daraxtidan tashqarida) — shunda deploy eski tokenni qaytarib qo'ymaydi.
+_TOKEN_FILE = os.path.join(_DATA_DIR, "ig_token.json")
+_REFRESH_AFTER = 30 * 86400      # 30 kundan eski bo'lsa yangilaymiz
+
+
+def _token_cache() -> dict:
+    try:
+        with open(_TOKEN_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if d.get("token") else {}
+    except Exception:
+        return {}
+
+
+def _token_save(token: str) -> None:
+    try:
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        tmp = _TOKEN_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"token": token, "saved_at": int(time.time())}, f)
+        os.replace(tmp, _TOKEN_FILE)
+        os.chmod(_TOKEN_FILE, 0o600)
+    except Exception as e:
+        logger.warning("🎬 Instagram tokenini saqlab bo'lmadi: %s", e)
+
+
+def ig_token() -> str:
+    """Amaldagi token — keshdagisi .env dagisidan ustun."""
+    return _token_cache().get("token") or _cfg("IG_ACCESS_TOKEN")
+
+
+def refresh_ig_token() -> bool:
+    """Token 30 kundan eski bo'lsa yangilaydi. True = yangilandi."""
+    cur = ig_token()
+    if not cur:
+        return False
+    c = _token_cache()
+    if c.get("token") and (time.time() - int(c.get("saved_at") or 0)) < _REFRESH_AFTER:
+        return False
+    try:
+        r = _get("https://graph.instagram.com/refresh_access_token"
+                 "?grant_type=ig_refresh_token&access_token=" + cur)
+        new = r.get("access_token")
+        if not new:
+            logger.warning("🎬 Instagram token yangilanmadi: %s", r)
+            return False
+        _token_save(new)
+        logger.info("🎬 Instagram tokeni yangilandi (%s kun)",
+                    r.get("expires_in", 0) // 86400)
+        return True
+    except Exception as e:
+        logger.warning("🎬 Instagram token yangilashda xato: %s", e)
+        return False
+
+
 def ig_configured() -> bool:
-    return bool(_cfg("IG_USER_ID") and _cfg("IG_ACCESS_TOKEN")
+    return bool(_cfg("IG_USER_ID") and ig_token()
                 and _cfg("PUBLIC_BASE_URL"))
 
 
@@ -2134,11 +2199,12 @@ def publish_instagram(video_url: str, caption: str) -> tuple:
 
     Instagram videoni O'ZI yuklab oladi, shuning uchun `video_url` ochiq
     HTTPS manzil bo'lishi shart (bizda `/api/reel/<fayl>`)."""
-    ig_id, token = _cfg("IG_USER_ID"), _cfg("IG_ACCESS_TOKEN")
+    refresh_ig_token()          # 30 kundan eski bo'lsa yangilanadi
+    ig_id, token = _cfg("IG_USER_ID"), ig_token()
     if not (ig_id and token):
         return "", "Instagram sozlanmagan"
     try:
-        cr = _post(f"{GRAPH}/{ig_id}/media", {
+        cr = _post(f"{_graph()}/{ig_id}/media", {
             "media_type": "REELS", "video_url": video_url,
             "caption": caption[:2200], "share_to_feed": "true",
             "access_token": token,
@@ -2149,7 +2215,7 @@ def publish_instagram(video_url: str, caption: str) -> tuple:
         # Instagram videoni qayta ishlaydi — tayyor bo'lguncha kutamiz
         for _ in range(30):
             time.sleep(5)
-            st = _get(f"{GRAPH}/{cid}?fields=status_code&access_token={token}")
+            st = _get(f"{_graph()}/{cid}?fields=status_code&access_token={token}")
             code = st.get("status_code", "")
             if code == "FINISHED":
                 break
@@ -2157,7 +2223,7 @@ def publish_instagram(video_url: str, caption: str) -> tuple:
                 return "", f"Instagram qayta ishlay olmadi: {st}"
         else:
             return "", "Instagram juda uzoq qayta ishladi"
-        pub = _post(f"{GRAPH}/{ig_id}/media_publish",
+        pub = _post(f"{_graph()}/{ig_id}/media_publish",
                     {"creation_id": cid, "access_token": token})
         mid = pub.get("id")
         return (mid, "") if mid else ("", f"joylanmadi: {pub}")

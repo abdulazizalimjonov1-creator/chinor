@@ -90,6 +90,27 @@ CORS_ALLOW_ORIGIN = os.getenv(
     "https://silver-alfajores-15ae4c.netlify.app"
 ).strip()
 
+# ── Instagram (rolik avtomatik joylash) ──────────────────────────────────
+# `bot/reels.py` tayyor rolikni Instagram'ga Reels sifatida qo'yadi.
+# Instagram videoni O'ZI yuklab oladi, shuning uchun fayl ochiq HTTPS
+# manzilda turishi shart — PUBLIC_BASE_URL + /api/reel/<fayl>.
+#
+#   IG_USER_ID        — Instagram biznes akkaunt ID (raqam)
+#   IG_ACCESS_TOKEN   — "Instagram login" tokeni (IGA... bilan boshlanadi)
+#   PUBLIC_BASE_URL   — shu serverning tashqi manzili, masalan
+#                       https://kassa.chinorpos.com
+# Uchalasi ham to'ldirilmasa — Instagram jim o'chadi, rolik faqat
+# Telegram kanalga tushadi (reels.ig_configured() ga qarang).
+IG_USER_ID      = os.getenv("IG_USER_ID", "").strip()
+IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "").strip()
+IG_APP_ID       = os.getenv("IG_APP_ID", "").strip()
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()
+# "Instagram login" tokenlari graph.instagram.com bilan ishlaydi;
+# Facebook sahifasi orqali olingan token (EAA...) uchun esa
+# https://graph.facebook.com/v21.0 ko'rsatiladi.
+IG_GRAPH_BASE   = os.getenv("IG_GRAPH_BASE",
+                            "https://graph.instagram.com/v23.0").strip().rstrip("/")
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 # Groq ko'rish (vision) modeli — kanal posti uchun rasmdan tavsif yozadi.

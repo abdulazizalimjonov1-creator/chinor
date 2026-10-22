@@ -4251,6 +4251,26 @@ UPDATES_DIR = os.path.realpath(os.path.join(
 os.makedirs(UPDATES_DIR, exist_ok=True)
 
 
+# ── Rolik fayllari (Instagram uchun ochiq) ─────────────────────────────────
+# Instagram Reels'ni O'ZI yuklab oladi, shuning uchun bu manzil
+# autentifikatsiyasiz bo'lishi SHART. Faqat `data/reels/` ichidagi .mp4
+# beriladi; fayl nomi reels.py tomonidan yaratiladi (tasodifiy qism bilan).
+REELS_DIR = os.path.realpath(os.path.join(_DATA_DIR, "reels"))
+
+
+async def reel_static(request: web.Request):
+    """`/api/reel/<fayl>.mp4` — tayyor rolikni ochiq beradi."""
+    name = request.match_info.get("name", "")
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise web.HTTPNotFound()
+    if os.path.splitext(name)[1].lower() != ".mp4":
+        raise web.HTTPNotFound()
+    fpath = os.path.realpath(os.path.join(REELS_DIR, name))
+    if not fpath.startswith(REELS_DIR + os.sep) or not os.path.isfile(fpath):
+        raise web.HTTPNotFound()
+    return web.FileResponse(fpath, headers={"Content-Type": "video/mp4"})
+
+
 async def updates_static(request: web.Request):
     """Desktop ilova electron-updater shu yerdan latest.yml va .exe oladi."""
     name = request.match_info.get("name", "")
@@ -4347,6 +4367,7 @@ def create_app() -> web.Application:
     from bot import api_labels
     api_labels.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
+    app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
     app.router.add_get("/updates/{name}", updates_static)
     # Frontend statik fayllar
