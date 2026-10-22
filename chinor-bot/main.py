@@ -205,6 +205,10 @@ async def main():
     from bot import yespos_sync
     yespos_task = asyncio.create_task(yespos_sync.loop(bot))
 
+    # Kassa kompyuteridan (Tailscale/sftp) kelgan shtrix-kod va mijozlar CSV'si
+    from bot import yespos_local_import
+    local_import_task = asyncio.create_task(yespos_local_import.loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -218,6 +222,7 @@ async def main():
         backup_task.cancel()
         receipts_task.cancel()
         yespos_task.cancel()
+        local_import_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:
