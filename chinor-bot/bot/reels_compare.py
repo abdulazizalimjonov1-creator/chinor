@@ -118,6 +118,15 @@ def _fact(info: dict, prefix: str) -> str:
     return ""
 
 
+def _buyers_map() -> dict:
+    """pid → oxirgi 30 kunda nechta chekda uchragani (YesPOS cheklari)."""
+    try:
+        from bot import api_recommend as R
+        return dict(R._LAST_BUYERS)
+    except Exception:
+        return {}
+
+
 async def _pick_pair(db, prods: list) -> list:
     """Ikki tovar: imkon qadar ikkalasida yorliq kartochkasi bo'lsin, turli
     oilalardan (bir xil tovarning 2,5 va 0,7 kg lik bankasi taqqoslanmaydi),
@@ -130,7 +139,8 @@ async def _pick_pair(db, prods: list) -> list:
         info = await _info(db, p["id"])
         kg = size_kg(p.get("name", ""))
         per = float(p["sell_price"]) / kg if kg > 0 else 0
-        scored.append({"p": p, "info": info, "per": per,
+        scored.append({"p": p, "info": info, "per": per, "kg": kg,
+                       "buyers": int(_buyers_map().get(p["id"], 0)),
                        "facts": bool(info.get("facts")),
                        "rating": int(info.get("store_rating") or 0),
                        "img": bool(_img_path(p)), "fam": _family(p.get("name", ""))})
@@ -150,7 +160,7 @@ async def _pick_pair(db, prods: list) -> list:
     return pair
 
 
-async def pick_topic(db, guide_id: int = 0) -> dict:
+async def pick_topic(db, guide_id: int = 0, skip: set = None) -> dict:
     """{guide, pair, topic} yoki {} — mos mavzu yo'q."""
     from bot import api_guides
     recent = _recent_keys()
@@ -162,7 +172,7 @@ async def pick_topic(db, guide_id: int = 0) -> dict:
             continue
         prods = await api_guides._products_for(db, g["query"], g["calc"] if not g["query"] else "")
         pair = await _pick_pair(db, prods)
-        if pair:
+        if pair and ("g", g["id"]) not in (skip or set()):
             return {"guide": g, "pair": pair, "topic": g["question"]}
     if guide_id:
         return {}
@@ -181,10 +191,11 @@ async def pick_topic(db, guide_id: int = 0) -> dict:
         pair = await _pick_pair(db, members)
         if pair:
             key = ",".join(str(s["p"]["id"]) for s in pair)
-            if (0, key) in recent:
+            if (0, key) in recent or ("c", cid) in (skip or set()):
                 continue
             c = await db.get_category(cid)
-            return {"guide": None, "pair": pair, "topic": f"{(c or {}).get('name', '')}: qaysi birini olish kerak?"}
+            return {"guide": None, "pair": pair, "cid": cid,
+                    "topic": f"{(c or {}).get('name', '')}: qaysi birini olish kerak?"}
     return {}
 
 
@@ -207,6 +218,11 @@ def build_rows(pair: list) -> list:
 
     add("Ishlab chiqarilgan", _fact(a["info"], "Ishlab chiqarilgan mamlakat"),
         _fact(b["info"], "Ishlab chiqarilgan mamlakat"))
+    # Yorliq kartochkasi kam — bazadagi HAQIQIY ma'lumot ham qator bo'ladi:
+    # hajm (nomdan), oxirgi 30 kunda nechta xaridda bo'lgani (YesPOS cheklari).
+    ka, kb = a.get("kg") or 0, b.get("kg") or 0
+    if ka > 0 and kb > 0 and ka != kb:
+        add("Hajmi", f"{ka:g} kg", f"{kb:g} kg")
     if a["per"] > 0 and b["per"] > 0:
         add("1 kg narxi", f"{a['per']:,.0f}".replace(",", " ") + " so'm",
             f"{b['per']:,.0f}".replace(",", " ") + " so'm",
@@ -218,10 +234,15 @@ def build_rows(pair: list) -> list:
             "a" if pa < pb else ("b" if pb < pa else ""))
     add("Sarfi", _fact(a["info"], "Sarfi"), _fact(b["info"], "Sarfi"))
     add("Qurishi", _fact(a["info"], "Qurish"), _fact(b["info"], "Qurish"))
+    ba, bb = a.get("buyers") or 0, b.get("buyers") or 0
+    if ba > 0 and bb > 0:
+        add("30 kunda olishdi", f"{ba} marta", f"{bb} marta",
+            "a" if ba > bb else ("b" if bb > ba else ""))
     ra, rb = a["rating"], b["rating"]
     if ra and rb:
         add("Do'kon bahosi", "★" * ra, "★" * rb, "a" if ra > rb else ("b" if rb > ra else ""))
     add("Texnologiya", _fact(a["info"], "Texnologiya"), _fact(b["info"], "Texnologiya"))
+    add("Brend", _fact(a["info"], "Brend"), _fact(b["info"], "Brend"))
     return rows
 
 
@@ -983,11 +1004,29 @@ def _caption(topic: dict, script: dict, pair: list) -> str:
 
 async def produce(db, guide_id: int = 0) -> dict:
     """Mavzu → ssenariy → video → adminga tasdiq uchun. {ok, id|error}."""
-    topic = await pick_topic(db, guide_id)
+    from bot import api_recommend as _R
+    try:
+        await _R._index(db)            # YesPOS savdo hisobini yangilaydi (buyers)
+    except Exception:
+        pass
+    # Birinchi mavzuda fakt kam bo'lsa — keyingisini sinaymiz (ilgari birinchisi
+    # yaramasa butun kun video chiqmasdi, 2026-10-20…22 shunday bo'ldi).
+    # Bir nechta mavzu ko'rib chiqiladi va ENG KO'P faktli (qatorli) tanlanadi:
+    # 2 qatorli taqqoslash zaif, 3–4 qatorlisi videoda ishonarli ko'rinadi.
+    skip, topic, rows = set(), {}, []
+    for _ in range(8):
+        cand = await pick_topic(db, guide_id, skip)
+        if not cand:
+            break
+        crow = build_rows(cand["pair"])
+        if len(crow) > len(rows):
+            topic, rows = cand, crow
+        if guide_id or len(rows) >= MAX_ROWS:
+            break
+        skip.add(("g", cand["guide"]["id"]) if cand.get("guide") else ("c", cand.get("cid")))
     if not topic:
         return {"ok": False, "error": "Mos mavzu yo'q: nashr qilingan maslahat yoki yorliq "
                                        "kartochkasi bor kamida 2 tovar kerak"}
-    rows = build_rows(topic["pair"])
     if len(rows) < 2:
         return {"ok": False, "error": "Taqqoslash uchun fakt kam — tovarlarga yorliq o'qiting"}
     pids = ",".join(str(s["p"]["id"]) for s in topic["pair"])
@@ -1032,7 +1071,7 @@ async def _send_for_approval(db, rid: int, video: str, caption: str, voice: bool
     from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
     from bot.config import GLAVNIY_ADMIN_ID
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Kanalga joylash", callback_data=f"rcmp_ok_{rid}"),
+        InlineKeyboardButton(text="✅ Kanal + Instagram", callback_data=f"rcmp_ok_{rid}"),
         InlineKeyboardButton(text="❌ Bekor", callback_data=f"rcmp_no_{rid}"),
     ]])
     note = "" if voice else "\n\n🔇 Diktor ovozi chiqmadi (AI kvotasi) — subtitr va musiqa bilan."
@@ -1072,7 +1111,42 @@ async def publish(db, rid: int) -> str:
     except Exception as e:
         return f"Kanalga chiqmadi: {e}"
     _set(rid, status="posted", channel_msg=getattr(msg, "message_id", 0))
+    # Instagram videoni o'zi yuklab, 1–2 daqiqa qayta ishlaydi — tugma javobi
+    # kutib qolmasin (Telegram 15 soniyadan keyin «eskirgan so'rov» deydi).
+    asyncio.get_event_loop().create_task(
+        _publish_instagram(db, rid, row, data.get("caption", "")))
     return ""
+
+
+def _ig_caption(html_caption: str) -> str:
+    import html, re as _re
+    txt = _re.sub(r"<[^>]+>", "", html_caption or "")
+    txt = html.unescape(txt).replace("buyurtma pastdagi tugma orqali",
+                                     "buyurtma — profildagi havola orqali")
+    return txt[:2200]
+
+
+async def _publish_instagram(db, rid: int, row: dict, caption: str) -> str:
+    """Tasdiqlangan taqqoslash videosini Instagram Reels'ga ham qo'yadi."""
+    from bot import reels as R
+    if not R.ig_configured() or not R._flag_on(db, "reels_auto", "0"):
+        return ""
+    url = R._cfg("PUBLIC_BASE_URL").rstrip("/") + "/api/reel/" + os.path.basename(row["video_path"])
+    mid, err = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: R.publish_instagram(url, _ig_caption(caption)))
+    if mid:
+        logger.info("🎬 Taqqoslash videosi Instagram'da: #%s → %s", rid, mid)
+    else:
+        logger.warning("🎬 Taqqoslash videosi Instagram'ga chiqmadi (#%s): %s", rid, err)
+    bot = getattr(db, "_bot", None)
+    if bot:
+        from bot.config import GLAVNIY_ADMIN_ID
+        try:
+            await bot.send_message(GLAVNIY_ADMIN_ID, "📸 Instagram: " + (
+                "taqqoslash videosi joylandi ✅" if mid else f"joylanmadi — {err}"[:300]))
+        except Exception:
+            pass
+    return "" if mid else (err or "noma'lum xato")
 
 
 def cleanup(keep_videos: int = 30, label_days: int = 21) -> int:
