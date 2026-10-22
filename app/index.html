@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=10">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -293,7 +293,7 @@
                     <div class="pf-label-hint">Ixtiyoriy. Tovar rasmi emas — AI undagi matnni o'qiydi, kanal posti va
                         «qanday ishlatiladi» shundan yoziladi. Bir nechta surat mumkin (old, orqa, yo'riqnoma).</div>
                     <div class="img-pick-row">
-                        <button type="button" class="img-pick-btn" onclick="$('pfLblCam').click()">📷 Suratga olish</button>
+                        <button type="button" class="img-pick-btn" onclick="openLabelCam('pf')">📷 Suratga olish</button>
                         <button type="button" class="img-pick-btn" onclick="$('pfLblGal').click()">🖼 Galereya</button>
                     </div>
                     <input type="file" id="pfLblCam" accept="image/*" capture="environment" style="display:none" onchange="pfLabelPick(this)">
@@ -452,14 +452,15 @@
              ko'rsatadi va suratni o'zimiz olamiz. -->
         <div id="camOverlay">
             <div class="scan-top">
-                <span class="scan-title">📷 Mahsulotni suratga oling</span>
+                <span class="scan-title" id="camTitle">📷 Mahsulotni suratga oling</span>
                 <button class="scan-close" onclick="closePhotoCam()">✕ Yopish</button>
             </div>
             <div class="cam-stage"><div id="camView"></div></div>
             <div class="cam-actions">
                 <button class="cam-flip" onclick="flipPhotoCam()" title="Kamerani almashtirish">🔄</button>
                 <button class="cam-shot" onclick="takePhoto()" aria-label="Suratga olish"></button>
-                <button class="cam-flip" onclick="pickProductImage('gallery')" title="Galereyadan">🖼</button>
+                <button class="cam-flip" onclick="camGallery()" title="Galereyadan">🖼</button>
+                <button class="cam-done" id="camDone" onclick="camDone()" style="display:none">✓ Tayyor</button>
             </div>
         </div>
 
@@ -512,6 +513,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=19"></script>
+    <script src="app.js?v=20"></script>
 </body>
 </html>

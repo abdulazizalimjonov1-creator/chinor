@@ -957,13 +957,54 @@
 
         // ── O'z kameramiz ────────────────────────────────────────────────
         let _camStream = null, _camVideo = null, _camFacing = 'environment';
+        // 'product' — bitta tovar rasmi; 'lbl' / 'pf' — yorliq suratlari
+        // (yorliq ekrani / tovar formasi): bir nechta surat olinadi, «Tayyor».
+        let _camMode = 'product', _camBatch = [];
+
+        function _camFallback() {
+            if (_camMode === 'lbl') { const i = $('lblCam'); if (i) i.click(); }
+            else if (_camMode === 'pf') { const i = $('pfLblCam'); if (i) i.click(); }
+            else if (prodImgCam) prodImgCam.click();
+        }
+
+        function _camUi() {
+            const t = $('camTitle'), d = $('camDone');
+            const lbl = _camMode !== 'product';
+            if (t) t.textContent = !lbl ? '📷 Mahsulotni suratga oling'
+                : (_camBatch.length ? `📄 ${_camBatch.length} ta surat — yana oling yoki «Tayyor»`
+                                    : '📄 Yorliq / yo\'riqnomani suratga oling');
+            if (d) d.style.display = lbl && _camBatch.length ? '' : 'none';
+        }
+
+        window.openLabelCam = function (kind) {
+            _camMode = kind; _camBatch = [];
+            _camUi();
+            openPhotoCam();
+        };
+
+        window.camGallery = function () {
+            const mode = _camMode;
+            closePhotoCam();
+            if (mode === 'lbl') { const i = $('lblGal'); if (i) i.click(); }
+            else if (mode === 'pf') { const i = $('pfLblGal'); if (i) i.click(); }
+            else pickProductImage('gallery');
+        };
+
+        window.camDone = function () {
+            const mode = _camMode, files = _camBatch.slice();
+            closePhotoCam();
+            if (!files.length) return;
+            if (mode === 'lbl') lblUpload(files);
+            else if (mode === 'pf') pfLabelPick({ files });
+        };
 
         window.openPhotoCam = async function () {
             const ov = $('camOverlay');
             if (!ov || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                if (prodImgCam) prodImgCam.click();     // eski usul
+                _camFallback();     // eski usul
                 return;
             }
+            _camUi();
             ov.classList.add('active');
             const box = $('camView');
             try { box.innerHTML = ''; } catch(_) {}
@@ -976,7 +1017,7 @@
             } catch (e) {
                 ov.classList.remove('active');
                 // Ruxsat berilmagan yoki kamera yo'q — file-input bilan urinamiz
-                if (prodImgCam) prodImgCam.click();
+                _camFallback();
                 return;
             }
             const v = document.createElement('video');
@@ -1001,11 +1042,15 @@
             const box = $('camView');
             try { if (box) box.innerHTML = ''; } catch(_) {}
             if (ov) ov.classList.remove('active');
+            _camMode = 'product'; _camBatch = [];
+            _camUi();
         };
 
         window.flipPhotoCam = async function () {
             _camFacing = (_camFacing === 'environment') ? 'user' : 'environment';
+            const mode = _camMode, batch = _camBatch;
             closePhotoCam();
+            _camMode = mode; _camBatch = batch;
             await openPhotoCam();
         };
 
@@ -1023,6 +1068,13 @@
                 if (!blob) { toast('❌ Surat olinmadi'); return; }
                 const file = new File([blob], 'photo_' + Date.now() + '.jpg',
                                       { type: 'image/jpeg' });
+                if (_camMode !== 'product') {
+                    // Yorliq: kamera ochiq qoladi — orqa tomonini ham olish mumkin
+                    _camBatch.push(file);
+                    if (_camBatch.length >= 6) { camDone(); return; }
+                    _camUi();
+                    return;
+                }
                 closePhotoCam();
                 _handleProductImage(file);
             }, 'image/jpeg', 0.92);
@@ -2501,6 +2553,7 @@
                 <div class="search-bar" style="margin:12px 0">
                     <span class="search-ic">🔍</span>
                     <input type="text" id="lblSearch" placeholder="Tovar nomi yoki shtrix-kodi..." autocomplete="off">
+                    <button type="button" class="scan-btn" onclick="scanInto('label')" title="Shtrix-kodni skanerlash">📷</button>
                 </div>
                 <div id="lblResults"></div>
                 <div class="cl-sheet-sub">Oxirgi kartochkalar</div>
@@ -2520,12 +2573,14 @@
                 || '<div class="list-status">Hali yo\'q — yuqoridan tovarni toping</div>';
         };
 
-        async function _lblSearch(q) {
+        async function _lblSearch(q, autoOpen) {
             const box = $('lblResults');
             if (!box) return;
             if (!q) { box.innerHTML = ''; return; }
             const { ok, data } = await apiFetch('/api/products?page=0&q=' + encodeURIComponent(q));
             const items = (ok && data.ok) ? (data.items || data.products || []).slice(0, 12) : [];
+            // Skanerdan kelgan va bitta tovar topildi — darrov o'sha tovarni ochamiz
+            if (autoOpen && items.length === 1) { openLabelFor(items[0].id); return; }
             box.innerHTML = items.map(p => `<div class="g-row" onclick="openLabelFor(${p.id})">
                 <div><b>${escapeHtml(p.name)}</b><div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}</div></div><span>›</span></div>`).join('')
                 || '<div class="list-status">Topilmadi</div>';
@@ -2559,7 +2614,7 @@
                     Bir nechta surat tashlash mumkin (old, orqa, yo'riqnoma).</div>
                 <div class="lbl-photos">${(d.photos || []).map(t => `<img src="${t}">`).join('')}</div>
                 <div class="img-pick-row">
-                    <button type="button" class="img-pick-btn" onclick="$('lblCam').click()">📷 Yorliqni suratga olish</button>
+                    <button type="button" class="img-pick-btn" onclick="openLabelCam('lbl')">📷 Yorliqni suratga olish</button>
                     <button type="button" class="img-pick-btn" onclick="$('lblGal').click()">🖼 Galereyadan</button>
                 </div>
                 <input type="file" id="lblCam" accept="image/*" capture="environment" style="display:none" onchange="lblUpload(this.files)">
@@ -4186,6 +4241,11 @@
                 if (typeof loadClientCategories === 'function') loadClientCategories();
                 _clScanOpen = true;      // bitta tovar topilsa — kartochkani ochamiz
                 if (typeof loadClientCatalog === 'function') loadClientCatalog();
+            } else if (_scanTarget === 'label') {
+                // Yorliq o'qitish — tovarni shtrix-kod bilan topamiz
+                const inp = $('lblSearch');
+                if (inp) inp.value = cleaned;
+                _lblSearch(cleaned, true);
             } else if (_scanTarget === 'pos') {
                 posSearch.value = cleaned;
                 posSearchClear.style.display = 'block';

@@ -1445,3 +1445,6 @@
 .pf-label-hint { font-size: 12px; opacity: .75; margin-top: 3px; line-height: 1.35; }
 .pf-label-status { font-size: 13px; margin-top: 6px; line-height: 1.4; }
 .pf-label-status button { margin-top: 6px; }
+.cam-done { position:absolute; right:16px; bottom:calc(100% + 12px); padding:10px 18px; border:none;
+    border-radius:22px; background:#16a34a; color:#fff; font-weight:700; font-size:15px; }
+.cam-actions { position:relative; }
