@@ -53,6 +53,10 @@ class _NoKey(Exception):
 # (gemini-2.0-flash va -lite — kvota 0, 429; gemini-2.5-flash-lite — 404.)
 _DEFAULT_CHAIN = (
     "gemini:gemini-2.5-flash,"
+    # 2026-10-22: yangi akkaunt kalitlari 2.5-flash olmaydi — ularda 3.x flash
+    # bor (kuchli model, alohida kunlik kvota). 3.8 tez-tez 503 beradi.
+    "gemini:gemini-3.5-flash,"
+    "gemini:gemini-3.8-flash,"
     "gemini:gemini-3.5-flash-lite,"
     "gemini:gemini-3.1-flash-lite,"
     "gemini:gemini-flash-lite-latest,"
@@ -75,6 +79,8 @@ _DEFAULT_CHAIN = (
 # limitga urilganda javob shu yerdan keladi).
 _DEFAULT_TEXT_CHAIN = (
     "gemini:gemini-2.5-flash,"
+    "gemini:gemini-3.5-flash,"
+    "gemini:gemini-3.8-flash,"
     "gemini:gemini-flash-lite-latest,"
     "cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast,"
     "openrouter:meta-llama/llama-3.3-70b-instruct:free,"
