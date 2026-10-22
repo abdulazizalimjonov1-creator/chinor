@@ -95,9 +95,33 @@ def import_items(path: str) -> dict:
         res["no_barcode_column"] = True
         return res
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    res["reassigned"] = 0
+    # Kod YesPOS'da qaysi tovarda turgani — haqiqat manbai. Bitta kod YesPOS'ning
+    # o'zida ham ikki tovarda bo'lsa (xato kiritilgan), uni hech qayerga ko'chirmaymiz.
+    owners: dict = {}
+    for r in rows:
+        try:
+            sku = int(float(r.get("sku") or 0))
+        except ValueError:
+            continue
+        for c in _codes(r.get("barcodes") or r.get("barcode") or ""):
+            owners.setdefault(c, set()).add(sku)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         have = {r[0] for r in conn.execute("SELECT id FROM products")}
+        mapped = dict(conn.execute("SELECT code, product_id FROM product_barcodes"))
+        for code, skus in owners.items():
+            if len(skus) != 1:
+                continue
+            new = next(iter(skus))
+            old = mapped.get(code)
+            if old is None or old == new or new not in have:
+                continue
+            # Eski ma'lumotda kod boshqa tovarga yozilib qolgan — YesPOS'dagidek qilamiz
+            conn.execute("UPDATE product_barcodes SET product_id=? WHERE code=?", (new, code))
+            conn.execute("UPDATE products SET barcode='' WHERE id=? AND barcode=?", (old, code))
+            res["reassigned"] += 1
+            logger.info("📥 Shtrix-kod %s: #%s → #%s (YesPOS bo'yicha)", code, old, new)
         for r in rows:
             try:
                 pid = int(float(r.get("sku") or 0))
@@ -114,10 +138,16 @@ def import_items(path: str) -> dict:
                     "INSERT OR IGNORE INTO product_barcodes(code, product_id, created_at) "
                     "VALUES(?,?,?)", (c, pid, now))
                 res["codes_added"] += cur.rowcount
-            cur = conn.execute(
-                "UPDATE products SET barcode=? WHERE id=? AND (barcode IS NULL OR barcode='')",
-                (codes[0], pid))
-            res["primary_set"] += cur.rowcount
+            # Asosiy kod — faqat haqiqatan SHU tovarga bog'langan kodlardan
+            # (boshqa tovarda qolgan noaniq kod ikki joyda chiqmasin)
+            own = [c for c in codes if conn.execute(
+                "SELECT 1 FROM product_barcodes WHERE code=? AND product_id=?",
+                (c, pid)).fetchone()]
+            if own:
+                cur = conn.execute(
+                    "UPDATE products SET barcode=? WHERE id=? AND (barcode IS NULL OR barcode='')",
+                    (own[0], pid))
+                res["primary_set"] += cur.rowcount
         conn.commit()
     finally:
         conn.close()
@@ -150,6 +180,7 @@ async def run_once(db) -> str:
         st["items"] = os.path.getmtime(p)
         out.append("tovar: " + ("shtrix-kod ustuni YO'Q" if r["no_barcode_column"] else
                    f"{r['rows']} qator, +{r['codes_added']} kod, "
+                   f"{r.get('reassigned', 0)} ko'chirildi, "
                    f"{r['primary_set']} asosiy, {r['no_product']} tovar topilmadi"))
     p = _find(_CLIENT_FILES)
     if p and os.path.getmtime(p) > st.get("clients", 0):
