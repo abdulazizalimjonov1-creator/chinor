@@ -437,9 +437,15 @@ def _call_cloudflare(model: str, prompt: str, img_b64: str = "") -> str:
     if u.get("day") == time.strftime("%Y-%m-%d") and sum(
             int(v) for k, v in u.items() if "cloudflare" in k) >= cap:
         raise _NoKey(f"Cloudflare kunlik chegarasi ({cap}) — rolik uchun zaxira")
-    payload = {"prompt": prompt, "max_tokens": 400}
     if img_b64:
-        payload["image"] = list(base64.b64decode(img_b64))
+        payload = {"prompt": prompt, "max_tokens": 400,
+                   "image": list(base64.b64decode(img_b64))}
+    else:
+        # Matn modellari: `prompt` berilsa chat shablonisiz "davom ettirish"
+        # rejimida ishlaydi va savolni takrorlaydi (2026-10-22 sinovi) —
+        # `messages` bilan esa odatdagi suhbat javobi keladi.
+        payload = {"messages": [{"role": "user", "content": prompt}],
+                   "max_tokens": 600}
     data = json.dumps(payload).encode()
 
     def _once(key: str) -> str:
@@ -451,8 +457,14 @@ def _call_cloudflare(model: str, prompt: str, img_b64: str = "") -> str:
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
             d = json.load(r)
-        return (d.get("result", {}).get("description")
-                or d.get("result", {}).get("response") or "").strip()
+        res = d.get("result") or {}
+        # Javob shakli modelga qarab har xil: `description` (rasm), `response`
+        # (eski matn), yoki OpenAI'ga o'xshash `choices` (yangi llama'lar).
+        out = res.get("description") or res.get("response") or ""
+        if not out and res.get("choices"):
+            c = res["choices"][0] or {}
+            out = (c.get("message") or {}).get("content") or c.get("text") or ""
+        return str(out).strip()
 
     return _call_with_keys("CF_API_TOKEN", _once)
 
