@@ -1130,6 +1130,9 @@ async def _publish_instagram(db, rid: int, row: dict, caption: str) -> str:
     """Tasdiqlangan taqqoslash videosini Instagram Reels'ga ham qo'yadi."""
     from bot import reels as R
     if not R.ig_configured() or not R._flag_on(db, "reels_auto", "0"):
+        logger.info("🎬 Taqqoslash #%s Instagram'ga yuborilmadi: %s", rid,
+                    "Instagram sozlanmagan" if not R.ig_configured()
+                    else "reels_auto=0 (o'chiq)")
         return ""
     url = R._cfg("PUBLIC_BASE_URL").rstrip("/") + "/api/reel/" + os.path.basename(row["video_path"])
     mid, err = await asyncio.get_event_loop().run_in_executor(
