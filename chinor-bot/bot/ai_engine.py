@@ -67,13 +67,16 @@ _DEFAULT_CHAIN = (
 # Rasm modellari tugasa — mahsulot NOMIDAN matnli tavsif. Groq bepul va
 # tez, vision'i yo'q lekin matni bor, shuning uchun aynan shu yerda asqotadi.
 # 2026-08-04 da sinalgan: ikkalasi ham ikki tilli tavsif yozib berdi.
+# 2026-10-22: Groq kaliti o'lik (401) — oxiriga surildi; Cloudflare Workers AI
+# bepul mustaqil zaxira sifatida Gemini'dan keyin turadi (Gemini daqiqalik
+# limitga urilganda javob shu yerdan keladi).
 _DEFAULT_TEXT_CHAIN = (
-    "groq:llama-3.3-70b-versatile,"
-    "groq:openai/gpt-oss-120b,"
-    "groq:llama-3.1-8b-instant,"
     "gemini:gemini-2.5-flash,"
     "gemini:gemini-flash-lite-latest,"
-    "openrouter:meta-llama/llama-3.3-70b-instruct:free"
+    "cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast,"
+    "openrouter:meta-llama/llama-3.3-70b-instruct:free,"
+    "groq:llama-3.3-70b-versatile,"
+    "groq:openai/gpt-oss-120b"
 )
 
 # OpenAI formatidagi provayderlar: nomi → (manzil, kalit o'zgaruvchisi).
