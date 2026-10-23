@@ -1027,14 +1027,32 @@ _SCENE_SYS = (
 )
 
 
-def _scene_prompt_req(name: str, cat: str, tags: list, facts: str) -> str:
+def _scene_prompt_req(name: str, cat: str, tags: list, facts: str,
+                      script: dict = None) -> str:
     """Sahna so'rovi.
 
     Model nima uchun rasm chizayotganini bilishi kerak: bu — sotuvchi
     rolikning o'rtasi. Odam tovarni ISH USTIDA ko'rib, «menga ham
     kerak» deb o'ylashi kerak. Shu sabab so'rovda maqsad, ketma-ketlik
     va qat'iy taqiqlar bor.
+
+    IKKI MUHIM NARSA:
+
+    1) Hikoya turini MODEL tanlaydi. Ilgari har qanday tovarga
+       «OLDIN → JARAYON → KEYIN» majburlanardi. Bu ta'mirlash va
+       tozalash mollariga to'g'ri keladi, lekin ichimlik yoki
+       bezakda tuzatiladigan «muammo» yo'q — model esa majburan
+       o'ylab topardi. Natijada Coca-Cola roligida iflos tovani
+       yuvish kadrlari chiqdi, diktor esa «chanqoqni qondiradi»
+       dedi (2026-10-23).
+
+    2) Sahnalar SSENARIYga bo'ysunadi. Matn allaqachon yozilgan,
+       shuning uchun rasm o'sha va'dani ko'rsatishi kerak — aks holda
+       ko'z bir narsani, quloq boshqasini oladi.
     """
+    hook = (script or {}).get("hook") or ""
+    bullets = (script or {}).get("bullets") or []
+    said = ("\n".join(f"  - {b}" for b in bullets[:3])) or "  -"
     return (
         "== CONTEXT ==\n"
         "These images are the middle of a 13-second product ad for a "
@@ -1045,8 +1063,22 @@ def _scene_prompt_req(name: str, cat: str, tags: list, facts: str) -> str:
         f"Name: {name}\nCategory: {cat or '-'}\n"
         f"Used for: {', '.join(tags) if tags else '-'}\n"
         f"What it actually is: {facts[:400] or '-'}\n\n"
+        "== WHAT THE VOICE-OVER ALREADY SAYS ==\n"
+        f"Hook: {hook or '-'}\nPromises:\n{said}\n"
+        "The shots must SHOW these promises. If the voice says it "
+        "quenches thirst, the shots are about drinking — not about "
+        "cleaning. Picture and words must tell one story.\n\n"
         "== TASK ==\n"
-        "Write 3 image prompts — a BEFORE / DURING / AFTER story. The "
+        "First decide which story fits this product:\n"
+        "  • fix — the product repairs, cleans, paints, seals, "
+        "protects or renews something. There is a real BEFORE state "
+        "that is bad.\n"
+        "  • use — the product is consumed or simply used: a drink, "
+        "food, a decoration, dishes, clothing, a bag. Nothing is "
+        "broken and nothing gets fixed.\n"
+        "NEVER invent a problem for a 'use' product. A drink does not "
+        "clean a pot; a vase does not repair a wall.\n\n"
+        "For 'fix' write 3 prompts — BEFORE / DURING / AFTER. The "
         "first and the third are later shown SIDE BY SIDE, so they must "
         "be the same scene, same angle, same framing — only the state "
         "differs:\n"
@@ -1056,6 +1088,14 @@ def _scene_prompt_req(name: str, cat: str, tags: list, facts: str) -> str:
         "already visible in the frame.\n"
         "  3) AFTER: exactly the same view as (1), but fixed — clean, "
         "shiny, new. Satisfying.\n\n"
+        "For 'use' write 3 prompts — the real moment of use, three "
+        "different angles of the SAME situation:\n"
+        "  1) the setting just before: the table, the hands, the "
+        "place where it will be used, inviting;\n"
+        "  2) the moment itself: hands using or serving it, close-up, "
+        "real motion;\n"
+        "  3) the satisfied result: the enjoyable state afterwards.\n"
+        "Keep all three in one place and one light, as one scene.\n\n"
         "== SHOT RULES ==\n"
         "  • Close-up, human hands doing the work, real motion.\n"
         "  • Ordinary Uzbek home or building site, natural daylight.\n"
@@ -1087,7 +1127,8 @@ def _scene_prompt_req(name: str, cat: str, tags: list, facts: str) -> str:
         "  • Drifting to unrelated subjects (food, plants, animals) "
         "unless the product is truly for them.\n\n"
         "== ANSWER FORMAT ==\n"
-        "Exactly three lines, nothing else:\n"
+        "Exactly four lines, nothing else:\n"
+        "TYPE: fix|use\n"
         "1: <prompt>\n2: <prompt>\n3: <prompt>"
     )
 
@@ -1113,20 +1154,34 @@ def _strip_negations(prompt: str) -> str:
     return ", ".join(out)
 
 
-def scene_prompts(product: dict, cat: str, tags: list, facts: str = "") -> list:
-    """Uchta sahna uchun ingliz tilidagi tavsif (rasm modeli uchun).
-    AI bo'lmasa — bo'lim bo'yicha oldindan yozilgan zaxira."""
+def scene_prompts(product: dict, cat: str, tags: list, facts: str = "",
+                  script: dict = None) -> tuple:
+    """(sahnalar, hikoya turi) — rasm modeli uchun inglizcha tavsif.
+
+    Hikoya turi: `fix` (OLDIN→KEYIN solishtiruvi bo'ladi) yoki `use`
+    (shunchaki ishlatish lahzasi). Tur rolikning tuzilishiga ta'sir
+    qiladi: `use` da «OLDIN/KEYIN» oynasi ko'rsatilmaydi, chunki
+    solishtiradigan narsa yo'q.
+
+    AI bo'lmasa — bo'lim bo'yicha oldindan yozilgan zaxira.
+    """
     name = (product.get("display_name") or product.get("name") or "").strip()
     desc = (product.get("description") or "").strip()
+    story = "fix"
     try:
         from bot import ai_engine
         raw = ai_engine.chat(_scene_prompt_req(name, cat, tags,
-                                              (facts or desc)),
+                                              (facts or desc), script),
                              system=_SCENE_SYS,
                              validate=lambda t: "1:" in t and "2:" in t and "3:" in t)
         out = []
         for line in (raw or "").splitlines():
             line = line.strip()
+            if line.upper().startswith("TYPE:"):
+                val = line.split(":", 1)[1].strip().lower()
+                if val.startswith("use"):
+                    story = "use"
+                continue
             if line[:2] in ("1:", "2:", "3:"):
                 p = line.split(":", 1)[1].strip()
                 # Tovar nomi tavsifga tushib qolsa — olib tashlaymiz, aks
@@ -1141,10 +1196,23 @@ def scene_prompts(product: dict, cat: str, tags: list, facts: str = "") -> list:
                 if 25 <= len(p) <= 220 and len(p.split()) >= 5:
                     out.append(p)
         if len(out) >= 2:
-            return out[:3]
+            logger.info("🎬 Sahna hikoyasi: %s", story)
+            return out[:3], story
     except Exception as e:
         logger.info("🎬 Sahna tavsifi yozilmadi (%s) — zaxira", e)
-    low = f"{cat} {' '.join(tags or [])}".lower()
+    low = f"{cat} {' '.join(tags or [])} {name}".lower()
+    # Yeyiladigan/ichiladigan tovarda tuzatiladigan narsa yo'q — zaxira
+    # sahnalar ham «ishlatish lahzasi» bo'ladi, OLDIN/KEYIN emas.
+    if any(w in low for w in ("ichimlik", "cola", "kola", "suv ", "shirinlik",
+                              "shokolad", "pech", "choy", "qahva", "sok")):
+        return ([
+            "close-up of a cold glass on a wooden table by a sunny window, "
+            "condensation drops, warm daylight",
+            "hands pouring a dark fizzy drink into a glass with ice, "
+            "bubbles rising, close-up, daylight",
+            "the full glass on the same table, frost on the surface, "
+            "relaxed warm afternoon light",
+        ], "use")
     if any(w in low for w in ("kir", "tozal", "yuv")):
         base = ["close-up of a stained dirty shirt on a table, grey and dull, daylight",
                 "hands rubbing soapy foam into the stained fabric, water running, close-up",
@@ -1165,7 +1233,8 @@ def scene_prompts(product: dict, cat: str, tags: list, facts: str = "") -> list:
         base = ["close-up hands using a household item at home, natural light, motion",
                 "work in progress on a kitchen table, hands busy, warm daylight",
                 "tidy bright uzbek home interior, warm daylight through the window"]
-    return base
+        return base, "use"
+    return base, "fix"
 
 
 # Sahna rasmida BEGONA YOZUV bo'lmasligi kerak. Rasm modeli asbob korpusiga
@@ -1317,6 +1386,28 @@ def _strip_emoji(s: str) -> str:
     return " ".join("".join(out).split())
 
 
+def tidy_name(s: str) -> str:
+    """Katalogdagi nomni ko'rsatishga tayyorlaydi.
+
+    Kassada nom qo'lda yozilgani uchun registr ko'pincha adashadi:
+    «COca Cola 0.5», «EMultsiya». Rolikda va Instagram matnida bu
+    uquvsizdek ko'rinadi. Shu sababli faqat ANIQ xato shakl tuzatiladi:
+    so'z ikki yoki undan ko'p BOSH harf bilan boshlanib, keyin kichik
+    harf kelsa — «COca» → «Coca».
+
+    Qisqartmalarga TEGILMAYDI: «PVA», «RTR», «LED» butunlay bosh harf,
+    ularda kichik harf yo'q, shuning uchun shart bajarilmaydi.
+    """
+    import re as _re
+
+    def fix(w: str) -> str:
+        if _re.match(r"^[A-ZА-ЯЎҚҒҲ]{2,}[a-zа-яўқғҳ]", w):
+            return w[0] + w[1:].lower()
+        return w
+
+    return " ".join(fix(w) for w in (s or "").split())
+
+
 _ICON_WORDS = (
     ("truck", ("yetkaz", "dostavka", "olib bor")),
     ("drop", ("qopqoq", "tejam", "suv", "namlik", "yuv")),
@@ -1436,6 +1527,10 @@ class _Assets:
         from PIL import Image, ImageDraw, ImageFilter
         self.Image, self.ImageFilter, self.ImageDraw = Image, ImageFilter, ImageDraw
 
+        # Hikoya turi: `fix` — OLDIN/KEYIN solishtiruvi bo'ladi, `use` —
+        # shunchaki ishlatish lahzasi (qarang: `scene_prompts`).
+        self.story = ((script or {}).get("story") or "fix").strip().lower()
+
         # Ko'rgazma sahnalari (tovar ish ustida) — 1080x1920 ga kesiladi
         self.scenes = []
         for sp in (scene_paths or []):
@@ -1462,6 +1557,20 @@ class _Assets:
         if _cutout_png(image_path, cut_path):
             try:
                 obj = Image.open(cut_path).convert("RGBA")
+                # Fon kesilgach atrofda SHAFFOF bo'shliq qoladi: katalog
+                # rasmlari brendlanganda tovar och yashil kvadratning
+                # o'rtasiga kichik qilib joylanadi. O'sha bo'shliq bilan
+                # birga kichraytirsak, kadrda tovar kichkina nuqta bo'lib
+                # qolardi (Coca-Cola roligida aynan shunday bo'lgan).
+                # Shuning uchun shaffof chekkalarni kesib tashlaymiz.
+                bbox = obj.getbbox()
+                if bbox:
+                    w0, h0 = obj.size
+                    bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    # Butunlay bo'sh yoki deyarli to'la rasmni kesish
+                    # shart emas — faqat sezilarli bo'shliq bo'lsa.
+                    if bw > 20 and bh > 20 and (bw * bh) < 0.92 * (w0 * h0):
+                        obj = obj.crop(bbox)
             except Exception:
                 obj = None
             finally:
@@ -1497,8 +1606,30 @@ class _Assets:
             plate.putalpha(mask)
             obj = plate
         box = int(W * 0.66)
-        obj.thumbnail((box, box), Image.LANCZOS)
+        # DIQQAT: `thumbnail` faqat KICHRAYTIRADI. Foni kesilgan tovar
+        # kichkina chiqsa (masalan 214x380 piksel), u kadrda o'sha
+        # kichikligicha qolardi — 1080x1920 ramkada ko'rinmas nuqta.
+        # Coca-Cola roligida aynan shunday bo'lgan. Shuning uchun o'zimiz
+        # masshtablaymiz: kerak bo'lsa kattalashtiramiz ham.
+        #
+        # Kattalashtirish CHEGARALI: manbada piksel qo'shib bo'lmaydi,
+        # 2.2 barobardan ortig'i tovarni loyqa qilib qo'yadi — unday
+        # paytda kichikroq, lekin tiniq ko'rsatgan afzal.
+        k = min(box / max(1, obj.width), box / max(1, obj.height))
+        k = min(k, 2.2)
+        if abs(k - 1.0) > 0.01:
+            obj = obj.resize((max(1, int(obj.width * k)),
+                              max(1, int(obj.height * k))), Image.LANCZOS)
         self.obj = obj
+        # Sahna ichidagi nusxa uchun miqyos: tovar BALANDLIGI kadrning
+        # ~29% iga teng bo'lsin. Sobit 0.46 koeffitsient tovarning o'z
+        # o'lchamiga bog'liq edi — ingichka tovar sahnada ko'rinmay
+        # ketardi. Kengligi ham kadrning yarmidan oshmasin.
+        self.scene_scale = min(
+            (H * 0.29) / max(1, obj.height),
+            (W * 0.50) / max(1, obj.width),
+            1.0,
+        )
 
         # Soya — mahsulot bilan birga qimirlaydi, chuqurlik hissi beradi
         sh_w, sh_h = obj.width, int(obj.height * 0.26)
@@ -1534,7 +1665,8 @@ class _Assets:
         self.hook_lay = _text_layer(
             (W, int(H * 0.20)), lambda d, im: self._hook(d, hook))
 
-        name = _strip_emoji(product.get("display_name") or product.get("name") or "")
+        name = tidy_name(_strip_emoji(
+            product.get("display_name") or product.get("name") or ""))
         self.name_lay = _text_layer(
             (W, int(H * 0.13)), lambda d, im: self._name(d, name))
         self.sub_lay = None
@@ -1712,7 +1844,11 @@ def _scene_frame(a, img, k: float, big_lay, k_txt: float, drift: int = 0):
     fr = fr.convert("RGBA")
 
     # Mahsulot — sahnaning pastki o'ng burchagida, soyasi bilan
-    v = a.variant(0.46, math.sin(k * 3.0) * 1.8)
+    # Sahna ichidagi tovar — 1080x1920 kadrda yetarlicha katta bo'lishi
+    # kerak, aks holda telefon ekranida u shunchaki dog' bo'lib qoladi va
+    # «aynan shu narsa» degani o'qilmaydi. Kadr balandligining ~29% iga
+    # keltiramiz; juda kichik tovar bo'lsa ham shu o'lchamda ko'rinadi.
+    v = a.variant(a.scene_scale, math.sin(k * 3.0) * 1.8)
     px = W - v.width - int(W * 0.05)
     py = int(H * 0.63) - v.height // 2 + int(8 * math.sin(k * 4.0))
     sh = a.shadow.resize((max(8, int(v.width * 0.8)),
@@ -1781,12 +1917,17 @@ def _compose(a: "_Assets", t: float):
     has_scenes = len(a.scenes) >= 1
 
     # ── Ko'rgazma sahnalari ──────────────────────────────────────────────
-    # «OLDIN → KEYIN» faqat uchala sahna ham chizilgan bo'lsa ma'noli:
-    # aks holda «oldin» va «jarayon» solishtirilib, farq ko'rinmaydi.
-    if has_scenes and len(a.scenes) >= 3 and T_CMP <= t < T_BACK:
+    # «OLDIN → KEYIN» ikki shartda ma'noli:
+    #   • uchala sahna ham chizilgan bo'lsa (aks holda «oldin» va
+    #     «jarayon» solishtirilib, farq ko'rinmaydi);
+    #   • hikoya turi `fix` bo'lsa — ya'ni tovar haqiqatan nimanidir
+    #     tuzatadi. Ichimlik yoki bezakda solishtiradigan holat yo'q,
+    #     «OLDIN/KEYIN» yorlig'i esa tomoshabinni adashtiradi.
+    _cmp_ok = len(a.scenes) >= 3 and a.story == "fix"
+    if has_scenes and _cmp_ok and T_CMP <= t < T_BACK:
         return _compare_frame(a, _seg(t, T_CMP, CMP_DUR)).convert("RGB")
 
-    _sc_end = T_CMP if len(a.scenes) >= 3 else T_BACK
+    _sc_end = T_CMP if _cmp_ok else T_BACK
     if has_scenes and T_SC1 <= t < _sc_end:
         n = len(a.scenes)
         # Sahna blokini NECHTA sahna bo'lsa shuncha bo'lakka teng bo'lamiz.
@@ -2206,7 +2347,8 @@ def _slug(s: str) -> str:
 def build_caption(product: dict, price_txt: str, cat: str, bot_username: str,
                   tags: list = None) -> str:
     """Instagram matni. Tavsif allaqachon ikki tilli (uz+ru) bo'lsa ishlatiladi."""
-    name = (product.get("display_name") or product.get("name") or "").strip()
+    name = tidy_name((product.get("display_name")
+                      or product.get("name") or "").strip())
     desc = (product.get("description") or "").strip()
     parts = [f"🌳 {name}", f"💰 {price_txt}"]
     if desc:
@@ -2385,8 +2527,11 @@ async def _process(row: dict, db) -> None:
     # Yiqilsa rolik ularsiz, matnli ro'yxat bilan yasaladi.
     scenes = []
     try:
-        prompts = await loop.run_in_executor(
-            None, lambda: scene_prompts(p, cat, tags, facts))
+        # Ssenariy allaqachon yozilgan — sahnalar unga bo'ysunadi, aks
+        # holda ko'z bir narsani, quloq boshqasini oladi.
+        prompts, story = await loop.run_in_executor(
+            None, lambda: scene_prompts(p, cat, tags, facts, script))
+        script["story"] = story
         # Uchala sahna ham kerak: «OLDIN → KEYIN» solishtiruvi faqat 3 ta
         # sahna bo'lganda ishlaydi (aks holda rolikning o'rtasida bo'sh
         # joy qoladi). Yozuv sababli biror sahna rad etilsa, qolganlari
