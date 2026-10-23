@@ -1841,12 +1841,58 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
                 api_labels.approved_facts, _db, pid):
             logger.info(f"📢 Post yo'riqnoma tasdig'ini kutmoqda (#{pid})")
             _enrich_done(pid)       # bu kutish — xato emas, navbat yopiladi
+            # ADMINGA AYTAMIZ. Ilgari post jimgina to'xtab turardi va
+            # egasi «nega kanalga chiqmadi?» deb o'ylardi — 2026-10-23
+            # holatida 7 ta tovar shunday kutib yotgan edi.
+            await _ogohlantir_yorliq(_db, p, pid)
             return
         _last_post[pid] = now
         await _post_product_to_channel(_db, p, pid)
         _enrich_done(pid)
     except Exception as e:
         logger.warning(f"📢 Kanalga yuborilmadi (#{pid}): {e}")
+
+
+async def _ogohlantir_yorliq(_db, p: dict, pid: int) -> None:
+    """«Yo'riqnoma tasdiqlanmagani uchun post kutmoqda» — bosh adminga.
+
+    Bir tovar uchun BIR MARTA: aks holda har qayta urinishda xabar
+    takrorlanardi.
+    """
+    try:
+        key = f"yorliq_ogoh_{pid}"
+        if _db.get_setting(key, ""):
+            return
+        _db.set_setting(key, "1")
+        nom = (p.get("display_name") or p.get("name") or "").strip()
+        await _tg_send_admin(
+            f"📄 <b>Yo'riqnoma tasdig'i kutilmoqda</b>\n\n"
+            f"🧾 {nom}\n\n"
+            f"Tovarning yo'riqnomasi o'qilgan, lekin tasdiqlanmagan — "
+            f"shu sababli kanalga <b>e'lon chiqmaydi</b>.\n"
+            f"Mini App → «📄 Yorliq o'qitish» da tasdiqlang.")
+    except Exception as e:
+        logger.info(f"📄 Ogohlantirish yuborilmadi (#{pid}): {e}")
+
+
+async def _tg_send_admin(text: str) -> bool:
+    """Bosh adminga xabar (bot nusxasisiz ham ishlaydi)."""
+    import aiohttp
+
+    from bot.config import BOT_TOKEN, GLAVNIY_ADMIN_ID
+
+    if not BOT_TOKEN or not GLAVNIY_ADMIN_ID:
+        return False
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    json={"chat_id": GLAVNIY_ADMIN_ID, "text": text,
+                          "parse_mode": "HTML"}) as r:
+                return r.status == 200
+    except Exception:
+        return False
 
 
 def _enrich_done(pid: int) -> None:

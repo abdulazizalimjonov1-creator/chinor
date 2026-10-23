@@ -97,6 +97,20 @@ def pending(stale: int = STALE) -> list:
         return []
 
 
+def _bor(pid: int) -> bool:
+    """Tovar hali navbatdami (ya'ni ish tugamaganmi)."""
+    try:
+        c = _conn()
+        try:
+            return c.execute(
+                "SELECT 1 FROM enrich_queue WHERE product_id = ?",
+                (int(pid),)).fetchone() is not None
+        finally:
+            c.close()
+    except Exception:
+        return False
+
+
 def _bump(pid: int, err: str = "") -> None:
     try:
         c = _conn()
@@ -127,8 +141,15 @@ async def recover_once() -> int:
         _bump(pid)
         try:
             await _enrich_product(pid, r["image_path"] or "")
-            mark_done(pid)
-            n += 1
+            # DIQQAT: bu yerda `mark_done` CHAQIRILMAYDI. Kanalga
+            # yuborish yiqilsa (masalan bot kanalga a'zo bo'lmasa),
+            # `_enrich_product` xato ko'tarmaydi — shunchaki jurnalga
+            # yozadi. Shu yerda «bajarildi» deb belgilasak, tovar
+            # kanalga chiqmasdan navbatdan tushib ketardi.
+            # Navbatni faqat HAQIQIY muvaffaqiyat yopadi
+            # (`web_api._enrich_done`).
+            if not _bor(pid):
+                n += 1
         except Exception as e:
             logger.warning("🧩 #%s qayta bajarilmadi: %s", pid, e)
             _bump(pid, str(e))
