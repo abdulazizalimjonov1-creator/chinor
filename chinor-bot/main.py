@@ -189,6 +189,12 @@ async def main():
     # ── To'lov-link relay (kassa QR to'lovi) — fonda to'lov botini kuzatadi ──
     payment_task = asyncio.create_task(payment_relay.poll_loop())
 
+    # ── Cheklar boti (@cheklars_bot) — ilgari kassa kompyuterida edi.
+    # Mijoz raqamini tasdiqlab, kassadagi hisobiga bog'lanadi va Mini
+    # App'ni ochadi. Token bo'lmasa o'zi jim o'chadi.
+    from bot import chek_bot
+    chek_bot_task = asyncio.create_task(chek_bot.poll_loop())
+
     # ── Kunlik «savol → taqqoslash» videosi (adminga tasdiq uchun) ──────
     from bot import reels_compare
     reels_task = asyncio.create_task(reels_compare.daily_loop())
@@ -223,6 +229,7 @@ async def main():
     finally:
         retention_task.cancel()
         payment_task.cancel()
+        chek_bot_task.cancel()
         reels_task.cancel()
         reels_worker_task.cancel()
         reels_pick_task.cancel()

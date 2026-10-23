@@ -25,6 +25,12 @@ CHANNEL_DRAFTS_ID     = os.getenv("CHANNEL_DRAFTS_ID",     "-1004451962859").str
 # ASOSIY botdan ALOHIDA token bo'lishi shart (getUpdates to'qnashmasligi uchun).
 # Bo'sh qoldirilsa — QR to'lov funksiyasi o'chiq (kassa chekni QR'siz chop etadi).
 PAYMENT_BOT_TOKEN = os.getenv("PAYMENT_BOT_TOKEN", "").strip()
+
+# «Cheklar boti» (@cheklars_bot) — ilgari kassa kompyuterida ishlagan.
+# Mijozlar u yerda raqamini tasdiqlab, xaridlari haqidagi xabarni olardi.
+# Endi shu token serverda: bot mijozni qarz daftariga bog'laydi va Mini
+# App'ni ochadi. Bo'sh bo'lsa — bot umuman ishga tushmaydi.
+CHEK_BOT_TOKEN = os.getenv("CHEK_BOT_TOKEN", "").strip()
 # Linkni kim yuborishi mumkin (vergul bilan, Telegram ID lar). Bo'sh bo'lsa —
 # GLAVNIY_ADMIN_ID ishlatiladi. Eski kassa qotirgan ID ham standart qo'shiladi.
 _pay_owners_env = os.getenv("PAYMENT_OWNER_IDS", "").strip()

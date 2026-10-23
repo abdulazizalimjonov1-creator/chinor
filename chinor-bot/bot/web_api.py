@@ -557,6 +557,24 @@ async def _authenticate(request: web.Request, db):
     return auth
 
 
+def _verify_any_bot(init_data: str):
+    """initData ni BARCHA o'z botlarimiz tokeni bilan sinab ko'radi.
+
+    Mini App asosiy botdan ham, cheklar botidan ham ochiladi. Imzo
+    qaysi bot orqali ochilgan bo'lsa, o'sha bot tokeni bilan
+    yasaladi — bitta token bilan tekshirish ikkinchisini rad etardi.
+    """
+    from bot.config import CHEK_BOT_TOKEN
+
+    for token in (BOT_TOKEN, CHEK_BOT_TOKEN):
+        if not token:
+            continue
+        parsed = verify_telegram_init_data(init_data, token)
+        if parsed:
+            return parsed
+    return None
+
+
 async def _authenticate_raw(request: web.Request, db):
     """Har bir himoyalangan so'rov uchun: session token yoki initData ni
     tekshirib, foydalanuvchini (admin yoki mijoz) va rolini aniqlaydi.
@@ -588,7 +606,11 @@ async def _authenticate_raw(request: web.Request, db):
             request["_json_body"] = body   # keyin qayta o'qimaslik uchun kesh
         except Exception:
             pass
-    parsed = verify_telegram_init_data(init_data, BOT_TOKEN)
+    # Mini App ikki botdan ochilishi mumkin: asosiy Chinor boti va
+    # «Cheklar boti» (@cheklars_bot). initData O'SHA bot tokeni bilan
+    # imzolanadi, shuning uchun ikkalasi ham sinaladi — aks holda
+    # cheklar botidan kirgan mijoz «avtorizatsiya kerak» olardi.
+    parsed = _verify_any_bot(init_data)
     if not parsed:
         return None
     try:
@@ -2410,7 +2432,7 @@ async def login(request: web.Request):
         tg_id = 6787907623  # GLAVNIY_ADMIN_ID
         tg_user = {"id": tg_id, "first_name": "LocalTest"}
     else:
-        parsed = verify_telegram_init_data(init_data, BOT_TOKEN)
+        parsed = _verify_any_bot(init_data)
         if not parsed:
             return web.json_response({
                 "ok": False,
