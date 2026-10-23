@@ -39,7 +39,7 @@ import time
 logger = logging.getLogger(__name__)
 
 FPS = 30
-MAX_ROWS = 4
+MAX_ROWS = 3            # 4 qator videoni 30 s dan oshirardi
 REPEAT_DAYS = 14          # bir mavzu shuncha kun ichida takrorlanmaydi
 
 
@@ -366,12 +366,13 @@ def _outro_say(store: dict) -> str:
     "5000 xil" tez eskiradi yoki noto'g'ri bo'lib qoladi)."""
     n = int(store.get("count") or 0)
     parts = []
+    # 2026-10-23: qisqa (~7 so'z). Ish vaqti va manzil ekranda va izohda turadi —
+    # diktor ularni o'qisa yakun 8 soniyaga cho'zilib, video 33 s bo'lib qolardi.
     if n >= 100:
         # Raqam bo'shliqsiz: "5 200" ni diktor "besh, ikki yuz" deb bo'lib o'qiydi
-        parts.append(f"Chinor do'konida {store['count_say']} dan ortiq tovar sizni kutmoqda.")
+        parts.append(f"Chinor, Sergeli: {store['count_say']} dan ortiq tovar.")
     else:
-        parts.append("Narxi va buyurtma — Chinor do'konida.")
-    parts.append(f"Sergeli tumani, Chinor bekati yonida, {store.get('hours_say', '')}.".replace(", .", "."))
+        parts.append("Narxi va buyurtma — Chinor do'konida, Sergeli.")
     return " ".join(parts)
 
 
