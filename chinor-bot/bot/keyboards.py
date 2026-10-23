@@ -110,16 +110,34 @@ def client_type_kb():
     return kb.as_markup()
 
 
-def glavniy_menu():
-    """Bosh admin klaviaturasi — BO'SH (butunlay olib tashlanadi).
+# Admin klaviaturasidagi tugmalar — matni `handlers/kabinet.py` da
+# tutiladi. Bular Mini App'ni OCHMAYDI, botdan javob oladi; Mini App
+# matn maydoni yonidagi menyu tugmasida (imzo faqat o'sha yerda beriladi).
+ADMIN_BTN_QARZ = "📕 Qarzdorlar"
+ADMIN_BTN_REELS = "📊 Instagram"
+ADMIN_BTN_HISOB = "💰 Hisobim"
+ADMIN_BTN_YORDAM = "ℹ️ Yordam"
 
-    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
-    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
-    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
-    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
-    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
+
+def _admin_kb():
+    kb = ReplyKeyboardBuilder()
+    kb.button(text=ADMIN_BTN_QARZ)
+    kb.button(text=ADMIN_BTN_REELS)
+    kb.button(text=ADMIN_BTN_HISOB)
+    kb.button(text=ADMIN_BTN_YORDAM)
+    kb.adjust(2, 2)
+    return kb.as_markup(resize_keyboard=True,
+                        input_field_placeholder="Tugmani bosing yoki yozing")
+
+
+def glavniy_menu():
+    """Bosh admin klaviaturasi — eng kerakli to'rtta tugma.
+
+    Boshqaruvning asosiy qismi Mini App ichida (matn maydoni yonidagi
+    menyu tugmasi), lekin tez-tez kerak bo'ladigan narsalarni botning
+    o'zidan olish qulay — «/» buyruqlarini hamma ham eslab qolmaydi.
     """
-    return ReplyKeyboardRemove()
+    return _admin_kb()
 
 def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
     """Bosh admin uchun sozlamalar — dona va optom narxni alohida yoqish/o'chirish."""
@@ -136,15 +154,8 @@ def settings_kb(dona_enabled: bool, wholesale_enabled: bool):
     return kb.as_markup()
 
 def admin_menu(perms: set = None):
-    """Admin klaviaturasi — BO'SH (butunlay olib tashlanadi).
-
-    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
-    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
-    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
-    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
-    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
-    """
-    return ReplyKeyboardRemove()
+    """Hodim/admin klaviaturasi — bosh admin bilan bir xil to'rtta tugma."""
+    return _admin_kb()
 
 def settings_main_kb(currency_mode: str):
     """Bosh admin uchun sozlamalar bosh menyusi (inline)."""

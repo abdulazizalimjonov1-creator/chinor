@@ -27,8 +27,9 @@ from aiogram.types import (
 
 from bot.config import CONTACT_PHONE_1, CONTACT_PHONE_2, MINI_APP_URL
 from bot.keyboards import (
+    ADMIN_BTN_HISOB, ADMIN_BTN_QARZ, ADMIN_BTN_REELS, ADMIN_BTN_YORDAM,
     CLIENT_BTN_ALOQA, CLIENT_BTN_HISOB, CLIENT_BTN_RASM, CLIENT_BTN_XARID,
-    CLIENT_BTN_YORDAM, client_menu,
+    CLIENT_BTN_YORDAM, admin_menu, client_menu,
 )
 from database.channel_db import db
 
@@ -377,3 +378,36 @@ async def btn_aloqa(message: Message):
 @router.message(F.text == CLIENT_BTN_YORDAM)
 async def btn_yordam(message: Message):
     await cmd_yordam(message)
+
+
+# ─── Admin tugmalari ────────────────────────────────────────────────────────
+# «📕 Qarzdorlar» va «💰 Hisobim» matnlari mijoznikiga o'xshash bo'lmasligi
+# uchun alohida yozilgan; «💰 Hisobim» esa mijoznikining AYNAN o'zi, shuning
+# uchun yuqoridagi `btn_hisob` uni ham tutadi.
+
+@router.message(F.text == ADMIN_BTN_QARZ)
+async def btn_qarzdorlar(message: Message):
+    await cmd_qarzdorlar(message)
+
+
+@router.message(F.text == ADMIN_BTN_REELS)
+async def btn_reels(message: Message):
+    await cmd_reels(message)
+
+
+@router.message(F.text == ADMIN_BTN_YORDAM)
+async def btn_admin_yordam(message: Message):
+    """Adminga — o'z tugmalari va buyruqlari."""
+    if not await db.is_admin(message.from_user.id):
+        await cmd_yordam(message)
+        return
+    await message.answer(
+        "ℹ️ <b>Admin yordami</b>\n\n"
+        f"{ADMIN_BTN_QARZ} — kim qancha qarzdor\n"
+        f"{ADMIN_BTN_REELS} — Instagram natijalari\n"
+        f"{ADMIN_BTN_HISOB} — o'z xaridlaringiz\n\n"
+        "Boshqaruvning qolgani — matn maydoni yonidagi "
+        "<b>«🛒 Do'kon»</b> tugmasida (Mini App): tovarlar, cheklar, "
+        "qarzdorlar, hisobotlar, sozlamalar.\n\n"
+        "Buyruqlar ham ishlaydi: /qarzdorlar /reels /hisobim /xaridlarim",
+        reply_markup=admin_menu(), parse_mode="HTML")

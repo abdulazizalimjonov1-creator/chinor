@@ -138,6 +138,16 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     uid = message.from_user.id
     payload = (command.args or "").strip()
 
+    # ZANJIR UZILMASIN: /start har doim yarim qolgan oqimni TOZALAYDI.
+    # Ilgari mijoz «raqamni tasdiqlash» bosqichida qotib qolsa (masalan
+    # raqam boshqa akkauntga bog'langan bo'lsa), undan keyingi HAR QANDAY
+    # xabariga «raqamni qo'lda yozish qabul qilinmaydi» javob kelardi —
+    # tugmalar ham ishlamay qolardi. Endi /start har doim chiqish yo'li.
+    try:
+        await state.clear()
+    except Exception:
+        pass
+
     # Doimiy «menu tugmasi»ni joriy Mini App URL bilan sinxronlaymiz — tunnel
     # (cloudflare/ngrok) manzili o'zgarib eski URL saqlanib qolganini tuzatadi.
     await _sync_menu_button(message.bot, uid)
@@ -317,12 +327,16 @@ async def auth_by_contact(message: Message, state: FSMContext):
             "Agar bu xato deb hisoblasangiz — admin bilan bog'laning.",
             parse_mode="HTML"
         )
+        # Holatni tozalaymiz: aks holda odam shu bosqichda qamalib
+        # qoladi va keyingi har bir xabariga «raqamni yuboring» kelaveradi.
+        await state.clear()
         return
 
     # 4) Hammasi OK — Telegram ID ni biriktiramiz (yoki tasdiqlaymiz)
     if not cur_tg:
         ok = await db.set_client_tg_id(client["id"], sender_id)
         if not ok:
+            await state.clear()
             await message.answer(
                 "🚫 Avtorizatsiyada xatolik. Admin bilan bog'laning."
             )
@@ -389,7 +403,7 @@ def _bind_kassa_account(phone: str, chat_id: int) -> str:
         return ""
 
 
-@router.message(AuthByPhoneStates.waiting_contact)
+@router.message(AuthByPhoneStates.waiting_contact, ~F.text.startswith("/"))
 async def auth_reject_typed(message: Message):
     """Avtorizatsiya bosqichida har qanday boshqa narsa (matn, rasm, fayl) —
     qabul qilinmaydi. Faqat haqiqiy kontakt orqali kirish mumkin."""
