@@ -126,12 +126,17 @@ def ledger_xlsx(name: str, rows, debt_now: float, path: str = "") -> str:
     for i, w in enumerate([19, 12, 10, 44, 14, 14], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    _TUR = {"receipt": "Xarid", "payment": "To'lov", "manual": "Qo'lda",
+    _TUR = {"payment": "To'lov", "manual": "Qo'lda",
             "fix": "Tuzatish", "opening": "Boshlang'ich"}
+    # Chek turini ham ajratamiz: qaytarish qarzni KAMAYTIRADI, uni oddiy
+    # xarid deb ko'rsatish daftarni tushunarsiz qilardi.
+    _CHEK = {"sale": "Xarid", "sale_deferred": "Nasiya", "return": "Qaytarish"}
     r = 2
     for row in rows:
         ws.cell(row=r, column=1, value=row.get("at") or "")
-        ws.cell(row=r, column=2, value=_TUR.get(row.get("type"), row.get("type")))
+        tur = (_CHEK.get(row.get("kind"), "Xarid") if row.get("type") == "receipt"
+               else _TUR.get(row.get("type"), row.get("type")))
+        ws.cell(row=r, column=2, value=tur)
         ws.cell(row=r, column=3, value=row.get("doc_no") or "")
         ws.cell(row=r, column=4, value=row.get("note") or "")
         _money_cell(ws, r, 5, row.get("change"))

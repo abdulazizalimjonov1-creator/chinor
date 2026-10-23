@@ -3107,26 +3107,67 @@
         };
 
         // Daftar qatorlari — admin tomonida ham shu ko'rinish ishlatiladi.
-        function _ledgerHtml(rows, debtNow, withHead) {
-            const TUR = { receipt: '🧾 Xarid', payment: '💵 To\'lov',
-                          manual: '✍️ Qo\'lda', fix: '⚠️ Tuzatish',
-                          opening: '📌 Boshlang\'ich' };
-            let html = (withHead === false ? '' : `<div class="stat-block">
-                <div class="big-label">💳 Joriy qarz</div>
-                <div class="big-num">${fmtSum(debtNow)} so'm</div></div>`)
-                + '<div class="stat-block">';
-            (rows || []).forEach(r => {
-                const cls = r.change > 0 ? 'val-red' : 'val-green';
+        // Daftarda faqat qarzga TEGGAN qatorlarni ko'rsatish rejimi.
+        // Naqd to'langan xarid qoldiqni o'zgartirmaydi va «0» bo'lib
+        // turaveradi — ular ko'p bo'lsa, haqiqiy harakatlar ko'rinmay
+        // qoladi. Shuning uchun sukut bo'yicha YASHIRIN, tugma bilan
+        // ochiladi: xarid tarixi ham kerak bo'lib qolishi mumkin.
+        let _ledgerAll = false;
+        window.toggleLedgerAll = function () {
+            _ledgerAll = !_ledgerAll;
+            const el = document.querySelector('[data-ledger]');
+            if (el) el.outerHTML = _ledgerRows(JSON.parse(el.dataset.rows));
+        };
+
+        function _ledgerRows(rows) {
+            // Turi va summasi bilan: «0» qator ham nima bo'lganini aytsin.
+            const TUR = {
+                payment: '💵 To\'lov', manual: '✍️ Qo\'lda',
+                fix: '⚠️ Tuzatish', opening: '📌 Boshlang\'ich',
+            };
+            const CHEK = {
+                sale: '🧾 Xarid', sale_deferred: '🤝 Nasiya',
+                return: '↩️ Qaytarish',
+            };
+            const all = rows || [];
+            const shown = _ledgerAll ? all : all.filter(r => Math.round(r.change) !== 0);
+            const hidden = all.length - shown.length;
+
+            let html = `<div class="stat-block" data-ledger="1"
+                 data-rows='${escapeAttr(JSON.stringify(all))}'>`;
+            if (hidden > 0 || _ledgerAll) {
+                html += `<button class="more-btn" style="width:100%;margin-bottom:8px"
+                    onclick="toggleLedgerAll()">${_ledgerAll
+                        ? '🔽 Faqat qarzga teggan harakatlar'
+                        : `🔼 Naqd to'langan xaridlarni ham ko'rsatish (${hidden})`}</button>`;
+            }
+            shown.forEach(r => {
+                const label = r.type === 'receipt'
+                    ? (CHEK[r.kind] || '🧾 Xarid') : (TUR[r.type] || r.type);
+                const cls = r.change > 0 ? 'val-red' : r.change < 0 ? 'val-green' : '';
                 const sign = r.change > 0 ? '+' : '';
+                // Chek summasi — qarzga tegmagan bo'lsa ham nima sotilgani
+                // ko'rinib tursin.
+                const summa = (r.type === 'receipt' && Math.round(r.total) !== Math.round(r.change))
+                    ? ` · ${_rmoney(r.total)} so'm` : '';
                 html += `<div class="toprow" style="align-items:flex-start">
-                    <span>${TUR[r.type] || r.type}
-                      <small style="opacity:.7">${escapeHtml((r.at || '').slice(0, 16))}</small>
+                    <span>${label}
+                      <small style="opacity:.7">${escapeHtml((r.at || '').slice(0, 16))}${summa}</small>
                       ${r.note ? `<br><small style="opacity:.7">${escapeHtml(r.note)}</small>` : ''}</span>
                     <span class="val"><span class="${cls}">${sign}${_rmoney(r.change)}</span><br>
                       <small style="opacity:.7">${_rmoney(r.balance)}</small></span></div>`;
             });
-            if (!(rows || []).length) html += '<div class="list-status">Harakat yo\'q</div>';
+            if (!shown.length) {
+                html += '<div class="list-status">Qarzga teggan harakat yo\'q</div>';
+            }
             return html + '</div>';
+        }
+
+        function _ledgerHtml(rows, debtNow, withHead) {
+            const head = (withHead === false) ? '' : `<div class="stat-block">
+                <div class="big-label">💳 Joriy qarz</div>
+                <div class="big-num">${fmtSum(debtNow)} so'm</div></div>`;
+            return head + _ledgerRows(rows);
         }
 
         window.downloadMy = function (type) {
@@ -5044,8 +5085,34 @@
                 <h2 style="font-size:18px;font-weight:800;">👥 Foydalanuvchilar (${data.total})</h2>
             </div>`;
             (data.items || []).forEach(c => {
-                const debtCls = c.debt_sum > 0 ? 'val-red' : 'val-green';
-                const debtTxt = c.debt_sum > 0 ? fmtSum(c.debt_sum)+" so'm" : '✅ Qarzsiz';
+                // Qarz YesPOS kassasida yuritiladi; pos.db dagi `debt_sum`
+                // deyarli har doim nol. Shuning uchun avval kassadagi qarz
+                // ko'rsatiladi, kassada hisobi topilmagani esa ochiq
+                // aytiladi — «qarzsiz» deb ko'rsatish yolg'on bo'lardi.
+                const kassa = (c.kassa_debt === null || c.kassa_debt === undefined)
+                    ? null : Number(c.kassa_debt);
+                const opts = c.kassa_options || [];
+                let debtCls, debtTxt;
+                if (kassa === null && opts.length > 1) {
+                    // Bir raqamda bir nechta kassa mijozi — qaysi biri
+                    // ekanini taxmin qilmaymiz, adminga tanlatamiz.
+                    debtCls = '';
+                    debtTxt = '<small style="opacity:.75">⚠️ qaysi hisob ekani aniq emas</small>';
+                } else if (kassa === null) {
+                    debtCls = ''; debtTxt = '<small style="opacity:.6">kassada topilmadi</small>';
+                } else if (kassa > 0) {
+                    debtCls = 'val-red'; debtTxt = fmtSum(kassa) + " so'm";
+                } else if (kassa < 0) {
+                    debtCls = 'val-green'; debtTxt = '➕ ' + fmtSum(-kassa) + " ortiqcha";
+                } else {
+                    debtCls = 'val-green'; debtTxt = '✅ Qarzsiz';
+                }
+                const kassaRow = kassa !== null && c.kassa_name !== c.shop_name
+                    ? `<div class="stat-row"><span class="lbl">🏪 Kassadagi nomi</span>
+                         <span class="val">${escapeHtml(c.kassa_name)}</span></div>` : '';
+                const ownDebt = c.debt_sum > 0
+                    ? `<div class="stat-row"><span class="lbl">📒 Chinor qarzi</span>
+                         <span class="val val-red">${fmtSum(c.debt_sum)} so'm</span></div>` : '';
                 const typeTxt = c.is_internal ? '🏠' : (c.client_type === 'optom' ? '📦' : '🛍️');
                 // «Chinor» ichki mijoziga qarz tugmasi qo'yilmaydi
                 let creditRow = '';
@@ -5060,6 +5127,14 @@
                 html += `<div class="stat-block">
                     <div class="stat-row"><span class="lbl">${typeTxt} ${escapeHtml(c.shop_name)}${nameExtra}</span><span class="val ${debtCls}">${debtTxt}</span></div>
                     <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${escapeHtml(c.phone||'—')}</span></div>
+                    ${kassaRow}
+                    ${ownDebt}
+                    ${kassa !== null ? `<button class="more-btn" style="width:100%;margin:6px 0"
+                        onclick="openDebtClient(${JSON.stringify(c.kassa_name).replace(/"/g, '&quot;')})">
+                        📕 Kassadagi hisob-kitobi</button>` : ''}
+                    ${opts.map(n => `<button class="more-btn" style="width:100%;margin:4px 0"
+                        onclick="openDebtClient(${JSON.stringify(n).replace(/"/g, '&quot;')})">
+                        📕 ${escapeHtml(n)}</button>`).join('')}
                     ${creditRow}
                     <div class="stat-row"><span class="lbl">📅 Qo'shilgan</span><span class="val">${c.created_at}</span></div>
                 </div>`;

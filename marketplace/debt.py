@@ -274,17 +274,33 @@ def ledger(conn, client: str, limit: int = 0) -> List[dict]:
 
 # ─── Qarzdorlar ──────────────────────────────────────────────────────────────
 
-def clients_with_debt(conn, min_amount: float = 1.0) -> List[dict]:
-    """Qarzi bor mijozlar — kattasidan kichigiga.
+def all_names(conn) -> set:
+    """Kassada uchraydigan barcha mijoz nomlari.
 
-    Ro'yxat chekdagi nomlardan ham, `debt_clients` dan ham yig'iladi: kassada
-    yangi mijoz ochilgan, lekin bizda hali yozuvi yo'q bo'lsa ham ko'rinsin.
+    Uch joydan yig'iladi: cheklar, to'lovlar va qarz daftari. Kassada yangi
+    mijoz ochilgan, lekin bizda hali yozuvi yo'q bo'lsa ham tushib qolmasin.
     """
     names = {r[0] for r in conn.execute(
         "SELECT DISTINCT client FROM receipts WHERE client <> ''")}
     names |= {r[0] for r in conn.execute(
         "SELECT DISTINCT client FROM debt_payments WHERE client <> ''")}
     names |= {r[0] for r in conn.execute("SELECT name FROM debt_clients")}
+    return names
+
+
+def all_debts(conn) -> Dict[str, float]:
+    """Har bir nom uchun joriy qarz — nol va manfiysi ham kiradi.
+
+    «Qarzsiz» ni «ma'lumot yo'q» dan ajratish uchun kerak: mijozlar
+    ro'yxatida qarz ustunini ko'rsatishda shu ikkisini aralashtirsa,
+    hammasi «qarzsiz» bo'lib ko'rinib qolardi.
+    """
+    return {n: debt(conn, n) for n in all_names(conn)}
+
+
+def clients_with_debt(conn, min_amount: float = 1.0) -> List[dict]:
+    """Qarzi bor mijozlar — kattasidan kichigiga."""
+    names = all_names(conn)
 
     rows = []
     for name in names:

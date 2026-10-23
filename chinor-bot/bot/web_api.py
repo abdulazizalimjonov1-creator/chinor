@@ -3563,6 +3563,71 @@ async def api_recent_sales(request: web.Request):
 
 # ─── Foydalanuvchilar (admin) ──────────────────────────────────────────────
 
+def _digits9(phone: str) -> str:
+    """«+998 94 686 77 33» → «946867733»."""
+    d = "".join(ch for ch in (phone or "") if ch.isdigit())
+    return d[-9:] if len(d) >= 9 else d
+
+
+def _kassa_debts() -> dict:
+    """Kassadagi (YesPOS) qarzlar: telefon va nom bo'yicha qidirish uchun.
+
+    Qaytaradi: {"by_phone": {9 raqam: [nomlar]}, "by_name": {nom: qarz}}.
+    Telefon bo'yicha RO'YXAT saqlanadi: bitta raqamga bir nechta mijoz
+    yozilgan bo'lishi mumkin (do'konda «Elbek aka Prarab» va «Elbek aka
+    yengi dom» aynan shunday) — bunday paytda taxmin qilib bo'lmaydi.
+
+    Xato bo'lsa bo'sh — mijozlar ro'yxati baribir ochilishi kerak.
+    """
+    empty = {"by_phone": {}, "by_name": {}}
+    try:
+        import sys as _sys
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        if root not in _sys.path:
+            _sys.path.insert(0, root)
+        from marketplace import debt as D
+        from marketplace.db import MarketplaceDB
+
+        with MarketplaceDB() as mdb:
+            D.ensure_schema(mdb.conn)
+            debts = D.all_debts(mdb.conn)
+            phones = {}
+            for r in mdb.conn.execute(
+                    "SELECT name, phone, phone2 FROM debt_clients"):
+                for p in (r[1], r[2]):
+                    key = _digits9(p)
+                    if len(key) == 9 and r[0] not in phones.setdefault(key, []):
+                        phones[key].append(r[0])
+        return {"by_phone": phones, "by_name": debts}
+    except Exception as e:
+        logger.warning(f"[clients] kassa qarzi o'qilmadi: {e}")
+        return empty
+
+
+def _match_kassa(kassa: dict, phone: str, name: str):
+    """(kassadagi nom, qarz) — topilmasa («», None).
+
+    Tartib ataylab shunday:
+      1. AYNAN nom — eng ishonchlisi;
+      2. telefon, lekin faqat o'sha raqamda YAGONA mijoz bo'lsa.
+
+    Bir raqamga ikki mijoz yozilgan bo'lsa TAXMIN QILINMAYDI: do'konda
+    «Elbek aka Prarab» (21 mln) va «Elbek aka yengi dom» (3,6 mln) bitta
+    raqamda — taxmin qilinsa, birovning qarzi ikkinchisiga yozilardi.
+    """
+    nm = (name or "").strip()
+    if nm in kassa["by_name"]:
+        return nm, kassa["by_name"][nm]
+
+    key = _digits9(phone)
+    nomzod = kassa["by_phone"].get(key, []) if len(key) == 9 else []
+    if len(nomzod) == 1:
+        return nomzod[0], kassa["by_name"].get(nomzod[0], 0.0)
+    return "", None
+
+
 @ROUTES.get("/api/clients")
 async def api_clients(request: web.Request):
     from database.channel_db import db as _db
@@ -3572,13 +3637,28 @@ async def api_clients(request: web.Request):
     if auth["role"] != "admin":
         return _err("Faqat adminlar uchun", 403)
     clients = await _db.get_all_clients()
+    kassa = _kassa_debts()
     items = []
     for c in clients:
+        k_name, k_debt = _match_kassa(kassa, c.get("phone", ""),
+                                      c.get("shop_name", ""))
         items.append({
             "id": c.get("id", 0),
             "shop_name": c.get("shop_name", ""),
             "phone": c.get("phone", ""),
             "debt_sum": float(c.get("debt", 0) or 0),
+            # Haqiqiy savdo YesPOS kassasida bo'ladi, shuning uchun qarz ham
+            # o'sha yerda. `debt_sum` (pos.db) deyarli har doim nol — faqat
+            # shuni ko'rsatsa, butun ro'yxat «qarzsiz» bo'lib ko'rinardi.
+            "kassa_debt": round(k_debt) if k_name else None,
+            "kassa_name": k_name,
+            # Bir raqamga bir nechta kassa mijozi to'g'ri kelsa — qaysi biri
+            # ekani noma'lum. Yashirmaymiz: admin o'zi tanlasin.
+            "kassa_options": (
+                [] if k_name else
+                [n for n in kassa["by_phone"].get(
+                    _digits9(c.get("phone", "")), [])]
+            ),
             "debt_usd": float(c.get("debt_usd", 0) or 0),
             "client_type": c.get("client_type", "dona"),
             "telegram_id": c.get("telegram_id", 0),
