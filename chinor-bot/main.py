@@ -17,7 +17,7 @@ from database.channel_db import db, DB_PATH
 from database._helpers import now_local
 from handlers import (
     glavniy, admin_products, admin_clients, admin_stats, sale, client, catalog,
-    ai_analytics, auth_setup, client_ai, discussion, kabinet,
+    ai_analytics, auth_setup, client_ai, discussion, kabinet, kanal_aniq,
 )
 
 logging.basicConfig(
@@ -209,6 +209,7 @@ async def main():
     from handlers import reels_compare_admin
     dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
     dp.include_router(kabinet.router)         # 🧾 mijoz kabineti (/hisobim …)
+    dp.include_router(kanal_aniq.router)      # 📢 kanal id sini aniqlash
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq
     # ishlovchilar avval ishlaydi, bu yerga faqat "egasiz" matn tushadi.
     dp.include_router(client_ai.router)
@@ -292,7 +293,12 @@ async def main():
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
             bot,
-            allowed_updates=["message", "callback_query"]
+            # `my_chat_member` va `channel_post` — kanal almashganda uning
+            # id sini AVTOMATIK bilish uchun (qarang: handlers/kanal_aniq.py).
+            # Ularsiz Telegram bu yangilanishlarni umuman yubormaydi va
+            # kanal id sini faqat qo'lda qidirishga to'g'ri kelardi.
+            allowed_updates=["message", "callback_query",
+                             "my_chat_member", "channel_post"]
         )
     finally:
         retention_task.cancel()
