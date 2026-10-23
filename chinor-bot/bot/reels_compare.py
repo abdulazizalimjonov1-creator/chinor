@@ -288,8 +288,8 @@ def _script_prompt(topic: str, answer: str, pair: list, rows: list) -> str:
         "Har 'rows_say' gapi o'sha qatorni odamga o'xshab tushuntirsin va ikkala qiymatni "
         "AYNAN aytsin (masalan: 'Birinchisi Turkiyada, ikkinchisi O'zbekistonda ishlab chiqarilgan.'). "
         "Qatorlar soni bilan bir xil bo'lsin.\n"
-        "Diktor gaplari QISQA bo'lsin: hook_say ≤ 10 so'z, problem_say ≤ 16, har rows_say ≤ 16, "
-        "verdict_*_say ≤ 12, cta_say ≤ 12. Butun video 30 soniyadan oshmasin.\n"
+        "Diktor gaplari JUDA QISQA bo'lsin: hook_say ≤ 7 so'z, problem_say ≤ 12, har rows_say ≤ 11, "
+        "verdict_*_say ≤ 9, cta_say ≤ 9. Butun video 22 soniyadan oshmasin.\n"
         'JSON: {"hook": "ekran uchun ilgak, 3-7 so\'z, savol belgisi bilan", '
         '"hook_say": "diktor uchun ilgak, 1 qisqa gap", '
         '"problem": "ekran uchun ziddiyat, 5-10 so\'z", '
@@ -317,14 +317,16 @@ def _parse(text: str):
         return None
     out = {k: (_tight(d[k], _MAX_WORDS.get(k, 99)) if k.endswith("_say") else _short(d[k], 60))
            for k in _KEYS}
-    out["rows_say"] = [_tight(x, 18) for x in (d.get("rows_say") or []) if str(x).strip()]
+    out["rows_say"] = [_tight(x, 12) for x in (d.get("rows_say") or []) if str(x).strip()]
     return out
 
 
 # Diktor gaplarining so'z chegarasi. Lentada odam 1–2 soniyada qaror qiladi:
 # 12 soniyalik ilgak (birinchi sinovda shunday chiqdi) — o'tkazib yuborish.
-_MAX_WORDS = {"hook_say": 12, "problem_say": 18, "verdict_a_say": 14,
-              "verdict_b_say": 14, "cta_say": 13}
+# 2026-10-23: Instagram statistikasi — 36 soniyalik videoni odamlar o'rtacha
+# 3–5 soniya ko'rgan. Qisqartirildi: maqsad ~20 soniya.
+_MAX_WORDS = {"hook_say": 8, "problem_say": 13, "verdict_a_say": 10,
+              "verdict_b_say": 10, "cta_say": 10}
 
 
 def _tight(text: str, max_words: int) -> str:
@@ -431,7 +433,7 @@ _VOICE_STYLE = ("Quyidagi matnni o'zbek tilida, tajribali usta do'stiga maslahat
                 "berayotgandek jonli, ishonarli va biroz tez sur'atda o'qing. Har bir "
                 "qatordan keyin qisqa (yarim soniyacha) pauza qiling. Faqat matnning "
                 "o'zini o'qing:\n")
-MAX_SPEECH = 34.0     # diktor shundan uzun bo'lsa — biroz tezlashtiriladi
+MAX_SPEECH = 24.0     # diktor shundan uzun bo'lsa — biroz tezlashtiriladi
 
 
 def _speech_spans(wav: str) -> list:
@@ -952,13 +954,15 @@ def render(topic: dict, rows: list, script: dict, times: list, out_path: str,
         ms = int(LEAD * 1000)
         mix = out_path + ".mix.wav"
         if has_music:
-            fc = (f"[1:a]adelay={ms}|{ms},apad[v];[0:a]volume=0.16[m];"
+            # Diktor ravshanlashtiriladi, musiqa diktor gapirganda pasayadi
+            fc = (f"[1:a]{R.VOICE_FX},adelay={ms}|{ms},apad,asplit=2[v][vsc];"
+                  f"[0:a]volume=0.30[m0];[m0][vsc]{R.DUCK}[m];"
                   "[m][v]amix=inputs=2:normalize=0:duration=first[a]")
             cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", music, "-i", voice_wav,
-                   "-filter_complex", fc, "-map", "[a]", "-ar", "44100", mix]
+                   "-filter_complex", fc, "-map", "[a]", "-ar", "48000", mix]
         else:
             cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", voice_wav,
-                   "-af", f"adelay={ms}|{ms},apad=whole_dur={total}", "-ar", "44100", mix]
+                   "-af", f"{R.VOICE_FX},adelay={ms}|{ms},apad=whole_dur={total}", "-ar", "48000", mix]
         if subprocess.run(cmd, capture_output=True, timeout=120).returncode == 0:
             audio = mix
     if not audio and has_music:
@@ -966,8 +970,7 @@ def render(topic: dict, rows: list, script: dict, times: list, out_path: str,
     a_in = ["-i", audio] if audio else ["-f", "lavfi", "-t", str(total), "-i", "anullsrc=r=44100:cl=stereo"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo",
            "-pix_fmt", "rgb24", "-s", f"{R.W}x{R.H}", "-r", str(FPS), "-i", "-", *a_in,
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "128k", "-t", f"{total:.2f}", "-movflags", "+faststart", out_path]
+           *R.VIDEO_ENC, *R.AUDIO_ENC, "-t", f"{total:.2f}", "-movflags", "+faststart", out_path]
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE)

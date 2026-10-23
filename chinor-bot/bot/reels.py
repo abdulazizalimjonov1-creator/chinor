@@ -53,6 +53,28 @@ logger = logging.getLogger(__name__)
 # ─── Sozlamalar ─────────────────────────────────────────────────────────────
 
 W, H = 1080, 1920                  # Instagram Reels o'lchami
+
+# ── Ovoz va tasvir sifati (2026-10-23) ─────────────────────────────────────
+# O'lchov: avvalgi roliklar MONO, -17.5 LUFS (Instagram me'yori ~-14), video
+# 0.85 Mbit/s — telefonda "xom", past ovozli eshitilardi. Endi:
+#   diktor  — past/yuqori shovqin kesiladi, "ravshanlik" (3 kHz) ko'tariladi,
+#             kompressor bilan bir tekis;
+#   musiqa  — diktor gapirganda o'zi pasayadi (sidechain "ducking");
+#   yakun   — -14 LUFS, cho'qqi -1.5 dB, STEREO 48 kHz, AAC 192k;
+#   video   — CRF 18, 10 Mbit/s gacha, high profil (Instagram qayta siqadi,
+#             shuning uchun manba sifati yuqori bo'lishi kerak).
+VOICE_FX = ("highpass=f=90,lowpass=f=11000,"
+            "equalizer=f=3200:t=q:w=1.2:g=3,"
+            "acompressor=threshold=-22dB:ratio=3:attack=5:release=90:makeup=3")
+AUDIO_MASTER = ("acompressor=threshold=-18dB:ratio=2:attack=10:release=150,"
+                "loudnorm=I=-14:TP=-1.5:LRA=11,"
+                "aresample=48000,aformat=channel_layouts=stereo")
+DUCK = "sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350"
+VIDEO_ENC = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
+             "-maxrate", "10M", "-bufsize", "20M", "-profile:v", "high",
+             "-level", "4.1", "-g", "60", "-pix_fmt", "yuv420p"]
+AUDIO_ENC = ["-af", AUDIO_MASTER, "-c:a", "aac", "-b:a", "192k",
+             "-ar", "48000", "-ac", "2"]
 DURATION = 15                      # soniya (ilgak → 3 sahna → solishtirish → narx)
 FPS = 30
 
@@ -2049,8 +2071,9 @@ def render(product: dict, image_path: str, price_txt: str, cat: str,
         mixed = out_path + ".mix.wav"
         mix_cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                    "-i", wav, "-i", voice, "-filter_complex",
-                   "[0:a]volume=0.22[m];[m][1:a]amix=inputs=2:normalize=0:"
-                   "duration=first[a]", "-map", "[a]", "-ar", "44100", mixed]
+                   f"[1:a]{VOICE_FX},asplit=2[v][vsc];[0:a]volume=0.35[m0];"
+                   f"[m0][vsc]{DUCK}[m];[m][v]amix=inputs=2:normalize=0:"
+                   "duration=first[a]", "-map", "[a]", "-ar", "48000", mixed]
         try:
             if subprocess.run(mix_cmd, capture_output=True,
                               timeout=180).returncode == 0:
@@ -2075,9 +2098,7 @@ def render(product: dict, image_path: str, price_txt: str, cat: str,
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
         "-r", str(FPS), "-i", "-",
         *audio_in,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-profile:v", "high", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-shortest",
+        *VIDEO_ENC, *AUDIO_ENC, "-shortest",
         "-movflags", "+faststart", out_path,
     ]
     total = int(DURATION * FPS)
