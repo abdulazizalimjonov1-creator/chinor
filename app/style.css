@@ -29,6 +29,10 @@
 
         /* ── Fon: yashil gradiyent + barglar ── */
         body {
+            /* Tepaga tortilganda ishora SAHIFADAN TASHQARIGA o'tmasin:
+               Telegram uni «ilovani yopish» deb oladi va mijoz ro'yxatni
+               surmoqchi bo'lganda ilova yopilib ketadi. */
+            overscroll-behavior-y: contain;
             min-height: 100vh;
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
             background: linear-gradient(160deg,

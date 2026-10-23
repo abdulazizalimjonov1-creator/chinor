@@ -1706,6 +1706,11 @@ async def api_product_image(request: web.Request):
         # rasm o'sha teglar bilan qayta chizib chiqiladi. Rasm yuklash javobi
         # AI ni kutib turmasin (u 5-20 soniya olishi mumkin) — admin darrov
         # brendlangan rasmni ko'radi, teglar bir necha soniyada qo'shiladi.
+        # Ish boshlanishidan OLDIN navbatga yoziladi: server shu payt
+        # o'chsa, fon vazifasi uzilib qoladi va tovar bo'limsiz,
+        # kanalsiz qolardi. Navbatdagisi keyin qayta bajariladi.
+        from bot import enrich_queue
+        enrich_queue.mark_start(pid, fpath)
         asyncio.ensure_future(_enrich_product(pid, fpath))
     else:
         logger.warning("📸 pid=0, rasm saqland'i lekin database'ga yozilmadi")
@@ -1818,11 +1823,13 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
         _enriching.discard(pid)
 
     if not post:
+        _enrich_done(pid)
         return
     # ── Kanalga e'lon (tayyor rasm bilan) ─────────────────────────────────
     try:
         now = time.time()
         if now - _last_post.get(pid, 0) < 30:
+            _enrich_done(pid)            # allaqachon yuborilgan
             return                       # yaqinda yuborilgan — takrorlamaymiz
         p = await _db.get_product_any(pid)
         if not p or not (p.get("image_url") or ""):
@@ -1833,11 +1840,23 @@ async def _enrich_product(pid: int, image_path: str = "", post: bool = True):
         if api_labels._photos(pid) and not await _db._in_thread(
                 api_labels.approved_facts, _db, pid):
             logger.info(f"📢 Post yo'riqnoma tasdig'ini kutmoqda (#{pid})")
+            _enrich_done(pid)       # bu kutish — xato emas, navbat yopiladi
             return
         _last_post[pid] = now
         await _post_product_to_channel(_db, p, pid)
+        _enrich_done(pid)
     except Exception as e:
         logger.warning(f"📢 Kanalga yuborilmadi (#{pid}): {e}")
+
+
+def _enrich_done(pid: int) -> None:
+    """Boyitish to'liq tugadi — qayta bajarish navbatidan chiqaramiz."""
+    try:
+        from bot import enrich_queue
+
+        enrich_queue.mark_done(pid)
+    except Exception:
+        pass
 
 
 async def _enrich_steps(pid: int, image_path: str, _db, ai_category):

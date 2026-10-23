@@ -276,6 +276,10 @@ async def main():
     from bot import ig_stats
     ig_stats_task = asyncio.create_task(ig_stats.loop())
 
+    # ── Rasm yuklangandan keyingi ish uzilib qolgan bo'lsa — qayta ──────
+    from bot import enrich_queue
+    enrich_task = asyncio.create_task(enrich_queue.loop())
+
     # ── YesPOS → Chinor: tovar/qoldiq/narx (har 15 daqiqa, himoyali) ────
     from bot import yespos_sync
     yespos_task = asyncio.create_task(yespos_sync.loop(bot))
@@ -302,6 +306,7 @@ async def main():
         notify_task.cancel()
         debt_watch_task.cancel()
         ig_stats_task.cancel()
+        enrich_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
         await bot.session.close()

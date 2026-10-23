@@ -77,6 +77,23 @@
         const tg = window.Telegram?.WebApp;
         tg?.expand();
 
+        // TEPADAN PASTGA TORTGANDA ILOVA YOPILIB KETMASIN.
+        // Telegram'da pastga surish — «ilovani yopish» ishorasi. Ro'yxat
+        // eng tepasida turganda esa o'sha ishora SAHIFANI surish o'rniga
+        // ilovani yopib yuboradi: mijoz ro'yxatni tepaga tortmoqchi
+        // bo'ladi-yu, ilova yopiladi.
+        //   • `disableVerticalSwipes()` — Telegram 7.7 dan bor, ishorani
+        //     butunlay o'chiradi (yopish uchun ✕ tugmasi qoladi);
+        //   • eski versiyalarda esa ilovani to'liq ekranga chiqarib
+        //     qo'yamiz — unda ishora kamroq ishlaydi.
+        try {
+            if (typeof tg?.disableVerticalSwipes === 'function') {
+                tg.disableVerticalSwipes();
+            } else if (typeof tg?.requestFullscreen === 'function') {
+                tg.requestFullscreen();
+            }
+        } catch (_) { /* eski mijoz — oddiy holatda qolaveradi */ }
+
         // ----- DOM refs -----
         const $ = (id) => document.getElementById(id);
 
