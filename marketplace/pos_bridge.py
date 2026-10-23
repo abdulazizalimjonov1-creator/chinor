@@ -154,7 +154,10 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
     }
 
 
-KEEP_BACKUPS = 10          # nechta oxirgi zaxira nusxa saqlanadi
+KEEP_BACKUPS = 5           # nechta oxirgi zaxira nusxa saqlanadi
+# 10 ta edi: ~28 MB egallardi, holbuki kunlik to'liq zaxira
+# alohida ishlaydi (backups/). Bu yerdagilar faqat «ko'prik
+# buzsa darrov qaytarish» uchun — beshtasi yetarli.
 
 
 def _rotate_backups(pos_db_path: str, keep: int = KEEP_BACKUPS) -> None:

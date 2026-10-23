@@ -17,7 +17,7 @@ from database.channel_db import db, DB_PATH
 from database._helpers import now_local
 from handlers import (
     glavniy, admin_products, admin_clients, admin_stats, sale, client, catalog,
-    ai_analytics, auth_setup, client_ai, discussion,
+    ai_analytics, auth_setup, client_ai, discussion, kabinet,
 )
 
 logging.basicConfig(
@@ -25,6 +25,54 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+async def _sync_commands(bot: Bot):
+    """«/» bosilganda chiqadigan buyruqlar ro'yxati.
+
+    Ikki xil: oddiy mijozga qisqa va tushunarli ro'yxat, adminlarga esa
+    ustiga qo'shimcha. Ro'yxat har ishga tushganda qayta yoziladi —
+    buyruq qo'shilsa .env yoki qo'lda sozlash kerak bo'lmaydi.
+    """
+    from aiogram.types import BotCommand, BotCommandScopeChat
+
+    mijoz = [
+        BotCommand(command="start", description="🏠 Boshlash"),
+        BotCommand(command="hisobim", description="💰 Qarzim va hisob holati"),
+        BotCommand(command="xaridlarim", description="🧾 Oxirgi xaridlarim"),
+        BotCommand(command="excel", description="📥 Hisob-kitobni yuklab olish"),
+        BotCommand(command="aloqa", description="📞 Do'kon manzili va telefoni"),
+        BotCommand(command="yordam", description="ℹ️ Yordam"),
+    ]
+    try:
+        await bot.set_my_commands(mijoz)
+    except Exception as e:
+        logger.warning(f"Buyruqlar ro'yxati o'rnatilmadi: {e}")
+        return
+
+    # Adminlarga — faqat o'z suhbatlarida (boshqalar ko'rmaydi).
+    admin = mijoz + [
+        BotCommand(command="qarzdorlar", description="📕 Qarzdorlar ro'yxati"),
+    ]
+    try:
+        ids = {GLAVNIY_ADMIN_ID}
+        for a in (await db.get_all_admins() or []):
+            try:
+                ids.add(int(a.get("telegram_id") or 0))
+            except (TypeError, ValueError):
+                pass
+        for chat_id in ids:
+            if not chat_id:
+                continue
+            try:
+                await bot.set_my_commands(
+                    admin, scope=BotCommandScopeChat(chat_id=chat_id))
+            except Exception:
+                # Admin botni bloklagan yoki hali /start bosmagan bo'lishi
+                # mumkin — bu butun ro'yxatni to'xtatmasligi kerak.
+                pass
+    except Exception as e:
+        logger.warning(f"Admin buyruqlari o'rnatilmadi: {e}")
 
 
 async def on_startup(bot: Bot):
@@ -39,6 +87,7 @@ async def on_startup(bot: Bot):
         logger.error(f"bot.get_me() xato: {e}")
     db.set_bot(bot, username=username)
     db.set_low_stock_alert(make_low_stock_handler(bot))
+    await _sync_commands(bot)
 
     # Mini App "menu tugmasi"ni MINI_APP_URL bilan sinxronlaymiz (yagona manba).
     # Shunda tunnel/domen o'zgarsa, faqat .env'ni yangilab botni qayta ishga
@@ -157,6 +206,7 @@ async def main():
     dp.include_router(auth_setup.router)      # 🔑 Mini App login/parol yaratish
     from handlers import reels_compare_admin
     dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
+    dp.include_router(kabinet.router)         # 🧾 mijoz kabineti (/hisobim …)
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq
     # ishlovchilar avval ishlaydi, bu yerga faqat "egasiz" matn tushadi.
     dp.include_router(client_ai.router)
@@ -216,6 +266,10 @@ async def main():
     from bot import notify_worker
     notify_task = asyncio.create_task(notify_worker.loop())
 
+    # ── Qarz harakati: nasiya yoki to'lov bo'lsa mijozga va adminga ─────
+    from bot import debt_watch
+    debt_watch_task = asyncio.create_task(debt_watch.loop(bot))
+
     # ── YesPOS → Chinor: tovar/qoldiq/narx (har 15 daqiqa, himoyali) ────
     from bot import yespos_sync
     yespos_task = asyncio.create_task(yespos_sync.loop(bot))
@@ -240,6 +294,7 @@ async def main():
         backup_task.cancel()
         receipts_task.cancel()
         notify_task.cancel()
+        debt_watch_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
         await bot.session.close()

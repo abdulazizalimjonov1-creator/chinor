@@ -338,6 +338,24 @@
                 showScreen(screenClient);
                 initClientScreen();
             }
+            _openRequestedScreen();
+        }
+
+        // Botdagi tugma to'g'ridan-to'g'ri kerakli bo'limni ochsin:
+        //   ...pages.dev/?screen=hisobim | xaridlarim | hisob
+        // Shunda mijoz «Hisobim» ni bosganda katalogdan qidirib
+        // yurmaydi — darrov o'z hisobini ko'radi.
+        function _openRequestedScreen() {
+            const want = (_urlParams.get('screen') || '').toLowerCase();
+            if (!want) return;
+            setTimeout(() => {
+                try {
+                    if (want === 'hisobim' || want === 'account') openAccount();
+                    else if (want === 'xaridlarim' || want === 'receipts') openMyReceipts(0);
+                    else if (want === 'hisob' || want === 'ledger') openMyLedger();
+                    else if (want === 'qarzdorlar' || want === 'debtors') openDebtors();
+                } catch (e) { /* bo'lim ochilmasa oddiy ekran qoladi */ }
+            }, 200);
         }
 
         // ── Admin: mijoz ko'rinishiga o'tish / qaytish ──────────────────
