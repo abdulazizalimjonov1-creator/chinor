@@ -40,7 +40,8 @@ async def _sync_commands(bot: Bot):
         BotCommand(command="start", description="🏠 Boshlash"),
         BotCommand(command="hisobim", description="💰 Qarzim va hisob holati"),
         BotCommand(command="xaridlarim", description="🧾 Oxirgi xaridlarim"),
-        BotCommand(command="excel", description="📥 Hisob-kitobni yuklab olish"),
+        BotCommand(command="rasm", description="🖼 Hisobotni rasm qilib olish"),
+        BotCommand(command="excel", description="📥 Hisob-kitob (Excel fayl)"),
         BotCommand(command="aloqa", description="📞 Do'kon manzili va telefoni"),
         BotCommand(command="yordam", description="ℹ️ Yordam"),
     ]

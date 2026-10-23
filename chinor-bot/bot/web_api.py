@@ -3692,6 +3692,61 @@ async def api_clients(request: web.Request):
     return web.json_response({"ok": True, "items": items, "total": len(items)})
 
 
+@ROUTES.post("/api/product/barcode/attach")
+async def api_barcode_attach(request: web.Request):
+    """Skanerlangan kodni mavjud tovarga BIRIKTIRADI (bor kodlar qoladi).
+
+    NEGA KERAK: do'kondagi 6918 tovardan faqat ~3000 tasining shtrix-kodi
+    kassa eksportida bor. Qolganini kassa o'zi taniydi, bizda esa yo'q —
+    skanerlanganda «topilmadi» chiqadi va ish to'xtaydi. Endi o'sha
+    paytda kodni tovarga biriktirib qo'ysa bo'ladi: bir marta ko'rsatilsa,
+    keyingi safar o'zi topiladi. Shu bilan baza asta-sekin to'ladi.
+
+    Body: {product_id, code}
+    """
+    from database.channel_db import db as _db
+
+    auth, err = await _need_admin(request, _db, "products")
+    if err is not None:
+        return err
+
+    body = await _read_json(request)
+    try:
+        pid = int(body.get("product_id") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    code = str(body.get("code") or "").strip()
+    if not pid or not code:
+        return _err("Tovar yoki kod tanlanmadi")
+    if not (4 <= len(code) <= 32) or not code.replace("-", "").isalnum():
+        return _err("Shtrix-kod noto'g'ri")
+
+    p = await _db.get_product_any(pid)
+    if not p:
+        return _err("Mahsulot topilmadi", 404)
+
+    ex = await _db.barcode_owner(code)
+    if ex and ex.get("id") != pid:
+        return _err(f"«{code}» kodi «{ex['name']}» da bor", 409)
+    if ex and ex.get("id") == pid:
+        return web.json_response({"ok": True, "already": True,
+                                  "name": p.get("name", "")})
+
+    codes = list(await _db.get_product_barcodes(pid))
+    if code not in codes:
+        codes.append(code)
+    ok, bc_err = await _db.set_product_barcodes(pid, codes)
+    if not ok:
+        return _err(bc_err, 409)
+    # Asosiy kod bo'sh bo'lsa — shuni qo'yamiz (eski ekranlar o'shani ko'radi).
+    if not (p.get("barcode") or "").strip():
+        await _db.update_product(pid, barcode=code)
+    logger.info(f"🔖 Shtrix-kod biriktirildi: {code} → #{pid} "
+                f"({auth['tg_id']})")
+    return web.json_response({"ok": True, "name": p.get("name", ""),
+                              "codes": codes})
+
+
 @ROUTES.post("/api/client/save")
 async def api_client_save(request: web.Request):
     """Yangi mijoz yaratish (kassa/Mini App'dan). Body: {shop_name, phone,

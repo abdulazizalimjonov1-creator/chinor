@@ -651,6 +651,12 @@
                     productsStatus.textContent = _prodQuery
                         ? `«${_prodQuery}» bo'yicha hech narsa topilmadi.`
                         : 'Mahsulot yo\'q.';
+                    // Skanerlangan kod bazada yo'q bo'lsa — uni tovarga
+                    // biriktirish taklifi. Do'kondagi tovarlarning yarmidan
+                    // ko'pining kodi kassa eksportida yo'q, shuning uchun
+                    // «topilmadi» tez-tez uchraydi; bir marta biriktirilsa,
+                    // keyingi safar o'zi topiladi.
+                    _offerBarcodeAttach(_prodQuery);
                 } else {
                     productsStatus.textContent =
                         `Jami: ${data.total} ta` + (_prodQuery ? ` («${_prodQuery}»)` : '');
@@ -914,10 +920,100 @@
             const { ok, data } = await apiFetch('/api/products?page=0&q=' + encodeURIComponent(q));
             const items = (ok && data.ok) ? (data.items || data.products || []).slice(0, 12) : [];
             if (autoOpen && items.length === 1) { qeOpen(items[0].id); return; }
-            box.innerHTML = items.map(p => `<div class="g-row" onclick="qeOpen(${p.id})">
-                <div><b>${escapeHtml(p.name)}</b><div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}
-                ${p.image_url ? '' : ' · <span style="color:#dc2626">rasmsiz</span>'}</div></div><span>›</span></div>`).join('')
-                || '<div class="list-status">Topilmadi</div>';
+            // NIMA TO'LDIRILGANI KO'RINIB TURSIN. Ilgari faqat «rasmsiz»
+            // yozilardi — tavsif yozilganmi yoki yo'qmi bilib bo'lmasdi va
+            // bir tovarni ikki marta to'ldirishga to'g'ri kelardi.
+            box.innerHTML = items.map(p => {
+                const rasm = p.image_url
+                    ? '<span style="color:#16a34a">🖼 rasm</span>'
+                    : '<span style="color:#dc2626">🖼 yo\'q</span>';
+                const tavsif = (p.description || '').trim()
+                    ? '<span style="color:#16a34a">📝 tavsif</span>'
+                    : '<span style="color:#dc2626">📝 yo\'q</span>';
+                const kod = (p.barcodes && p.barcodes.length)
+                    ? '<span style="color:#16a34a">🔖 kod</span>'
+                    : '<span style="color:#dc2626">🔖 yo\'q</span>';
+                return `<div class="g-row" onclick="qeOpen(${p.id})">
+                    <div><b>${escapeHtml(p.name)}</b>
+                      <div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}</div>
+                      <div class="g-meta" style="display:flex;gap:10px;margin-top:2px">
+                        ${rasm}${tavsif}${kod}</div>
+                    </div><span>›</span></div>`;
+            }).join('') || '<div class="list-status">Topilmadi</div>';
+        };
+
+        // ── Noma'lum shtrix-kodni tovarga biriktirish ────────────────────
+        // Kassa eksportida tovarlarning yarmidan ko'pining kodi yo'q, shuning
+        // uchun skanerda «topilmadi» chiqishi odatiy hol. Har bir shunday
+        // holatni tuzatishga aylantiramiz: kodni tovarga ko'rsatib qo'ysangiz,
+        // keyingi safar o'zi topiladi.
+        let _bcPending = '';
+
+        function _offerBarcodeAttach(code) {
+            const c = (code || '').trim();
+            const box = $('productsStatus');
+            if (!box || !_isAdminUser) return;
+            // Faqat shtrix-kodga o'xshasa (8+ raqam) — oddiy so'z qidiruvida
+            // bu taklif ortiqcha.
+            if (!/^\d{8,}$/.test(c)) return;
+            _bcPending = c;
+            box.innerHTML = `«${escapeHtml(c)}» bo'yicha hech narsa topilmadi.
+                <div class="stat-block" style="margin-top:10px;text-align:left">
+                    <b>🔖 Bu kod bazada yo'q</b>
+                    <div class="list-status" style="text-align:left">
+                        Kassada bor, bizda yo'q bo'lishi mumkin. Tovarni
+                        nomi bilan toping va kodni biriktiring — keyingi safar
+                        skanerda o'zi chiqadi.
+                    </div>
+                    <input id="bcFind" type="text" placeholder="Tovar nomi..."
+                           oninput="bcFind(this.value)"
+                           style="width:100%;padding:10px;border-radius:8px;margin-top:8px;
+                                  border:1px solid var(--border,#ccc)">
+                    <div id="bcResults"></div>
+                </div>`;
+        }
+
+        let _bcTimer = null;
+        window.bcFind = function (q) {
+            clearTimeout(_bcTimer);
+            _bcTimer = setTimeout(async () => {
+                const box = $('bcResults');
+                if (!box) return;
+                const s = (q || '').trim();
+                if (s.length < 2) { box.innerHTML = ''; return; }
+                box.innerHTML = '<div class="list-status">Qidirilmoqda...</div>';
+                const { ok, data } = await apiFetch(
+                    '/api/products?page=0&q=' + encodeURIComponent(s));
+                const items = (ok && data.ok) ? (data.items || []).slice(0, 8) : [];
+                box.innerHTML = items.map(p => `<div class="g-row"
+                        onclick="bcAttach(${p.id})">
+                    <div><b>${escapeHtml(p.name)}</b>
+                      <div class="g-meta">qoldiq ${p.qty} ·
+                      ${(p.barcodes && p.barcodes.length)
+                        ? p.barcodes.length + ' ta kod' : 'kodsiz'}</div>
+                    </div><span>🔗</span></div>`).join('')
+                    || '<div class="list-status">Topilmadi</div>';
+            }, 400);
+        };
+
+        window.bcAttach = async function (pid) {
+            const box = $('bcResults');
+            if (box) box.innerHTML = '<div class="list-status">Biriktirilmoqda...</div>';
+            const { ok, data } = await apiFetch('/api/product/barcode/attach', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_id: pid, code: _bcPending }),
+            });
+            if (!ok || !data.ok) {
+                if (box) box.innerHTML = '<div class="list-status val-red">'
+                    + escapeHtml(data.error || 'Xato') + '</div>';
+                return;
+            }
+            productsStatus.innerHTML = `<span class="val-green">✅ «${escapeHtml(_bcPending)}»
+                → ${escapeHtml(data.name)} ga biriktirildi</span>`;
+            _prodQuery = _bcPending;
+            productSearch.value = _bcPending;
+            setTimeout(() => loadProducts(true), 600);
         };
 
         window.qeOpen = function (id) { _qeArm = true; openProductForm(id); };
@@ -3028,7 +3124,20 @@
                 <button class="more-btn" style="width:100%;margin-top:6px"
                         onclick="openMyLedger()">💰 Hisob-kitob daftari</button>
                 <button class="more-btn" style="width:100%;margin-top:6px"
-                        onclick="downloadMy('receipts')">📥 Excel yuklab olish</button>`;
+                        onclick="downloadMy('receipts')">📥 Excel yuklab olish</button>
+                <button class="more-btn" style="width:100%;margin-top:6px"
+                        onclick="downloadMy('png')">🖼 Hisob-kitob rasmi</button>
+                <div class="list-status" style="text-align:left;margin-top:8px">
+                    🧾 Cheklarni rasm qilib olish (tovarlari bilan):
+                </div>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                    <button class="more-btn" style="flex:1"
+                            onclick="downloadMy('cheklar_png', 3)">3 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="downloadMy('cheklar_png', 10)">10 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="downloadMy('cheklar_png', 30)">30 ta</button>
+                </div>`;
         }
 
         window.openMyReceipts = async function (page) {
@@ -3121,6 +3230,8 @@
                 <div class="stat-block">
                     <button class="more-btn" style="width:100%"
                             onclick="downloadMy('ledger')">📥 Excel yuklab olish</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="downloadMy('png')">🖼 Rasm qilib olish</button>
                 </div>`);
         };
 
@@ -3188,8 +3299,9 @@
             return head + _ledgerRows(rows);
         }
 
-        window.downloadMy = function (type) {
-            const url = `${API_BASE_URL}/api/my/excel?type=${encodeURIComponent(type)}` +
+        window.downloadMy = function (type, count) {
+            const n = count ? `&count=${encodeURIComponent(count)}` : '';
+            const url = `${API_BASE_URL}/api/my/excel?type=${encodeURIComponent(type)}${n}` +
                         `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
             try {
                 if (tg && tg.openLink) tg.openLink(url);
@@ -3735,6 +3847,8 @@
                     <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="debtDownload('receipts')">📥 Excel (tanlanganlar)</button>
                     <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtDownload('receipts_png')">🖼 Rasm (tanlanganlar)</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="debtSend()">📨 Mijozga yuborish</button>
                     <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="debtPickClear()">🗑 Tanlovni tozalash</button>
@@ -3762,7 +3876,8 @@
         }
 
         window.debtDownload = function (type) {
-            const ids = (type === 'receipts' && _debtPicked.length)
+            const ids = (_debtPicked.length
+                         && (type === 'receipts' || type === 'receipts_png'))
                 ? '&ids=' + _debtPicked.join(',') : '';
             const url = `${API_BASE_URL}/api/debt/excel?name=${encodeURIComponent(_debtName)}` +
                         `&type=${encodeURIComponent(type)}${ids}` +

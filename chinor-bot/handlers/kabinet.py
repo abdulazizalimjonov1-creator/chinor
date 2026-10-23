@@ -66,7 +66,11 @@ def _kabinet_kb(excel: bool = True) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="🛒 Do'kon", web_app=WebAppInfo(url=_app_url()))])
     if excel:
-        rows.append([InlineKeyboardButton(text="📥 Excel yuklab olish",
+        # Android'da .xlsx ko'pincha ochilmaydi, shuning uchun RASM ham
+        # beriladi — u har qanday telefonda darrov ochiladi.
+        rows.append([InlineKeyboardButton(text="🖼 Rasm qilib olish",
+                                          callback_data="kab:rasm"),
+                     InlineKeyboardButton(text="📥 Excel",
                                           callback_data="kab:excel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -161,7 +165,87 @@ async def cb_excel(call: CallbackQuery):
     await _send_excel(call.from_user.id, call.message)
 
 
-async def _send_excel(tg_id: int, target: Message) -> None:
+def _rasm_kb() -> InlineKeyboardMarkup:
+    """Nechta chek kerakligini so'raymiz.
+
+    Ilgari «rasm» tugmasi butun daftarni chizardi va qaysi davr ekani
+    noaniq edi. Endi mijoz o'zi tanlaydi: oxirgi bir nechta chek
+    (tovarlari bilan) yoki butun hisob-kitob.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧾 Oxirgi 3 chek", callback_data="kab:ch:3"),
+         InlineKeyboardButton(text="🧾 10 chek", callback_data="kab:ch:10")],
+        [InlineKeyboardButton(text="🧾 30 chek", callback_data="kab:ch:30")],
+        [InlineKeyboardButton(text="💰 Hisob-kitob (butun)",
+                              callback_data="kab:png")],
+    ])
+
+
+@router.message(Command("rasm"))
+async def cmd_rasm(message: Message):
+    names, qarz, n, oxirgi = await _hisob(message.from_user.id)
+    if not names:
+        await message.answer(_salom(names, qarz, n, oxirgi), parse_mode="HTML")
+        return
+    await message.answer(
+        "🖼 <b>Rasm qilib olish</b>\n\n"
+        "Qaysi birini chizay? Cheklar tovarlari bilan chiqadi, "
+        "hisob-kitob esa qarz harakatini ko'rsatadi.",
+        reply_markup=_rasm_kb(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "kab:rasm")
+async def cb_rasm_menu(call: CallbackQuery):
+    await call.answer()
+    await call.message.answer(
+        "🖼 <b>Rasm qilib olish</b>\n\nQaysi birini chizay?",
+        reply_markup=_rasm_kb(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "kab:png")
+async def cb_png(call: CallbackQuery):
+    await call.answer("Tayyorlanmoqda…")
+    await _send_excel(call.from_user.id, call.message, rasm=True)
+
+
+@router.callback_query(F.data.startswith("kab:ch:"))
+async def cb_cheklar(call: CallbackQuery):
+    try:
+        soni = int(call.data.split(":")[-1])
+    except ValueError:
+        soni = 10
+    await call.answer("Tayyorlanmoqda…")
+    await _send_cheklar(call.from_user.id, call.message, soni)
+
+
+async def _send_cheklar(tg_id: int, target: Message, soni: int) -> None:
+    """Oxirgi `soni` ta chekni bitta rasmga chizib yuboradi."""
+    names, _q, _n, _o = await _hisob(tg_id)
+    if not names:
+        await target.answer("Kassada hisobingiz topilmadi.")
+        return
+    try:
+        from bot import debt_export
+        from bot.api_debt import _collect
+
+        D, MarketplaceDB = _mk()
+        with MarketplaceDB() as mdb:
+            recs = _collect(mdb.conn, names, limit=max(1, min(30, soni)))
+        if not recs:
+            await target.answer("Chek topilmadi.")
+            return
+        path = debt_export.receipts_png(names[0], recs)
+        with open(path, "rb") as f:
+            data = f.read()
+        await target.answer_photo(
+            BufferedInputFile(data, filename=os.path.basename(path)),
+            caption=f"🧾 Oxirgi {len(recs)} ta xaridingiz")
+    except Exception as e:
+        logger.warning("Cheklar rasmi yuborilmadi (%s): %s", tg_id, e)
+        await target.answer("Rasm tayyorlanmadi. Birozdan keyin urinib ko'ring.")
+
+
+async def _send_excel(tg_id: int, target: Message, rasm: bool = False) -> None:
     names, _qarz, _n, _o = await _hisob(tg_id)
     if not names:
         await target.answer("Kassada hisobingiz topilmadi.")
@@ -176,12 +260,16 @@ async def _send_excel(tg_id: int, target: Message) -> None:
                 rows += D.ledger(mdb.conn, n)
                 jami += D.debt(mdb.conn, n)
             rows.sort(key=lambda r: r["at"] or "")
-            path = debt_export.ledger_xlsx(names[0], rows, jami)
+            path = (debt_export.ledger_png(names[0], rows, jami) if rasm
+                    else debt_export.ledger_xlsx(names[0], rows, jami))
         with open(path, "rb") as f:
             data = f.read()
-        await target.answer_document(
-            BufferedInputFile(data, filename=os.path.basename(path)),
-            caption="📥 Hisob-kitob daftaringiz")
+        fayl = BufferedInputFile(data, filename=os.path.basename(path))
+        if rasm:
+            # Rasm sifatida — galereyada ochiladi, hech qanday dastur kerak emas.
+            await target.answer_photo(fayl, caption="🖼 Hisob-kitob daftaringiz")
+        else:
+            await target.answer_document(fayl, caption="📥 Hisob-kitob daftaringiz")
     except Exception as e:
         logger.warning("Excel yuborilmadi (%s): %s", tg_id, e)
         await target.answer("Hisobot tayyorlanmadi. Birozdan keyin urinib ko'ring.")

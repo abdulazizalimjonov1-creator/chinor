@@ -534,9 +534,30 @@ async def api_my_excel(request: web.Request):
         return _err("Hisobingiz hali bog'lanmagan", 404)
 
     kind = (request.query.get("type") or "receipts").strip().lower()
+    try:
+        # Nechta chek / harakat kerak. 0 yoki yo'q — hammasi.
+        count = max(0, min(60, int(request.query.get("count") or 0)))
+    except ValueError:
+        count = 0
     D = _debt()
     with _mdb() as mdb:
-        if kind == "ledger":
+        if kind in ("cheklar_png", "receipts_png"):
+            # Oxirgi `count` ta chek (sukut 10) — tovarlari bilan bitta rasmda.
+            recs = _collect(mdb.conn, names, limit=count or 10)
+            if not recs:
+                return _err("Chek topilmadi", 404)
+            path = debt_export.receipts_png(names[0], recs)
+        elif kind == "png":
+            # Android'da .xlsx ko'pincha ochilmaydi — rasm har qanday
+            # telefonda darrov ochiladi.
+            rows, total = [], 0.0
+            for n in names:
+                rows += D.ledger(mdb.conn, n)
+                total += D.debt(mdb.conn, n)
+            rows.sort(key=lambda r: r["at"] or "")
+            path = debt_export.ledger_png(names[0], rows, total,
+                                          limit=count or 40)
+        elif kind == "ledger":
             rows, total = [], 0.0
             for n in names:
                 rows += D.ledger(mdb.conn, n)
@@ -581,6 +602,14 @@ async def api_debt_excel(request: web.Request):
         if kind == "ledger":
             path = debt_export.ledger_xlsx(
                 name, D.ledger(mdb.conn, name), D.debt(mdb.conn, name))
+        elif kind == "ledger_png":
+            path = debt_export.ledger_png(
+                name, D.ledger(mdb.conn, name), D.debt(mdb.conn, name))
+        elif kind == "receipts_png":
+            recs = _collect(mdb.conn, [name], ids)
+            if not recs:
+                return _err("Chek topilmadi")
+            path = debt_export.receipts_png(name, recs)
         else:
             recs = _collect(mdb.conn, [name], ids)
             if not recs:
