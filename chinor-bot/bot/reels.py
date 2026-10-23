@@ -169,7 +169,29 @@ def ig_accounts() -> list:
         t = (os.getenv(f"IG{n}_ACCESS_TOKEN") or "").strip()
         if u and t:
             out.append((u, ig_token(u, t)))
+
+    # Faqat TANLANGAN profillarga chiqarish (`reels_ig_only` sozlamasi,
+    # vergul bilan ajratilgan id'lar). Bo'sh bo'lsa — hammasiga.
+    #
+    # Nega kerak: profillarning auditoriyasi bir xil emas. 5136 obunachili
+    # @chinors_market odam yasagan kulgili roliklarga o'rgangan va bizning
+    # roliklarimiz u yerda 15-66 ko'rish oladi; yangi profil esa o'sha
+    # rolikka 1486 ko'rish berdi. Shuning uchun egasi qaysi profilga
+    # chiqishini o'zi tanlay olishi kerak.
+    only = _ig_only()
+    if only:
+        out = [a for a in out if a[0] in only] or []
     return out
+
+
+def _ig_only() -> set:
+    try:
+        from database.channel_db import db
+
+        raw = (db.get_setting("reels_ig_only", "") or "").strip()
+    except Exception:
+        raw = ""
+    return {x.strip() for x in raw.replace(";", ",").split(",") if x.strip()}
 
 
 def refresh_ig_token(uid: str = "", base: str = "") -> bool:

@@ -1001,7 +1001,13 @@ def _caption(topic: dict, script: dict, pair: list) -> str:
         nm = (p.get("display_name") or "").strip() or p.get("name", "")
         price = f"{float(p['sell_price']):,.0f}".replace(",", " ")
         lines.append(f"<b>{tag}.</b> {html.escape(nm)} — {price} so'm\n   ➜ {html.escape(verdict)}")
-    lines += ["", "📍 Chinor, Sergeli · buyurtma pastdagi tugma orqali",
+    # SAVOL — matnning oxirgi, eng ko'zga tashlanadigan chaqirig'i.
+    # 2026-10-23 o'lchovi: matni keng savol bilan boshlangan rolik 1486
+    # ko'rish va 32 ulashish oldi, tor-texnik savolli esa 108 va 0.
+    # Odam javob yozsa — Instagram rolikni ko'proq tarqatadi.
+    lines += ["", "❓ Qaysi birini tanlagan bo'lardingiz — A yoki B? "
+                  "Izohda yozing 👇",
+              "", "📍 Chinor, Sergeli · buyurtma pastdagi tugma orqali",
               "#chinor #ustamaslahati #qurilish #toshkent"]
     return "\n".join(lines)[:1000]
 
@@ -1185,23 +1191,39 @@ def cleanup(keep_videos: int = 30, label_days: int = 21) -> int:
 
 
 async def daily_loop(hour: int = None):
-    """Har kuni belgilangan soatda bitta video tayyorlab adminga yuboradi."""
+    """Belgilangan soatlarda taqqoslash videosi tayyorlab adminga yuboradi.
+
+    2026-10-23 dan KUNIGA BIR NECHTA: o'lchov ko'rsatdiki, do'kon
+    uchun ishlaydigan yagona ko'rinish shu — mahsulot reklamasi
+    roliklari 15-108 ko'rish olgan, taqqoslash esa 1486 (32 ulashish).
+    Soatlar `REELS_COMPARE_HOURS` bilan beriladi (sukut 10 va 17).
+    Har soat uchun alohida belgi qo'yiladi, shuning uchun bot qayta
+    ishga tushsa ham bir soatda ikki marta yasalmaydi.
+    """
     from database.channel_db import db as _db
-    hour = int(os.getenv("REELS_COMPARE_HOUR", "10") if hour is None else hour)
+    if hour is not None:
+        hours = [int(hour)]
+    else:
+        hours = [int(h) for h in os.getenv("REELS_COMPARE_HOURS", "10,17").split(",")
+                 if h.strip().isdigit()] or [10]
     await asyncio.sleep(60)
     while True:
         try:
             now = time.localtime()
             today = time.strftime("%Y-%m-%d", now)
-            done = _db.get_setting("reels_compare_day", "")
             on = str(_db.get_setting("reels_compare_enabled", "1")).strip() in ("1", "true", "on")
-            if on and _db.is_reels_enabled() and done != today and now.tm_hour >= hour:
-                _db.set_setting("reels_compare_day", today)
-                res = await produce(_db)
-                logger.info("🎬 Kunlik taqqoslash videosi: %s", res)
-                n = await asyncio.get_event_loop().run_in_executor(None, cleanup)
-                if n:
-                    logger.info("🧹 Eski video/yorliq fayllari o'chirildi: %d", n)
+            if on and _db.is_reels_enabled():
+                for h in hours:
+                    key = "reels_compare_day_%d" % h
+                    if now.tm_hour >= h and _db.get_setting(key, "") != today:
+                        _db.set_setting(key, today)
+                        res = await produce(_db)
+                        logger.info("🎬 Taqqoslash videosi (%s:00): %s", h, res)
+                        n = await asyncio.get_event_loop().run_in_executor(
+                            None, cleanup)
+                        if n:
+                            logger.info("🧹 Eski fayllar o'chirildi: %d", n)
+                        break          # bir siklda bittadan ortiq yasamaymiz
         except Exception:
             logger.exception("🎬 Kunlik video xatosi")
         await asyncio.sleep(600)
