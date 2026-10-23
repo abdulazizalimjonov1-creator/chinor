@@ -62,12 +62,37 @@ def _contact_kb() -> dict:
 
 
 def _app_kb() -> dict:
-    """Mini App tugmasi. Manzil bo'lmasa — tugmasiz."""
-    if not MINI_APP_URL:
+    """Mini App'ga INLINE tugma.
+
+    DIQQAT: oddiy klaviatura (reply keyboard) tugmasidan ochilgan Mini
+    App'ga Telegram IMZO BERMAYDI — `initData` bo'sh keladi va ilova
+    foydalanuvchini tanimay «avtorizatsiya kerak» deydi. Imzo faqat
+    menyu tugmasi, inline tugma va to'g'ridan-to'g'ri havoladan
+    ochilganda beriladi. Shuning uchun bu yerda inline tugma, qo'shimcha
+    ravishda `_set_menu_button()` matn maydoni yonidagi doimiy tugmani
+    ham o'rnatadi.
+    """
+    if not MINI_APP_URL.startswith("https://"):
         return {"remove_keyboard": True}
-    return {"keyboard": [[{"text": "🛒 Do'kon va hisobim",
-                           "web_app": {"url": MINI_APP_URL}}]],
-            "resize_keyboard": True}
+    return {"inline_keyboard": [[{"text": "🛒 Do'kon va hisobim",
+                                  "web_app": {"url": MINI_APP_URL}}]]}
+
+
+async def _set_menu_button(session, chat_id) -> None:
+    """Matn maydoni yonidagi doimiy menyu tugmasi — Mini App'ni ochadi.
+
+    Undan ochilgan Mini App IMZOLANGAN bo'ladi, shuning uchun mijoz
+    qaytadan hech narsa kiritmaydi. Har bog'lanishda qayta o'rnatiladi:
+    manzil o'zgarsa, Telegram'da saqlanib qolgan eski tugma o'z-o'zini
+    tuzatadi.
+    """
+    if not MINI_APP_URL.startswith("https://"):
+        return
+    await _call(session, "setChatMenuButton", {
+        "chat_id": chat_id,
+        "menu_button": {"type": "web_app", "text": "🛒 Do'kon",
+                        "web_app": {"url": MINI_APP_URL}},
+    })
 
 
 async def _send(session, chat_id, text: str, kb: dict = None) -> bool:
@@ -149,6 +174,9 @@ async def _on_contact(session, msg: dict) -> None:
         logger.warning("🧾 Hisob bog'lanmadi: %s", e)
         names, total = [], 0
 
+    # Imzolangan kirish nuqtasi: matn maydoni yonidagi doimiy tugma.
+    await _set_menu_button(session, chat_id)
+
     if not names:
         await _send(
             session, chat_id,
@@ -181,6 +209,7 @@ async def _on_message(session, msg: dict) -> None:
 
     text = (msg.get("text") or "").strip()
     if text.startswith("/start"):
+        await _set_menu_button(session, chat_id)
         await _send(session, chat_id, WELCOME, _contact_kb())
     elif text.startswith("/help") or text.startswith("/yordam"):
         await _send(session, chat_id, HELP, _contact_kb())
@@ -229,6 +258,19 @@ async def poll_loop(timeout_s: int = 50) -> None:
         me = await _call(session, "getMe", {})
         uname = ((me.get("result") or {}).get("username") or "?")
         logger.info("🧾 Cheklar boti ishga tushdi: @%s", uname)
+
+        # UMUMIY menyu tugmasi — barcha shaxsiy suhbatlar uchun sukut
+        # qiymati. Shu bilan eski mijozlar /start bosmasdan ham Mini
+        # App'ni matn maydoni yonidagi tugmadan IMZOLANGAN holda
+        # ochadi (klaviatura tugmasidan ochilsa imzo bo'lmaydi).
+        if MINI_APP_URL.startswith("https://"):
+            r = await _call(session, "setChatMenuButton", {
+                "menu_button": {"type": "web_app", "text": "🛒 Do'kon",
+                                "web_app": {"url": MINI_APP_URL}}})
+            logger.info("🧾 Menyu tugmasi: %s",
+                        "o'rnatildi" if r.get("ok") else r.get("description"))
+        else:
+            logger.warning("🧾 MINI_APP_URL https:// emas — menyu tugmasi yo'q")
 
         while True:
             try:
