@@ -90,17 +90,33 @@ def read_clients(src: sqlite3.Connection) -> List[Dict]:
 
 
 def read_moves(src: sqlite3.Connection) -> List[Dict]:
-    """Faqat QO'LDA kiritilgan harakatlar (chek_id yo'q va to'lov emas).
+    """QO'LDA kiritilgan harakatlar (chekdan hosil bo'lmaganlari).
 
-    `tolov` turidagilar `qarz_tolovlari` dan hosil bo'lgan — ular bizda
-    Telegramdan qayta o'qiladi, shuning uchun olinmaydi.
+    `tolov` turidagilarning KO'PCHILIGI `qarz_tolovlari` dan (ya'ni
+    «ОПЛАТА» xabaridan) hosil bo'lgan — ular bizda Telegramdan qayta
+    o'qiladi, shuning uchun olinmaydi. Lekin ularning orasida botning
+    `/tolov` buyrug'i bilan QO'LDA kiritilgani ham bor va uni hech qayerdan
+    tiklab bo'lmaydi. Shuning uchun har bir `tolov` harakati
+    `qarz_tolovlari` bilan solishtiriladi (mijoz + daqiqa + summa); mos
+    kelmagani qo'lda kiritilgan deb olinadi.
+
+    Shu tekshiruvsiz to'lab bo'lgan mijoz qarzdor bo'lib qolardi.
     """
+    pays = {
+        ((p["mijoz"] or "").strip(), (p["vaqt_toliq"] or "")[:16],
+         round(float(p["tolangan"] or 0), 2))
+        for p in src.execute("SELECT mijoz, vaqt_toliq, tolangan FROM qarz_tolovlari")
+    }
+
     out = []
     for r in src.execute(
             "SELECT * FROM harakatlar WHERE chek_id IS NULL ORDER BY vaqt, id"):
         turi = (r["turi"] or "").strip()
         if turi == "tolov":
-            continue
+            key = ((r["mijoz"] or "").strip(), (r["vaqt"] or "")[:16],
+                   round(float(r["summa"] or 0), 2))
+            if key in pays:
+                continue            # «ОПЛАТА» dan kelgan — takror olinmaydi
         out.append({
             "client": (r["mijoz"] or "").strip(),
             "at": (r["vaqt"] or "").strip(),
@@ -157,9 +173,23 @@ def run(src_path: str, apply: bool) -> int:
         for c in clients:
             name = c.pop("name")
             D.upsert_client(db.conn, name, **c)
+
+        # Migratsiyani ikki marta ishga tushirish xavfsiz bo'lsin: aynan shu
+        # harakat allaqachon yozilgan bo'lsa takror qo'shilmaydi (aks holda
+        # qarz ikki barobar kamayib ketardi).
+        qoshildi = 0
         for m in moves:
+            bor = db.conn.execute(
+                """SELECT 1 FROM debt_moves
+                    WHERE client = ? AND at = ? AND kind = ? AND amount = ?""",
+                (m["client"], m["at"], m["kind"], m["amount"])).fetchone()
+            if bor:
+                continue
             D.add_move(db.conn, m["client"], m["kind"], m["amount"],
                        at=m["at"], note=m["note"], author="migratsiya")
+            qoshildi += 1
+        print(f"Harakatlar: +{qoshildi} yangi "
+              f"({len(moves) - qoshildi} tasi allaqachon bor edi)")
         db.conn.commit()
 
         n = db.conn.execute("SELECT COUNT(*) FROM debt_clients").fetchone()[0]
@@ -168,6 +198,15 @@ def run(src_path: str, apply: bool) -> int:
 
 
 def main(argv=None) -> int:
+    # Windows konsoli sukut bo'yicha cp1251 — mijoz nomidagi bitta g'alati
+    # belgi butun migratsiyani yiqitardi (UnicodeEncodeError). Chiqishni
+    # UTF-8 ga o'tkazamiz, o'girib bo'lmaydigani «?» bo'lib ketaveradi.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     ap = argparse.ArgumentParser(
         description="ChekHisobot (hisobot.db) → marketplace.db migratsiyasi")
     ap.add_argument("--db", required=True, help="hisobot.db yo'li")
