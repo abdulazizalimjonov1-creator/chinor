@@ -45,7 +45,24 @@ def available() -> bool:
         return False
 
 
-def speak(text: str, out_wav: str, style: str = "") -> bool:
+def speak_dialog(lines: list, out_wav: str, voices: dict, style: str = "") -> bool:
+    """Ikki kishilik suhbat — har biri O'Z ovozida (Gemini multi-speaker).
+
+    `lines` — [(ism, gap)], `voices` — {ism: Gemini ovoz nomi}, aynan 2 ta.
+    Gaplar orasida pauza bo'ladi (vaqtlarni keyin jimlikdan topamiz)."""
+    names = list(voices)
+    text = "\n".join(f"{n}: {' '.join(t.split())}" for n, t in lines if t.strip())
+    if not text or len(names) != 2:
+        return False
+    cfg = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+        {"speaker": n, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voices[n]}}}
+        for n in names]}}
+    return speak(text, out_wav, style=style or (
+        "Quyidagi kulgili suhbatni o'zbek tilida, multfilm qahramonlaridek jonli o'qing. "
+        "Har gapdan keyin qisqa pauza qiling. Faqat gaplarni o'qing:\n"), speech_config=cfg)
+
+
+def speak(text: str, out_wav: str, style: str = "", speech_config: dict = None) -> bool:
     """Matnni o'qib, WAV qilib saqlaydi. Muvaffaqiyatli bo'lsa True.
     `style` — o'z ohang ko'rsatmasi (bo'lmasa standart reklama ohangi).
     Qator bo'linishlari saqlanadi: diktor ularda pauza qiladi."""
@@ -56,7 +73,7 @@ def speak(text: str, out_wav: str, style: str = "") -> bool:
         "contents": [{"parts": [{"text": (style or _STYLE) + text}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {
+            "speechConfig": speech_config or {"voiceConfig": {
                 "prebuiltVoiceConfig": {"voiceName": VOICE}}},
         },
     }).encode()
