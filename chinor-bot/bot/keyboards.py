@@ -263,16 +263,36 @@ def admin_perms_kb(tg_id: int, granted: set):
     return kb.as_markup()
 
 
-def client_menu():
-    """Mijoz klaviaturasi — BO'SH (butunlay olib tashlanadi).
+# Mijoz klaviaturasidagi tugmalar — matni `handlers/kabinet.py` da
+# aynan shu ko'rinishda tutiladi, shuning uchun bitta joyda turadi.
+CLIENT_BTN_HISOB = "💰 Hisobim"
+CLIENT_BTN_XARID = "🧾 Xaridlarim"
+CLIENT_BTN_RASM = "🖼 Rasm qilib olish"
+CLIENT_BTN_ALOQA = "📞 Aloqa"
+CLIENT_BTN_YORDAM = "ℹ️ Yordam"
 
-    Mini App'ga kirish endi faqat MENYU TUGMASI orqali (matn maydoni yonida).
-    Sabab: Telegram klaviatura tugmasidan ochilgan Mini App'ga `initData`
-    imzosini BERMAYDI — ilova foydalanuvchini tanimay parol so'rardi.
-    Menyu tugmasi esa imzo beradi, doim ko'rinib turadi va xabarlar orasida
-    yo'qolmaydi. Barcha boshqaruv Mini App ichida.
+
+def client_menu():
+    """Mijoz klaviaturasi — ODDIY MATNLI TUGMALAR.
+
+    NEGA QAYTARILDI: mijozlarning hammasi «/» buyruqlarini bilmaydi,
+    ko'pchilik umuman ishlatmaydi. Tugma bosish esa hammaga tushunarli.
+
+    MUHIM FARQ: bu tugmalar Mini App'ni OCHMAYDI, ular shunchaki matn
+    yuboradi va bot javob beradi. Mini App'ga kirish eskisicha — matn
+    maydoni yonidagi MENYU TUGMASI yoki xabar ostidagi INLINE tugma
+    orqali, chunki Telegram klaviatura tugmasidan ochilgan Mini App'ga
+    `initData` imzosini BERMAYDI (ilova foydalanuvchini tanimay qoladi).
     """
-    return ReplyKeyboardRemove()
+    kb = ReplyKeyboardBuilder()
+    kb.button(text=CLIENT_BTN_HISOB)
+    kb.button(text=CLIENT_BTN_XARID)
+    kb.button(text=CLIENT_BTN_RASM)
+    kb.button(text=CLIENT_BTN_ALOQA)
+    kb.button(text=CLIENT_BTN_YORDAM)
+    kb.adjust(2, 2, 1)
+    return kb.as_markup(resize_keyboard=True,
+                        input_field_placeholder="Tugmani bosing yoki savolingizni yozing")
 
 def products_list_kb(products, mode="view", page=0):
     """Admin mahsulot ro'yxati — SAHIFALANGAN (6/sahifa).

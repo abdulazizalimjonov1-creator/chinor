@@ -26,6 +26,10 @@ from aiogram.types import (
 )
 
 from bot.config import CONTACT_PHONE_1, CONTACT_PHONE_2, MINI_APP_URL
+from bot.keyboards import (
+    CLIENT_BTN_ALOQA, CLIENT_BTN_HISOB, CLIENT_BTN_RASM, CLIENT_BTN_XARID,
+    CLIENT_BTN_YORDAM, client_menu,
+)
 from database.channel_db import db
 
 logger = logging.getLogger(__name__)
@@ -288,14 +292,19 @@ async def cmd_aloqa(message: Message):
 
 @router.message(Command("yordam"))
 async def cmd_yordam(message: Message):
+    # Yordam — tugmalarni QAYTA ko'rsatadigan joy ham: mijoz klaviaturani
+    # yopib qo'ygan bo'lsa, shu yerdan tiklanadi.
     await message.answer(
         "ℹ️ <b>Yordam</b>\n\n"
-        "/hisobim — qarzingiz va hisob holati\n"
-        "/xaridlarim — oxirgi xaridlar\n"
-        "/excel — hisob-kitob daftari (fayl)\n"
-        "/aloqa — do'kon manzili va telefoni\n\n"
-        "Katalog, savat va cheklar — pastdagi tugmalarda 👇",
-        reply_markup=_kabinet_kb(False), parse_mode="HTML")
+        "Pastdagi tugmalardan foydalaning:\n\n"
+        f"{CLIENT_BTN_HISOB} — qarzingiz va hisob holati\n"
+        f"{CLIENT_BTN_XARID} — oxirgi xaridlaringiz\n"
+        f"{CLIENT_BTN_RASM} — cheklarni rasm qilib olish\n"
+        f"{CLIENT_BTN_ALOQA} — do'kon manzili va telefoni\n\n"
+        "🛒 Katalog va savat — matn maydoni yonidagi "
+        "<b>«🛒 Do'kon»</b> tugmasida.\n\n"
+        "<i>Savolingiz bo'lsa — shunchaki yozing, javob beramiz.</i>",
+        reply_markup=client_menu(), parse_mode="HTML")
 
 
 # ─── Admin uchun qisqa yo'l ─────────────────────────────────────────────────
@@ -337,3 +346,34 @@ async def cmd_reels(message: Message):
     except Exception as e:
         logger.warning("Instagram hisoboti chiqmadi: %s", e)
         await message.answer("Hisobot o'qilmadi.")
+
+
+# ─── Klaviatura tugmalari ───────────────────────────────────────────────────
+# Mijozlarning hammasi «/» buyruqlarini bilmaydi, shuning uchun o'sha
+# ishlarning har biri ODDIY TUGMA bilan ham bajariladi. Tugma matn
+# yuboradi, bu yerda tutiladi — `client_ai` (erkin matn → AI sotuvchi)
+# dan OLDIN turadi, shuning uchun savol deb o'qilib ketmaydi.
+
+@router.message(F.text == CLIENT_BTN_HISOB)
+async def btn_hisob(message: Message):
+    await cmd_hisobim(message)
+
+
+@router.message(F.text == CLIENT_BTN_XARID)
+async def btn_xarid(message: Message):
+    await cmd_xaridlarim(message)
+
+
+@router.message(F.text == CLIENT_BTN_RASM)
+async def btn_rasm(message: Message):
+    await cmd_rasm(message)
+
+
+@router.message(F.text == CLIENT_BTN_ALOQA)
+async def btn_aloqa(message: Message):
+    await cmd_aloqa(message)
+
+
+@router.message(F.text == CLIENT_BTN_YORDAM)
+async def btn_yordam(message: Message):
+    await cmd_yordam(message)
