@@ -2454,18 +2454,53 @@ def publish_instagram(video_url: str, caption: str) -> tuple:
     accounts = ig_accounts()
     if not accounts:
         return "", "Instagram sozlanmagan"
-    first, errs = "", []
+
+    # BIR XIL VIDEONI IKKI PROFILGA BIR VAQTDA JOYLAMAYMIZ.
+    # 2026-10-23 o'lchovi: aynan bitta rolik @chinors_marketi da 1485
+    # ko'rish (32 ulashish) oldi, bir daqiqa keyin @chinors_market ga
+    # qo'yilgani esa 15 ta. Instagram takror kontentni past tushiradi,
+    # ya'ni ikkinchi nusxa birinchisining natijasini ham yeb qo'yadi.
+    # Shuning uchun har rolik NAVBAT BILAN bitta profilga ketadi.
+    if _ig_mode() == "alternate" and len(accounts) > 1:
+        accounts = [accounts[_ig_next_index(len(accounts))]]
+
+    ids, errs = [], []
     for i, (ig_id, base) in enumerate(accounts):
-        refresh_ig_token("" if i == 0 else ig_id, "" if i == 0 else base)
-        token = ig_token() if i == 0 else ig_token(ig_id, base)
+        birinchi = (i == 0 and ig_id == (_cfg("IG_USER_ID") or ""))
+        refresh_ig_token("" if birinchi else ig_id, "" if birinchi else base)
+        token = ig_token() if birinchi else ig_token(ig_id, base)
         mid, err = _publish_one(ig_id, token, video_url, caption)
         if mid:
             logger.info("🎬 Instagram (%s): %s", ig_id, mid)
-            first = first or mid
+            ids.append(mid)
         else:
             errs.append(f"{ig_id}: {err}")
             logger.warning("🎬 Instagram (%s) joylanmadi: %s", ig_id, err)
-    return first, "; ".join(errs)
+    # Hamma media id saqlanadi (vergul bilan) — keyin har biri bo'yicha
+    # ko'rishlar yig'iladi (`bot/ig_stats.py`).
+    return ",".join(ids), "; ".join(errs)
+
+
+def _ig_mode() -> str:
+    """`alternate` (sukut) — navbat bilan bitta profil; `all` — hammasiga."""
+    try:
+        from database.channel_db import db
+
+        return (db.get_setting("reels_ig_mode", "alternate") or "alternate").strip()
+    except Exception:
+        return "alternate"
+
+
+def _ig_next_index(n: int) -> int:
+    """Navbatdagi profil raqami — bazada eslab boriladi."""
+    try:
+        from database.channel_db import db
+
+        i = int(db.get_setting("reels_ig_turn", "0") or 0) % max(1, n)
+        db.set_setting("reels_ig_turn", str((i + 1) % max(1, n)))
+        return i
+    except Exception:
+        return 0
 
 
 def _publish_one(ig_id: str, token: str, video_url: str, caption: str) -> tuple:

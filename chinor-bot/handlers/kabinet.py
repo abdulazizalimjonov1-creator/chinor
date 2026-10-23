@@ -322,3 +322,18 @@ async def cmd_qarzdorlar(message: Message):
             text="📕 Qarzdorlar bo'limi",
             web_app=WebAppInfo(url=_app_url("qarzdorlar")))]])
     await message.answer("\n".join(satr), reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(Command("reels"))
+async def cmd_reels(message: Message):
+    """Instagram natijalari — qaysi ko'rinish ishlayapti."""
+    if not await db.is_admin(message.from_user.id):
+        return
+    try:
+        from bot import ig_stats
+
+        await message.answer(ig_stats.report(5), parse_mode="HTML",
+                             disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning("Instagram hisoboti chiqmadi: %s", e)
+        await message.answer("Hisobot o'qilmadi.")

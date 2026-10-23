@@ -54,6 +54,7 @@ async def _sync_commands(bot: Bot):
     # Adminlarga — faqat o'z suhbatlarida (boshqalar ko'rmaydi).
     admin = mijoz + [
         BotCommand(command="qarzdorlar", description="📕 Qarzdorlar ro'yxati"),
+        BotCommand(command="reels", description="📊 Instagram natijalari"),
     ]
     try:
         ids = {GLAVNIY_ADMIN_ID}
@@ -271,6 +272,10 @@ async def main():
     from bot import debt_watch
     debt_watch_task = asyncio.create_task(debt_watch.loop(bot))
 
+    # ── Instagram natijalari: qaysi rolik qancha ko'rilgani ─────────────
+    from bot import ig_stats
+    ig_stats_task = asyncio.create_task(ig_stats.loop())
+
     # ── YesPOS → Chinor: tovar/qoldiq/narx (har 15 daqiqa, himoyali) ────
     from bot import yespos_sync
     yespos_task = asyncio.create_task(yespos_sync.loop(bot))
@@ -296,6 +301,7 @@ async def main():
         receipts_task.cancel()
         notify_task.cancel()
         debt_watch_task.cancel()
+        ig_stats_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
         await bot.session.close()
