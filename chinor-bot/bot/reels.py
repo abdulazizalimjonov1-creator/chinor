@@ -528,28 +528,88 @@ def candidates(limit: int = 5, offer_days: int = 30) -> list:
         c.close()
 
 
-def rotate_files(keep: int = 20, days: int = 14) -> int:
+# Ishi TUGAGAN rolik holatlari — fayl endi kerak emas.
+_DONE = ("posted", "channel", "failed", "skipped", "declined")
+
+# Oxirgi tozalash vaqti (ishchi sikli uchun)
+_last_rotate = [0.0]
+
+
+def rotate_files(keep: int = 20, days: int = 7,
+                 done_days: float = 2.0) -> int:
     """Eski rolik va sahna fayllarini o'chiradi.
 
-    Fayllar `/api/reel/` orqali tashqariga beriladi, shuning uchun bir
-    necha kun turishi kerak — lekin abadiy emas: kuniga 2 ta rolik ~4 MB,
-    ya'ni yiliga 1.5 GB. Oxirgi `keep` ta fayl va `days` kun ichidagilar
-    qoladi, qolgani o'chadi."""
+    ISHI TUGAGAN ROLIK diskda yotishi shart emas: Instagram'ga
+    joylangach video o'sha yerda saqlanadi, kanalga ketgach —
+    Telegramda. Shuning uchun `posted/channel/failed/skipped`
+    holatidagi fayl `done_days` kundan keyin o'chadi (bir-ikki kun
+    qoldirish — egasi ko'rib ulgursin degani).
+
+    `pending` va `review` TEGILMAYDI: review hali admin tasdig'ini
+    kutadi va fayl o'chirilsa tasdiqlash tugmasi ishlamay qoladi.
+
+    Navbatda yo'q fayllar (taqqoslash `cmp_`, gapiradigan `talk_`,
+    sahna `.png`) eski qoida bo'yicha: oxirgi `keep` tasi va `days`
+    kun ichidagilar qoladi. Ularning o'z tozalagichi ham bor.
+    """
     try:
         names = [f for f in os.listdir(REELS_DIR)
                  if f.endswith(".mp4") or f.endswith(".png")]
     except OSError:
         return 0
+
+    # Fayl → holat (navbat jadvalidan)
+    holat = {}
+    try:
+        c = _conn()
+        try:
+            for r in c.execute(
+                    "SELECT video_path, status FROM reels_queue "
+                    "WHERE video_path <> ''"):
+                holat[os.path.basename(r["video_path"])] = (r["status"] or "")
+        finally:
+            c.close()
+    except Exception as e:
+        logger.info("🎬 Navbat holati o'qilmadi: %s", e)
+
+    now = time.time()
+    done_cut = now - done_days * 86400
+    cutoff = now - days * 86400
+
     paths = []
+    removed = 0
     for n in names:
         fp = os.path.join(REELS_DIR, n)
         try:
-            paths.append((os.path.getmtime(fp), fp))
+            mt = os.path.getmtime(fp)
         except OSError:
-            pass
-    paths.sort(reverse=True)                 # yangisi birinchi
-    cutoff = time.time() - days * 86400
-    removed = 0
+            continue
+        # Sahna rasmlari — oraliq fayl, render tugagach o'chiriladi.
+        # Bu yerga faqat render yiqilganda qoladi, shuning uchun
+        # `keep` himoyasiga olinmaydi: bir kundan keyin keraksiz.
+        if n.startswith("scene_") and n.endswith(".png"):
+            if mt < now - 86400:
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    pass
+            continue
+
+        st = holat.get(n)
+        if st in ("pending", "review"):
+            continue                       # hali kerak — tegmaymiz
+        if st in _DONE:
+            if mt < done_cut:
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    pass
+            continue
+        paths.append((mt, fp))             # navbatda yo'q — eski qoida
+
+    paths.sort(reverse=True)               # yangisi birinchi
     for i, (mt, fp) in enumerate(paths):
         if i < keep or mt > cutoff:
             continue
@@ -2843,7 +2903,12 @@ async def worker_loop(interval: int = 45):
                                        row.get("product_id"), e)
                         _set(row["id"], status="failed",
                              error=("kutilmagan xato: %s" % e)[:400])
-                    rotate_files()      # disk cheksiz o'smasin
+            # DIQQAT: tozalash sikl ICHIDA edi — navbat bo'sh bo'lsa
+            # umuman ishlamasdi va tugagan roliklar diskda yotaverardi.
+            # Endi navbatdan qat'i nazar, har 10 daqiqada bir ishlaydi.
+            if time.time() - _last_rotate[0] > 600:
+                _last_rotate[0] = time.time()
+                rotate_files()
         except Exception as e:
             logger.warning("🎬 Reels ishchisida xato: %s", e)
         await asyncio.sleep(interval)
