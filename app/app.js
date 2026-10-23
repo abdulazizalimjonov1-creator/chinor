@@ -1269,6 +1269,13 @@
             }
         };
 
+        // Atribut qiymati uchun. `value="..."` ichida entity brauzer
+        // tomonidan qayta ochiladi, shuning uchun escapeHtml yetarli.
+        // DIQQAT: inline onclick ICHIDAGI JS satri uchun BU YARAMAYDI —
+        // &#39; avval HTML sifatida ochilib, apostrof JS ni buzadi.
+        // Shuning uchun nom o'rniga indeks uzatiladi.
+        function escapeAttr(s) { return escapeHtml(s); }
+
         function escapeHtml(s) {
             return String(s || '').replace(/[&<>"']/g, c => ({
                 '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -2952,11 +2959,183 @@
                     <h3>📋 Oxirgi buyurtmalar</h3>
                     ${ordHtml}
                 </div>
+                <div class="stat-block" id="kassaBlock"></div>
                 <div class="stat-block" id="credBlock">
                     <h3>🔑 Kassa uchun login/parol</h3>
                     <div class="list-status">Yuklanmoqda...</div>
                 </div>`;
             renderCredentials();
+            renderKassaAccount();
+        };
+
+        // ================================================================
+        // KASSADAGI HISOB (mijoz tomoni)
+        // ================================================================
+        // Do'konning haqiqiy savdosi YesPOS kassasida bo'ladi. Mijoz o'sha
+        // yerdagi xaridlarini va qarzini shu yerdan ko'radi — ilgari bu
+        // kassa kompyuteridagi @cheklars_bot orqali tugmalar bilan kelardi.
+        //
+        // Hisob TELEFON yoki Telegram bog'lanishi orqali topiladi. Topilmasa
+        // blok umuman chizilmaydi: bo'sh «qarzingiz 0» deb ko'rsatish mijozni
+        // adashtirardi.
+
+        function openMy(title, html) {
+            const t = $('myTitle'), b = $('myBody');
+            if (t) t.textContent = title;
+            if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+            showScreen('screenMy');
+        }
+
+        async function renderKassaAccount() {
+            const box = $('kassaBlock');
+            if (!box) return;
+            const { ok, data } = await apiFetch('/api/my/summary');
+            if (!ok || !data.ok || !data.linked) { box.style.display = 'none'; return; }
+
+            const debtTxt = data.debt > 0
+                ? `<span class="val-red">${fmtSum(data.debt)} so'm</span>`
+                : `<span class="val-green">Qarzsiz ✅</span>`;
+            let accs = '';
+            (data.accounts || []).forEach(a => {
+                accs += `<div class="stat-row"><span class="lbl">🧾 ${escapeHtml(a.name)}</span>
+                    <span class="val">${a.receipts} xarid · ${fmtSum(a.debt)}</span></div>`;
+            });
+            box.style.display = '';
+            box.innerHTML = `
+                <h3>🏪 Kassadagi hisobim</h3>
+                <div class="stat-row"><span class="lbl">💳 Qarz</span><span class="val">${debtTxt}</span></div>
+                ${accs}
+                <button class="more-btn" style="width:100%;margin-top:8px"
+                        onclick="openMyReceipts(0)">📋 Xaridlarim</button>
+                <button class="more-btn" style="width:100%;margin-top:6px"
+                        onclick="openMyLedger()">💰 Hisob-kitob daftari</button>
+                <button class="more-btn" style="width:100%;margin-top:6px"
+                        onclick="downloadMy('receipts')">📥 Excel yuklab olish</button>`;
+        }
+
+        window.openMyReceipts = async function (page) {
+            page = page || 0;
+            openMy('📋 Xaridlarim');
+            const { ok, status, data } = await apiFetch('/api/my/receipts?per=20&page=' + page);
+            if (!ok || !data.ok) return openMy('📋 Xaridlarim', toolError(status, data));
+            if (!data.linked) {
+                return openMy('📋 Xaridlarim',
+                    '<div class="list-status">Hisobingiz hali bog\'lanmagan.</div>');
+            }
+
+            let rows = '';
+            (data.items || []).forEach(r => {
+                const mark = r.kind === 'qaytarish' ? '↩️'
+                           : r.kind === 'nasiya' ? '🤝' : '🧾';
+                const qarz = r.debt ? ` · <span class="val-red">qarzga ${_rmoney(r.debt)}</span>` : '';
+                rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
+                              onclick="openMyReceipt(${r.id})">
+                    <span>${mark} ${escapeHtml(r.at.slice(0, 16))}<br>
+                      <small style="opacity:.7">${r.lines} tovar${qarz}</small></span>
+                    <span class="val">${_rmoney(r.payable)}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Xaridlar topilmadi</div>';
+
+            const pages = Math.ceil((data.total || 0) / (data.per || 20));
+            let nav = '';
+            if (pages > 1) {
+                nav = '<div style="display:flex;gap:6px;margin-top:8px">';
+                if (page > 0) nav += `<button class="more-btn" style="flex:1"
+                    onclick="openMyReceipts(${page - 1})">← Oldingi</button>`;
+                if (page < pages - 1) nav += `<button class="more-btn" style="flex:1"
+                    onclick="openMyReceipts(${page + 1})">Keyingi →</button>`;
+                nav += '</div>';
+            }
+            openMy('📋 Xaridlarim', `<div class="stat-block">
+                <h3>${data.total} ta xarid</h3>${rows}${nav}</div>`);
+        };
+
+        window.openMyReceipt = async function (id) {
+            openMy('🧾 Chek');
+            const { ok, status, data } = await apiFetch('/api/my/receipt?id=' + id);
+            if (!ok || !data.ok) return openMy('🧾 Chek', toolError(status, data));
+            const r = data.receipt;
+
+            let rows = '';
+            (r.items || []).forEach(i => {
+                rows += `<div class="toprow" style="align-items:flex-start">
+                    <span>${escapeHtml(i.name)}<br>
+                      <small style="opacity:.7">${fmtQty(i.qty)} × ${_rmoney(i.price)}</small></span>
+                    <span class="val">${_rmoney(i.amount)}</span></div>`;
+            });
+            const pay = [];
+            if (r.paid.cash)  pay.push(`Naqd ${_rmoney(r.paid.cash)}`);
+            if (r.paid.card)  pay.push(`Karta ${_rmoney(r.paid.card)}`);
+            if (r.paid.click) pay.push(`Click ${_rmoney(r.paid.click)}`);
+            if (r.paid.debt)  pay.push(`Qarzga ${_rmoney(r.paid.debt)}`);
+
+            openMy('🧾 №' + escapeHtml(r.doc_no || String(r.id)), `
+                <div class="stat-block">
+                    <div class="toprow"><span>Sana</span><span class="val">${escapeHtml(r.at)}</span></div>
+                    <div class="toprow"><span>Turi</span><span class="val">${escapeHtml(r.kind)}</span></div>
+                    <div class="toprow"><span>Sotuvchi</span><span class="val">${escapeHtml(r.cashier)}</span></div>
+                </div>
+                <div class="stat-block">${rows}</div>
+                <div class="stat-block">
+                    ${r.discount ? `<div class="toprow"><span>Chegirma</span>
+                        <span class="val">${_rmoney(r.discount)}</span></div>` : ''}
+                    <div class="toprow"><span><b>Jami</b></span>
+                        <span class="val"><b>${_rmoney(r.payable)} so'm</b></span></div>
+                    ${pay.length ? `<div class="toprow"><span>To'lov</span>
+                        <span class="val">${escapeHtml(pay.join(' · '))}</span></div>` : ''}
+                    ${r.client_debt !== null && r.client_debt !== undefined
+                        ? `<div class="toprow"><span>Chekdagi qarz qoldig'i</span>
+                             <span class="val val-red">${_rmoney(r.client_debt)}</span></div>` : ''}
+                    <button class="more-btn" style="width:100%;margin-top:8px"
+                            onclick="openMyReceipts(0)">← Xaridlarim</button>
+                </div>`);
+        };
+
+        window.openMyLedger = async function () {
+            openMy('💰 Hisob-kitob');
+            const { ok, status, data } = await apiFetch('/api/my/ledger?limit=200');
+            if (!ok || !data.ok) return openMy('💰 Hisob-kitob', toolError(status, data));
+            if (!data.linked) {
+                return openMy('💰 Hisob-kitob',
+                    '<div class="list-status">Hisobingiz hali bog\'lanmagan.</div>');
+            }
+            openMy('💰 Hisob-kitob', _ledgerHtml(data.rows, data.debt) + `
+                <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="downloadMy('ledger')">📥 Excel yuklab olish</button>
+                </div>`);
+        };
+
+        // Daftar qatorlari — admin tomonida ham shu ko'rinish ishlatiladi.
+        function _ledgerHtml(rows, debtNow, withHead) {
+            const TUR = { receipt: '🧾 Xarid', payment: '💵 To\'lov',
+                          manual: '✍️ Qo\'lda', fix: '⚠️ Tuzatish',
+                          opening: '📌 Boshlang\'ich' };
+            let html = (withHead === false ? '' : `<div class="stat-block">
+                <div class="big-label">💳 Joriy qarz</div>
+                <div class="big-num">${fmtSum(debtNow)} so'm</div></div>`)
+                + '<div class="stat-block">';
+            (rows || []).forEach(r => {
+                const cls = r.change > 0 ? 'val-red' : 'val-green';
+                const sign = r.change > 0 ? '+' : '';
+                html += `<div class="toprow" style="align-items:flex-start">
+                    <span>${TUR[r.type] || r.type}
+                      <small style="opacity:.7">${escapeHtml((r.at || '').slice(0, 16))}</small>
+                      ${r.note ? `<br><small style="opacity:.7">${escapeHtml(r.note)}</small>` : ''}</span>
+                    <span class="val"><span class="${cls}">${sign}${_rmoney(r.change)}</span><br>
+                      <small style="opacity:.7">${_rmoney(r.balance)}</small></span></div>`;
+            });
+            if (!(rows || []).length) html += '<div class="list-status">Harakat yo\'q</div>';
+            return html + '</div>';
+        }
+
+        window.downloadMy = function (type) {
+            const url = `${API_BASE_URL}/api/my/excel?type=${encodeURIComponent(type)}` +
+                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
+            try {
+                if (tg && tg.openLink) tg.openLink(url);
+                else window.open(url, '_blank');
+            } catch (e) { alert('Ochilmadi'); }
         };
 
         // ================================================================
@@ -3356,6 +3535,301 @@
                     <button class="more-btn" style="width:100%;margin-top:8px"
                             onclick="openSalesHistory()">← Savdo tarixi</button>
                 </div>`);
+        };
+
+        // ================================================================
+        // QARZDORLAR (admin)
+        // ================================================================
+        // Kassadagi ChekHisobot o'rniga: kimda qancha qarz bor, mijozning
+        // hisob-kitob daftari, cheklarni tanlab BIRLASHTIRIB yuborish va
+        // qarz eslatmasi. Qaror har doim adminniki — bot o'zi hech kimga
+        // eslatma yubormaydi.
+
+        let _debtList = [];          // oxirgi yuklangan qarzdorlar
+        let _debtName = '';          // ochilgan mijoz
+        let _debtPicked = [];        // tanlangan chek id lari
+        let _debtPage = 0;
+
+        window.openDebtors = async function () {
+            openTool('📕 Qarzdorlar');
+            const { ok, status, data } = await apiFetch('/api/debt/clients');
+            if (!ok || !data.ok) return openTool('📕 Qarzdorlar', toolError(status, data));
+
+            _debtList = data.items || [];
+            let rows = '';
+            _debtList.forEach((c, i) => {
+                const tash = c.outside
+                    ? ` <small class="val-red">(+${_rmoney(c.outside)} tashqi)</small>` : '';
+                const jim = c.remind_open ? '' : ' 🔕';
+                const bog = c.chat_id ? ' 💬' : '';
+                rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
+                              onclick="openDebtClientAt(${i})">
+                    <span>${escapeHtml(c.name)}${bog}${jim}<br>
+                      <small style="opacity:.7">${escapeHtml(c.phone || 'telefon yo\'q')}</small></span>
+                    <span class="val val-red">${_rmoney(c.debt)}${tash}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">✅ Qarzdor yo\'q</div>';
+
+            openTool('📕 Qarzdorlar', `
+                <div class="stat-block">
+                    <div class="big-label">Umumiy qarz</div>
+                    <div class="big-num">${fmtSum(data.total)} so'm</div>
+                    <div class="stat-row"><span class="lbl">👥 Qarzdorlar</span>
+                        <span class="val">${data.count}</span></div>
+                    ${data.outside ? `<div class="stat-row"><span class="lbl">📒 Tashqi qarz</span>
+                        <span class="val">${fmtSum(data.outside)}</span></div>` : ''}
+                </div>
+                <div class="stat-block">${rows}</div>`);
+        };
+
+        window.openDebtClient = async function (name) {
+            _debtName = name;
+            _debtPicked = [];
+            _debtPage = 0;
+            openTool('👤 ' + name);
+            const { ok, status, data } = await apiFetch(
+                '/api/debt/client?name=' + encodeURIComponent(name) + '&limit=60');
+            if (!ok || !data.ok) return openTool('👤 ' + name, toolError(status, data));
+            const c = data.client;
+
+            const sn = c.snapshot
+                ? `${_rmoney(c.snapshot.value)} · ${escapeHtml(c.snapshot.at.slice(0, 16))}`
+                : 'yo\'q (hisoblangan)';
+            const head = `
+                <div class="stat-block">
+                    <div class="big-label">💳 Joriy qarz</div>
+                    <div class="big-num">${fmtSum(c.debt)} so'm</div>
+                    <div class="stat-row"><span class="lbl">🏪 Kassa bo'yicha</span>
+                        <span class="val">${_rmoney(c.qpos)}</span></div>
+                    <div class="stat-row"><span class="lbl">📒 Tashqi qarz</span>
+                        <span class="val">${_rmoney(c.outside)}</span></div>
+                    <div class="stat-row"><span class="lbl">📌 Oxirgi rasmiy qoldiq</span>
+                        <span class="val">${sn}</span></div>
+                    <div class="stat-row"><span class="lbl">📱 Telefon</span>
+                        <span class="val">${escapeHtml(c.phone || '—')}</span></div>
+                    <div class="stat-row"><span class="lbl">💬 Telegram</span>
+                        <span class="val">${c.chat_id ? 'bog\'langan ✅' : 'yo\'q'}</span></div>
+                </div>
+                <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="openDebtReceipts(0)">📎 Cheklarni tanlash / yuborish</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtDownload('ledger')">📥 Hisob-kitob (Excel)</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtRemind()">📨 Qarz eslatmasini yuborish</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="openDebtEdit()">⚙️ Sozlamalar va qo'lda harakat</button>
+                    <div id="debtMsg" class="list-status"></div>
+                </div>`;
+            openTool('👤 ' + name,
+                head + '<div class="stat-block"><h3>💰 Hisob-kitob daftari</h3></div>'
+                     + _ledgerHtml(c.ledger, c.debt, false));
+        };
+
+        window.openDebtReceipts = async function (page) {
+            _debtPage = page || 0;
+            openTool('📎 ' + _debtName);
+            const { ok, status, data } = await apiFetch(
+                '/api/debt/receipts?name=' + encodeURIComponent(_debtName) +
+                '&per=25&page=' + _debtPage);
+            if (!ok || !data.ok) return openTool('📎 ' + _debtName, toolError(status, data));
+
+            let rows = '';
+            (data.items || []).forEach(r => {
+                const on = _debtPicked.indexOf(r.id) >= 0;
+                const mark = r.kind === 'qaytarish' ? '↩️'
+                           : r.kind === 'nasiya' ? '🤝' : '🧾';
+                rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
+                              onclick="debtPick(${r.id})">
+                    <span>${on ? '☑️' : '⬜️'} ${mark} №${escapeHtml(r.doc_no)}
+                      <small style="opacity:.7">${escapeHtml(r.at.slice(0, 16))}</small><br>
+                      <small style="opacity:.7">${r.lines} tovar</small></span>
+                    <span class="val">${_rmoney(r.payable)}</span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Chek yo\'q</div>';
+
+            const pages = Math.ceil((data.total || 0) / (data.per || 25));
+            let nav = '';
+            if (pages > 1) {
+                nav = '<div style="display:flex;gap:6px;margin-top:8px">';
+                if (_debtPage > 0) nav += `<button class="more-btn" style="flex:1"
+                    onclick="openDebtReceipts(${_debtPage - 1})">← Oldingi</button>`;
+                if (_debtPage < pages - 1) nav += `<button class="more-btn" style="flex:1"
+                    onclick="openDebtReceipts(${_debtPage + 1})">Keyingi →</button>`;
+                nav += '</div>';
+            }
+
+            openTool('📎 ' + _debtName, `
+                <div class="stat-block">
+                    <div class="list-status" style="text-align:left">
+                        Cheklarni belgilang — ularni bitta Excel qilib yoki
+                        mijozning Telegramiga yuborsa bo'ladi.
+                    </div>
+                    <div><b id="debtPickN">${_debtPicked.length}</b> ta tanlandi</div>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtDownload('receipts')">📥 Excel (tanlanganlar)</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtSend()">📨 Mijozga yuborish</button>
+                    <button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtPickClear()">🗑 Tanlovni tozalash</button>
+                    <div id="debtMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block">${rows}${nav}</div>`);
+        };
+
+        window.openDebtClientAt = function (i) {
+            const c = _debtList[i];
+            if (c) openDebtClient(c.name);
+        };
+        window.openDebtBack = function () { openDebtClient(_debtName); };
+
+        window.debtPick = function (id) {
+            const i = _debtPicked.indexOf(id);
+            if (i >= 0) _debtPicked.splice(i, 1); else _debtPicked.push(id);
+            openDebtReceipts(_debtPage);
+        };
+        window.debtPickClear = function () { _debtPicked = []; openDebtReceipts(_debtPage); };
+
+        function _debtMsg(html) {
+            const el = $('debtMsg');
+            if (el) el.innerHTML = html;
+        }
+
+        window.debtDownload = function (type) {
+            const ids = (type === 'receipts' && _debtPicked.length)
+                ? '&ids=' + _debtPicked.join(',') : '';
+            const url = `${API_BASE_URL}/api/debt/excel?name=${encodeURIComponent(_debtName)}` +
+                        `&type=${encodeURIComponent(type)}${ids}` +
+                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
+            try {
+                if (tg && tg.openLink) tg.openLink(url);
+                else window.open(url, '_blank');
+                _debtMsg('<span class="val-green">✅ Yuklanmoqda…</span>');
+            } catch (e) { _debtMsg('<span class="val-red">Ochilmadi</span>'); }
+        };
+
+        window.debtSend = async function () {
+            if (!_debtPicked.length) return _debtMsg('Avval chek tanlang');
+            _debtMsg('Yuborilmoqda...');
+            const { ok, data } = await apiFetch('/api/debt/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: _debtName, ids: _debtPicked }),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Xato') + '</span>');
+            _debtMsg(`<span class="val-green">✅ ${data.sent}/${data.of} chek yuborildi</span>`);
+        };
+
+        window.debtRemind = async function () {
+            if (!confirm(_debtName + ' ga qarz eslatmasi yuborilsinmi?')) return;
+            _debtMsg('Yuborilmoqda...');
+            const { ok, data } = await apiFetch('/api/debt/remind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: _debtName }),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Yuborilmadi') + '</span>');
+            _debtMsg('<span class="val-green">✅ Eslatma yuborildi</span>');
+        };
+
+        window.openDebtEdit = async function () {
+            openTool('⚙️ ' + _debtName);
+            const { ok, status, data } = await apiFetch(
+                '/api/debt/client?name=' + encodeURIComponent(_debtName) + '&limit=0');
+            if (!ok || !data.ok) return openTool('⚙️ ' + _debtName, toolError(status, data));
+            const c = data.client;
+            const inp = (id, label, val, type) => `
+                <div style="margin-top:8px">
+                    <div class="lbl">${label}</div>
+                    <input id="${id}" type="${type || 'text'}" value="${escapeAttr(String(val ?? ''))}"
+                           style="width:100%;padding:9px;border-radius:8px;
+                                  border:1px solid var(--border,#ccc)"></div>`;
+
+            openTool('⚙️ ' + _debtName, `
+                <div class="stat-block">
+                    <h3>Mijoz ma'lumotlari</h3>
+                    ${inp('dcPhone', '📱 Telefon', c.phone)}
+                    ${inp('dcPhone2', '📱 Qo\'shimcha telefon', c.phone2)}
+                    ${inp('dcLimit', '🚧 Qarz chegarasi (so\'m)', c.limit, 'number')}
+                    ${inp('dcOutside', '📒 Tashqi qarz (so\'m)', c.outside, 'number')}
+                    ${inp('dcOutsideNote', '📝 Tashqi qarz izohi', c.outside_note)}
+                    <label style="display:block;margin-top:10px">
+                        <input type="checkbox" id="dcRemind" ${c.remind_open ? 'checked' : ''}>
+                        Qarz eslatmasi yuborilsin</label>
+                    <label style="display:block;margin-top:6px">
+                        <input type="checkbox" id="dcSync" ${c.sync_open ? 'checked' : ''}>
+                        Kassa sinxroni telefonni yangilasin</label>
+                    <button class="more-btn" style="width:100%;margin-top:10px"
+                            onclick="debtSaveClient()">💾 Saqlash</button>
+                </div>
+                <div class="stat-block">
+                    <h3>✍️ Qo'lda harakat</h3>
+                    <div class="list-status" style="text-align:left">
+                        Kassadagi to'lovlar o'zi keladi. Bu faqat kassadan
+                        tashqarida bo'lgani uchun — izoh majburiy.
+                    </div>
+                    <select id="dmKind" style="width:100%;padding:9px;border-radius:8px;
+                            margin-top:8px;border:1px solid var(--border,#ccc)">
+                        <option value="payment">💵 To'lov (qarz kamayadi)</option>
+                        <option value="charge">📕 Qarz qo'shish</option>
+                        <option value="adjust">⚖️ Tuzatish</option>
+                    </select>
+                    ${inp('dmAmount', 'Summa (so\'m)', '', 'number')}
+                    ${inp('dmNote', 'Izoh', '')}
+                    <button class="more-btn" style="width:100%;margin-top:10px"
+                            onclick="debtAddMove()">➕ Qo'shish</button>
+                    <div id="debtMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="openDebtBack()">← Mijoz</button>
+                </div>`);
+        };
+
+        window.debtSaveClient = async function () {
+            const body = {
+                name: _debtName,
+                phone: $('dcPhone').value.trim(),
+                phone2: $('dcPhone2').value.trim(),
+                credit_limit: Number($('dcLimit').value || 0),
+                outside_debt: Number($('dcOutside').value || 0),
+                outside_note: $('dcOutsideNote').value.trim(),
+                remind_open: $('dcRemind').checked ? 1 : 0,
+                sync_open: $('dcSync').checked ? 1 : 0,
+            };
+            _debtMsg('Saqlanmoqda...');
+            const { ok, data } = await apiFetch('/api/debt/client/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Xato') + '</span>');
+            _debtMsg(`<span class="val-green">✅ Saqlandi · qarz: ${_rmoney(data.debt)}</span>`);
+        };
+
+        window.debtAddMove = async function () {
+            const body = {
+                name: _debtName,
+                kind: $('dmKind').value,
+                amount: Number($('dmAmount').value || 0),
+                note: $('dmNote').value.trim(),
+            };
+            if (!body.amount) return _debtMsg('<span class="val-red">Summa kiriting</span>');
+            if (!body.note) return _debtMsg('<span class="val-red">Izoh yozing</span>');
+            _debtMsg('Qo\'shilmoqda...');
+            const { ok, data } = await apiFetch('/api/debt/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Xato') + '</span>');
+            $('dmAmount').value = '';
+            $('dmNote').value = '';
+            _debtMsg(`<span class="val-green">✅ Qo'shildi · qarz: ${_rmoney(data.debt)}</span>`);
         };
 
         // ── Past qoldiq ──────────────────────────────────────────────────

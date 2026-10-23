@@ -4360,6 +4360,9 @@ def create_app() -> web.Application:
     # Mijoz Mini App'i tavsiyalari — o'xshash tovarlar va «Siz uchun» lenta
     from bot import api_recommend
     api_recommend.setup(app)
+    # Qarz daftari va mijoz kabineti — kassadagi @cheklars_bot o'rniga
+    from bot import api_debt
+    api_debt.setup(app)
     # «Ustalar maslahati» kartochkalari va bo'yoq kalkulyatori
     from bot import api_guides
     api_guides.setup(app)

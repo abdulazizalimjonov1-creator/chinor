@@ -175,6 +175,11 @@ async def cmd_sync(args) -> int:
         have = {
             int(r[0]) for r in db.conn.execute("SELECT msg_id FROM receipts")
         }
+        # Qarz to'lovlari alohida jadvalda — ular ham «yozilgan» hisoblanadi,
+        # aks holda har sinxronda qaytadan o'qilardi.
+        have |= {
+            int(r[0]) for r in db.conn.execute("SELECT msg_id FROM debt_payments")
+        }
 
         cutoff = None
         min_id = 0
@@ -186,7 +191,7 @@ async def cmd_sync(args) -> int:
             min_id = max(have)                    # faqat yangilari
             print(f"Oxirgi yozilgan xabar: {min_id} — undan keyingilari olinadi.")
 
-        stat = {"chek": 0, "qaytarish": 0, "nasiya": 0,
+        stat = {"chek": 0, "qaytarish": 0, "nasiya": 0, "qarz to'lovi": 0,
                 "tovarsiz": 0, "tanilmadi": 0, "bog'lanmadi": 0, "bor edi": 0}
         seen = 0
         async for msg in client.iter_messages(bot, min_id=min_id):
@@ -205,7 +210,14 @@ async def cmd_sync(args) -> int:
                 # Chek emas (ОПЛАТА) yoki tanib bo'lmadi — ajratib sanaymiz.
                 head = text.strip().splitlines()[0][:30]
                 if head.startswith("ОПЛАТА"):
-                    stat["tovarsiz"] += 1
+                    # Qarz to'lovi: tovar harakati yo'q, lekin mijozning qarz
+                    # daftari uchun eng muhim yozuv — alohida saqlanadi.
+                    p = R.parse_payment(text)
+                    if p is not None:
+                        R.store_payment(db, msg.id, p)
+                        stat["qarz to'lovi"] += 1
+                    else:
+                        stat["tovarsiz"] += 1
                 else:
                     stat["tanilmadi"] += 1
                     if args.verbose:
@@ -223,6 +235,7 @@ async def cmd_sync(args) -> int:
         rng = db.conn.execute(
             "SELECT MIN(day), MAX(day), COUNT(*) FROM receipts"
         ).fetchone()
+        pay_n = db.conn.execute("SELECT COUNT(*) FROM debt_payments").fetchone()[0]
 
     await client.disconnect()
     print("\nNatija:")
@@ -230,7 +243,8 @@ async def cmd_sync(args) -> int:
         if v:
             print(f"  {k:<12} {v}")
     if rng and rng[2]:
-        print(f"\nBazada: {rng[2]} chek, {rng[0]} … {rng[1]}")
+        print(f"\nBazada: {rng[2]} chek, {rng[0]} … {rng[1]}, "
+              f"{pay_n} qarz to'lovi")
     return 0
 
 

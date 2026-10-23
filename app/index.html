@@ -97,6 +97,7 @@
                 <button class="quick-card card-blue" onclick="openLabels()"><span class="card-icon">📄</span><h4>Yorliq o'qitish</h4><p>Bor tovarga yo'riqnoma (skaner bilan)</p></button>
                 <button class="quick-card card-teal" onclick="openGuidesAdmin()"><span class="card-icon">🧐</span><h4>Maslahatlar</h4><p>Mijozlar uchun savol-javob</p></button>
                 <button class="quick-card card-orange" onclick="openReceipts()"><span class="card-icon">🧾</span><h4>Cheklar</h4><p>Barcha kassa cheklari</p></button>
+                <button class="quick-card card-red" onclick="openDebtors()"><span class="card-icon">📕</span><h4>Qarzdorlar</h4><p>Kimda qancha qarz bor</p></button>
                 <button class="quick-card card-red" onclick="openCashMoves()"><span class="card-icon">💸</span><h4>Kassa harakati</h4><p>Naqd kirim / rasxod</p></button>
                 <button class="quick-card card-teal full" onclick="openPOS()"><span class="card-icon">🛒</span><h4>POS Sotuv tizimi</h4><p>Savdo operatsiyalarini boshqarish</p></button>
             </div>
@@ -376,6 +377,17 @@
                 <h2>👤 Mening hisobim</h2>
             </div>
             <div id="accountBody"><div class="list-status">Yuklanmoqda...</div></div>
+        </div>
+
+        <!-- Mijozning kassadagi hisobi: xaridlar, chek, hisob-kitob.
+             Admin bo'limlari #screenTool da; bu alohida, chunki orqaga
+             qaytish mijoz ekraniga ketishi kerak. -->
+        <div class="screen" id="screenMy">
+            <div class="list-header">
+                <button class="list-back" id="myBack" onclick="openAccount()">← Orqaga</button>
+                <h2 id="myTitle">—</h2>
+            </div>
+            <div id="myBody"><div class="list-status">Yuklanmoqda...</div></div>
         </div>
 
         <div class="screen" id="screenPOS">

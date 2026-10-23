@@ -339,13 +339,54 @@ async def auth_by_contact(message: Message, state: FSMContext):
         debt_line = f"💰 Qarz: <b>{fmt_sum(debt_sum)}</b>"
     else:
         debt_line = "✅ Qarz yo'q"
+    kassa_line = _bind_kassa_account(phone, sender_id)
     await message.answer(
         f"✅ <b>Tizimga kirdingiz!</b>\n\n"
         f"👋 <b>{client['shop_name']}</b> xush kelibsiz!\n"
         f"🏷️ Turingiz: <b>{type_label}</b>\n"
-        f"{debt_line}",
+        f"{debt_line}"
+        f"{kassa_line}",
         reply_markup=client_menu(), parse_mode="HTML"
     )
+
+
+def _bind_kassa_account(phone: str, chat_id: int) -> str:
+    """Kassadagi (YesPOS) hisobni shu Telegram akkauntiga bog'laydi.
+
+    Ilgari bu ish kassa kompyuteridagi @cheklars_bot da bo'lardi: mijoz
+    raqamini tasdiqlagach cheklari o'shanga kelardi. Endi shu yerda —
+    bog'langach mijoz Mini App'dan xaridlari va qarzini ko'radi.
+
+    Xato bo'lsa JIM o'tadi: kassa hisobi topilmagani tizimga kirishga
+    to'siq emas.
+    """
+    try:
+        import os
+        import sys
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from marketplace import debt as D
+        from marketplace.db import MarketplaceDB
+
+        with MarketplaceDB() as mdb:
+            D.ensure_schema(mdb.conn)
+            names = D.bind_phone(mdb.conn, phone, chat_id)
+            if not names:
+                return ""
+            total = sum(D.debt(mdb.conn, n) for n in names)
+            mdb.conn.commit()
+        qarz = (f"\n🏪 Kassadagi qarz: <b>{fmt_sum(total)}</b>" if total > 0
+                else "\n🏪 Kassada qarzingiz yo'q ✅")
+        return (f"\n\n🧾 Do'kon kassasidagi hisobingiz topildi: "
+                f"<b>{', '.join(names)}</b>{qarz}\n"
+                f"Xaridlaringizni Mini App'dagi «Mening hisobim» dan "
+                f"ko'rishingiz mumkin.")
+    except Exception as e:
+        logger.warning("Kassa hisobi bog'lanmadi: %s", e)
+        return ""
 
 
 @router.message(AuthByPhoneStates.waiting_contact)

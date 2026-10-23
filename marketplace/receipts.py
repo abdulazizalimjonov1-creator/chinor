@@ -25,7 +25,10 @@ To'rt xil xabar keladi:
   • ПРОДАЖА (ОТЛОЖЕН)   — nasiyaga savdo. Tovar baribir do'kondan chiqadi,
                           shuning uchun ketish tezligiga QO'SHILADI.
   • ВОЗВРАТ             — qaytarish. Miqdori MANFIY bo'lib yoziladi.
-  • ОПЛАТА              — qarz to'lovi. Tovar yo'q — e'tiborsiz qoldiriladi.
+  • ОПЛАТА              — qarz to'lovi. Tovar yo'q, shuning uchun `parse()`
+                          uni olmaydi — `parse_payment()` o'qiydi va
+                          `debt_payments` jadvaliga tushadi. Mijozning qarz
+                          daftari aynan shu ikkisidan yig'iladi.
 
 Tovar nomi bo'yicha katalogga bog'lanadi (chekda artikul yo'q). Nomlar YesPOS
 katalogidan kelgani uchun aksariyati AYNAN mos tushadi; mos tushmagani
@@ -59,9 +62,34 @@ CREATE TABLE IF NOT EXISTS receipts (
     paid_card   REAL    DEFAULT 0,    -- Пласт. карта / Корп.карта / Humo
     paid_click  REAL    DEFAULT 0,    -- Click
     paid_debt   REAL    DEFAULT 0,    -- Долг (qarzga yozilgan qism)
+    client_debt REAL,                 -- Задолженность: chekdagi QARZ QOLDIG'I
     created_at  TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
+CREATE INDEX IF NOT EXISTS idx_receipts_client ON receipts(client, sold_at);
+
+-- «ОПЛАТА» — mijoz kassada qarzini to'lagani. Tovar harakati yo'q, shuning
+-- uchun `receipts` ga qo'shilmaydi: aks holda aylanma ikki marta sanalardi.
+--
+-- `balance_after` («Остаток») — to'lovdan keyingi qarz. Bu QPOS ning O'Z
+-- hisobi, ya'ni chekdagi «Задолженность» bilan bir xil ishonchli: qarzni
+-- biz qayta hisoblamaymiz, eng oxirgi rasmiy qoldiqni asos qilamiz.
+CREATE TABLE IF NOT EXISTS debt_payments (
+    msg_id        INTEGER PRIMARY KEY,
+    client        TEXT    NOT NULL,
+    paid_at       TEXT    NOT NULL,     -- YYYY-MM-DD HH:MM:SS
+    day           TEXT    NOT NULL,
+    debt_before   REAL    DEFAULT 0,    -- Общий долг
+    amount        REAL    DEFAULT 0,    -- to'lovlar yig'indisi
+    balance_after REAL,                 -- Остаток (bo'lmasligi mumkin)
+    kinds         TEXT    DEFAULT '',   -- «Click, Наличные»
+    note          TEXT    DEFAULT '',   -- Комментарий
+    branch        TEXT    DEFAULT '',
+    cashier       TEXT    DEFAULT '',
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dpay_client ON debt_payments(client, paid_at);
+CREATE INDEX IF NOT EXISTS idx_dpay_day ON debt_payments(day);
 
 CREATE TABLE IF NOT EXISTS receipt_items (
     msg_id      INTEGER NOT NULL,
@@ -143,10 +171,33 @@ class Receipt:
     payable: float = 0.0
     paid: Dict[str, float] = field(default_factory=dict)
     items: List[dict] = field(default_factory=list)
+    # «Задолженность» — chek chiqqan ondagi mijoz qarzi. Nasiya chekida
+    # bo'ladi. Bu YUGURIB BORADIGAN qoldiq, shuning uchun qarz hisobida
+    # asos qilib olinadi (qarang: `debt.py`).
+    client_debt: Optional[float] = None
 
     @property
     def day(self) -> str:
         return self.sold_at.strftime("%Y-%m-%d") if self.sold_at else ""
+
+
+@dataclass
+class DebtPayment:
+    """«ОПЛАТА» xabari — mijoz kassada qarzini to'lagani."""
+
+    client: str = ""
+    paid_at: Optional[datetime] = None
+    debt_before: float = 0.0
+    amount: float = 0.0
+    balance_after: Optional[float] = None
+    kinds: str = ""
+    note: str = ""
+    branch: str = ""
+    cashier: str = ""
+
+    @property
+    def day(self) -> str:
+        return self.paid_at.strftime("%Y-%m-%d") if self.paid_at else ""
 
 
 def parse(text: str) -> Optional[Receipt]:
@@ -236,6 +287,8 @@ def parse(text: str) -> Optional[Receipt]:
                 r.discount = _num(val)
             elif key.startswith("К оплате") or key == "оплате":
                 r.payable = _num(val)
+            elif key == "Задолженность":
+                r.client_debt = _num(val)
             continue
 
         # «К оплате: 65,000.00» — kirilcha bo'shliqli kalit, _FIELD tutmaydi.
@@ -269,6 +322,97 @@ def parse(text: str) -> Optional[Receipt]:
         # naqd/karta yig'indisiga qo'shilmasligi, balki ayrilishi kerak.
         r.paid = {k: -abs(v) for k, v in r.paid.items()}
     return r
+
+
+# «ОПЛАТА» xabari
+#     ОПЛАТА
+#     Дата : 15:24:22 10-08-2026
+#     Клиент : Daler aka metro
+#     Общий долг: 6,732,402.22
+#     Оплаченный:
+#         Click : 3,000,000.00
+#         Комментарий : daler
+#     Остаток: 3,732,402.22
+_PAY_HEAD = re.compile(r"^\s*ОПЛАТА\s*$")
+_DEBT_BEFORE = re.compile(r"^\s*(?:Общий долг|Umumiy qarz)\s*:?\s*([\d,\.\-]+)\s*$")
+_DEBT_AFTER = re.compile(r"^\s*(?:Остаток|Qoldiq)\s*:?\s*([\d,\.\-]+)\s*$")
+_PAID_HEAD = re.compile(r"^\s*(?:Оплаченный|To'langan)\s*:?\s*$")
+_NOTE = re.compile(r"^\s*(?:Комментарий|Izoh)\s*:?\s*(.*)$")
+_PAY_LINE = re.compile(r"^\s*([A-Za-zА-Яа-яЁё'\. ]+?)\s*:\s*([\d,\.]+)\s*$")
+
+
+def is_payment(text: str) -> bool:
+    """Matn «ОПЛАТА» xabarimi."""
+    return bool(text) and bool(_PAY_HEAD.match(text.splitlines()[0]))
+
+
+def parse_payment(text: str) -> Optional[DebtPayment]:
+    """«ОПЛАТА» xabarini `DebtPayment` ga aylantiradi.
+
+    `None`: bu ОПЛАТА emas, yoki sana/mijoz yo'q — ikkalasisiz yozuvning
+    qarz daftarida ma'nosi qolmaydi.
+    """
+    if not is_payment(text):
+        return None
+
+    p = DebtPayment()
+    in_paid = False
+    for raw in text.splitlines()[1:]:
+        line = raw.strip()
+        if not line or set(line) == {"-"}:
+            continue
+
+        m = _DEBT_BEFORE.match(line)
+        if m:
+            p.debt_before = _num(m.group(1))
+            continue
+        m = _DEBT_AFTER.match(line)
+        if m:
+            p.balance_after = _num(m.group(1))
+            continue
+        if _PAID_HEAD.match(line):
+            in_paid = True
+            continue
+        m = _NOTE.match(line)
+        if m:
+            p.note = m.group(1).strip()
+            continue
+
+        m = _FIELD.match(line)
+        if m:
+            key, val = m.group(1), m.group(2).strip()
+            if key == "Дата":
+                d = _DATE.search(val)
+                if d:
+                    hh, mm, ss, dd, mo, yy = (int(x) for x in d.groups())
+                    p.paid_at = datetime(yy, mo, dd, hh, mm, ss)
+                continue
+            if key == "Филиал":
+                p.branch = val
+                continue
+            if key in ("Касса", "Сотрудник"):
+                p.cashier = val if key == "Сотрудник" else (p.cashier or val)
+                continue
+            if key in ("Клиент", "Mijoz"):
+                p.client = re.sub(r"\s+", " ", val).strip()
+                continue
+
+        # To'lov qatori — faqat «Оплаченный» dan keyin. Undan oldin ham
+        # «Nom : son» ko'rinishidagi qator bo'lishi mumkin (Касса : Kassa-1),
+        # shuning uchun bo'lim boshlanmaguncha olinmaydi.
+        m = _PAY_LINE.match(line)
+        if m and in_paid:
+            p.amount += _num(m.group(2))
+            nom = m.group(1).strip()
+            p.kinds = nom if not p.kinds else p.kinds + ", " + nom
+            continue
+
+    if not p.paid_at or not p.client:
+        return None
+    # Summa yozilmagan bo'lsa — qarz farqidan chiqaramiz.
+    if p.amount <= 0 and p.balance_after is not None:
+        p.amount = p.debt_before - p.balance_after
+    return p
 
 
 # ─── Katalogga bog'lash ──────────────────────────────────────────────────────
@@ -407,6 +551,10 @@ def ensure_schema(db: MarketplaceDB) -> None:
     for col in ("paid_cash", "paid_card", "paid_click", "paid_debt"):
         if col not in have:
             db.conn.execute(f"ALTER TABLE receipts ADD COLUMN {col} REAL DEFAULT 0")
+    # Sukut bo'yicha 0 EMAS, NULL: «qarzi yo'q» bilan «chekda yozilmagan»
+    # bir xil bo'lib qolsa, qarz qoldig'i noldan hisoblanib ketardi.
+    if "client_debt" not in have:
+        db.conn.execute("ALTER TABLE receipts ADD COLUMN client_debt REAL")
     db.conn.commit()
 
 
@@ -421,18 +569,19 @@ def store(db: MarketplaceDB, msg_id: int, r: Receipt, index: "CatalogIndex") -> 
         """INSERT INTO receipts (msg_id, doc_no, kind, branch, cashier, client,
                                  sold_at, day, total, discount, payable,
                                  paid_cash, paid_card, paid_click, paid_debt,
-                                 created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 client_debt, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(msg_id) DO UPDATE SET
                total=excluded.total, discount=excluded.discount,
                payable=excluded.payable, paid_cash=excluded.paid_cash,
                paid_card=excluded.paid_card, paid_click=excluded.paid_click,
-               paid_debt=excluded.paid_debt""",
+               paid_debt=excluded.paid_debt,
+               client_debt=COALESCE(excluded.client_debt, receipts.client_debt)""",
         (msg_id, r.doc_no, r.kind, r.branch, r.cashier, r.client,
          r.sold_at.strftime("%Y-%m-%d %H:%M:%S"), r.day,
          r.total, r.discount, r.payable,
          r.paid.get("cash", 0.0), r.paid.get("card", 0.0),
-         r.paid.get("click", 0.0), r.paid.get("debt", 0.0), ts),
+         r.paid.get("click", 0.0), r.paid.get("debt", 0.0), r.client_debt, ts),
     )
     misses = 0
     rows = []
@@ -449,6 +598,22 @@ def store(db: MarketplaceDB, msg_id: int, r: Receipt, index: "CatalogIndex") -> 
         rows,
     )
     return misses
+
+
+def store_payment(db: MarketplaceDB, msg_id: int, p: DebtPayment) -> None:
+    """Bitta «ОПЛАТА» ni yozadi. `msg_id` kalit — takror yozilmaydi."""
+    db.conn.execute(
+        """INSERT INTO debt_payments (msg_id, client, paid_at, day, debt_before,
+                                      amount, balance_after, kinds, note,
+                                      branch, cashier, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(msg_id) DO UPDATE SET
+               amount=excluded.amount, debt_before=excluded.debt_before,
+               balance_after=excluded.balance_after""",
+        (msg_id, p.client, p.paid_at.strftime("%Y-%m-%d %H:%M:%S"), p.day,
+         p.debt_before, p.amount, p.balance_after, p.kinds, p.note,
+         p.branch, p.cashier, now_local().isoformat(timespec="seconds")),
+    )
 
 
 # ─── CLI (ajratgichni sinash uchun) ──────────────────────────────────────────
