@@ -14,6 +14,7 @@
   --danger: #cf463b;
   --gold: #b5811c;
   --radius: 12px;
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -28,6 +29,8 @@
     --sel-text: #ffffff;
     --danger: #e8675c;
     --gold: #e0a83c;
+    /* Nativ elementlar (input, select, scrollbar) ham qora mavzuda chiqsin */
+    color-scheme: dark;
   }
 }
 
@@ -806,10 +809,10 @@ input { font-family: inherit; }
 .cl-actions .modal-btn-wide { flex: 1; margin-top: 0; }
 .cl-credit {
   margin-left: 8px; padding: 3px 8px; border-radius: 8px; cursor: pointer;
-  border: 1.5px solid #cbd5e1; background: #f8fafc; font-size: 13px;
+  border: 1.5px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 13px;
   filter: grayscale(1); opacity: .6;
 }
-.cl-credit.on { border-color: #16a34a; background: #ecfdf5; filter: none; opacity: 1; }
+.cl-credit.on { border-color: #16a34a; background: rgba(22,163,74,.16); filter: none; opacity: 1; }
 .cl-credit:hover { opacity: 1; }
 .cl-type {
   font-size: 11px; font-weight: 800; color: #7c3aed; background: #f3e8ff;
@@ -839,9 +842,27 @@ input { font-family: inherit; }
 /* Dona/optom o'tkazgichi (klient ro'yxatida) */
 .cl-typebtn {
   margin-left: 8px; padding: 3px 8px; border-radius: 8px; cursor: pointer;
-  border: 1.5px solid #cbd5e1; background: #f8fafc; font-size: 12px; font-weight: 700;
-  color: #475569;
+  border: 1.5px solid var(--line); background: var(--panel-2); font-size: 12px; font-weight: 700;
+  color: var(--muted);
 }
 .cl-typebtn.optom { border-color: #7c3aed; background: #f3e8ff; color: #7c3aed; }
 .cl-typebtn:hover { filter: brightness(.96); }
 .btn-update.err { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+
+/* ── Qora mavzu: keyin qo'shilgan belgilar ────────────────────────────
+   Optom / ulgurji nishonlari qattiq och rang bilan yozilgan edi —
+   qora fonda ko'zni qamashtirardi yoki yozuvi yo'qolardi. */
+@media (prefers-color-scheme: dark) {
+  .login-logo, .topbar-logo { background: #fff; }
+  .cl-type { color: #c4b5fd; background: rgba(124,58,237,.22); }
+  .cl-typebtn.optom { border-color: #a78bfa; background: rgba(124,58,237,.22); color: #c4b5fd; }
+  .wh-tag.ok { color: #86efac; background: rgba(22,163,74,.20); }
+  .wh-tag.no { color: #fca5a5; background: rgba(220,38,38,.20); }
+  .btn-update.err { background: rgba(220,38,38,.18); color: #fca5a5; border-color: rgba(252,165,165,.45); }
+  .cart-row.wh-ok .new-price, .cart-row.wh-ok .cr-sum, .pr-whole.wh-ok-txt { color: #86efac; }
+  .cart-row.wh-missing .cr-title,
+  .cart-row.wh-missing .new-price,
+  .cart-row.wh-missing .cr-sum,
+  .pr-whole.wh-no-txt { color: #fca5a5; }
+  .cn-msg { color: #fca5a5; }
+}

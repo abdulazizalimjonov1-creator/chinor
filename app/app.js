@@ -454,7 +454,8 @@
                 el.id = 'authSplash';
                 el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;' +
                     'align-items:center;justify-content:center;text-align:center;' +
-                    'padding:24px;background:var(--bg,#fff);font-size:15px;line-height:1.6';
+                    'padding:24px;background:var(--card,#fff);color:var(--text,#1b2e22);' +
+                    'font-size:15px;line-height:1.6';
                 document.body.appendChild(el);
             }
             el.innerHTML = text;
@@ -942,14 +943,14 @@
             // bir tovarni ikki marta to'ldirishga to'g'ri kelardi.
             box.innerHTML = items.map(p => {
                 const rasm = p.image_url
-                    ? '<span style="color:#16a34a">🖼 rasm</span>'
-                    : '<span style="color:#dc2626">🖼 yo\'q</span>';
+                    ? '<span style="color:var(--ok-text)">🖼 rasm</span>'
+                    : '<span style="color:var(--err-text)">🖼 yo\'q</span>';
                 const tavsif = (p.description || '').trim()
-                    ? '<span style="color:#16a34a">📝 tavsif</span>'
-                    : '<span style="color:#dc2626">📝 yo\'q</span>';
+                    ? '<span style="color:var(--ok-text)">📝 tavsif</span>'
+                    : '<span style="color:var(--err-text)">📝 yo\'q</span>';
                 const kod = (p.barcodes && p.barcodes.length)
-                    ? '<span style="color:#16a34a">🔖 kod</span>'
-                    : '<span style="color:#dc2626">🔖 yo\'q</span>';
+                    ? '<span style="color:var(--ok-text)">🔖 kod</span>'
+                    : '<span style="color:var(--err-text)">🔖 yo\'q</span>';
                 return `<div class="g-row" onclick="qeOpen(${p.id})">
                     <div><b>${escapeHtml(p.name)}</b>
                       <div class="g-meta">${fmtSum(p.price_sum)} so'm · qoldiq ${p.qty}</div>
@@ -1881,7 +1882,7 @@
                     <button class="cl-img-tab active" onclick="clSwitchImg(this,'${url}')">🖼 Katalog rasmi</button>
                     <button class="cl-img-tab" onclick="clSwitchImg(this,'${origUrl}')">📷 Asl rasm</button>
                 </div>` : ''}
-                ${p.category_name ? `<div style="display:inline-block;background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;margin-bottom:8px">🗂 ${escapeHtml(p.category_name)}</div>` : ''}
+                ${p.category_name ? `<div style="display:inline-block;background:var(--primary-light);color:var(--ink-strong);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;margin-bottom:8px">🗂 ${escapeHtml(p.category_name)}</div>` : ''}
                 ${(p.usage_tags && p.usage_tags.length) ? `<div class="cl-usage">
                     <span class="cl-usage-lbl">🔧 Qayerda ishlatiladi</span>
                     <span>${p.usage_tags.map(t => `<b>${escapeHtml(t)}</b>`).join(' · ')}</span>
@@ -4552,10 +4553,10 @@
             items.sort((a, b) => (b.is_internal ? 1 : 0) - (a.is_internal ? 1 : 0));
             let html = '';
             items.forEach(c => {
-                const badge = c.is_internal ? '<span style="color:#7c3aed;font-weight:700;">🏠 rasxod</span>'
+                const badge = c.is_internal ? '<span style="color:var(--purple-text);font-weight:700;">🏠 rasxod</span>'
                     : (c.allow_credit ? '<span style="color:#f59e0b;font-weight:700;">🤝 qarzga</span>'
-                    : (c.debt_sum > 0 ? `<span style="color:#dc2626;">Qarz: ${fmtSum(c.debt_sum)}</span>` : ''));
-                html += `<div onclick="pickPosClient(${c.id})" style="padding:11px 8px;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;">
+                    : (c.debt_sum > 0 ? `<span style="color:var(--err-text);">Qarz: ${fmtSum(c.debt_sum)}</span>` : ''));
+                html += `<div onclick="pickPosClient(${c.id})" style="padding:11px 8px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center;">
                     <span style="font-weight:600;">${escapeHtml(c.shop_name || ('Mijoz #' + c.id))}<br><span style="font-size:12px;color:#94a3b8;font-weight:400;">${escapeHtml(c.phone || '—')}</span></span>
                     <span style="font-size:12px;text-align:right;">${badge}</span>
                 </div>`;
@@ -4606,7 +4607,7 @@
             ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
             const inp = (id, lbl) => `<div class="stat-row"><span class="lbl">${lbl}</span>` +
                 `<input type="number" id="${id}" placeholder="0" inputmode="numeric" ` +
-                `style="width:130px;text-align:right;border:1px solid #e5e7eb;border-radius:10px;padding:8px 9px;font-size:15px;"></div>`;
+                `style="width:130px;text-align:right;border:1px solid var(--border);border-radius:10px;padding:8px 9px;font-size:15px;background:var(--card);color:var(--text);"></div>`;
             ov.innerHTML = `<div class="cl-modal">
                 <h3 style="margin:0 0 4px">🔀 Aralash to'lov</h3>
                 <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
@@ -4628,7 +4629,7 @@
                 const left = total - s;
                 const leftEl = ov.querySelector('#spLeft');
                 leftEl.textContent = fmtSum(left) + " so'm";
-                leftEl.style.color = Math.abs(left) < 1 ? '#16a34a' : '#dc2626';
+                leftEl.style.color = Math.abs(left) < 1 ? 'var(--ok-text)' : 'var(--err-text)';
                 const ok = ov.querySelector('#spOk');
                 ok.disabled = Math.abs(left) >= 1;
                 ok.style.opacity = ok.disabled ? '.5' : '1';
@@ -5367,7 +5368,7 @@
                           style="border:none;border-radius:8px;padding:5px 12px;cursor:pointer;font-weight:700;font-size:13px;color:#fff;background:${on ? '#16a34a' : '#94a3b8'};">
                           ${on ? '✓ Ruxsat' : 'Yopiq'}</button></div>`;
                 }
-                const nameExtra = c.is_internal ? ' <span style="color:#7c3aed;font-size:12px;">(ichki rasxod)</span>' : '';
+                const nameExtra = c.is_internal ? ' <span style="color:var(--purple-text);font-size:12px;">(ichki rasxod)</span>' : '';
                 html += `<div class="stat-block">
                     <div class="stat-row"><span class="lbl">${typeTxt} ${escapeHtml(c.shop_name)}${nameExtra}</span><span class="val ${debtCls}">${debtTxt}</span></div>
                     <div class="stat-row"><span class="lbl">📱 Telefon</span><span class="val">${escapeHtml(c.phone||'—')}</span></div>
@@ -5463,12 +5464,12 @@
                     <div class="stat-row"><span class="lbl">➕ Yangi xodim</span></div>
                     <input type="tel" id="stPhone" placeholder="Telefon: +998 90 123 45 67"
                            inputmode="tel" autocomplete="off"
-                           style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;">
+                           style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;background:var(--card);color:var(--text);">
                     <input type="text" id="stName" placeholder="Ism (ixtiyoriy)"
                            autocomplete="off"
-                           style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;">
+                           style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;background:var(--card);color:var(--text);">
                     <select id="stRole"
-                            style="width:100%;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;background:#fff;">
+                            style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-top:8px;background:var(--card);color:var(--text);">
                         ${STAFF_ROLES.map(r => `<option value="${r[0]}">${r[1]}</option>`).join('')}
                     </select>
                     <button class="save-btn" style="margin-top:10px" onclick="addStaff()">➕ Qo'shish</button>
@@ -5508,7 +5509,7 @@
                 if (canManage && !a.is_glavniy) {
                     html += `<div class="stat-row"><span class="lbl">🔑 Rol</span><span class="val">
                         <select onchange="setStaffRole(${a.telegram_id}, this.value)"
-                                style="border:1px solid #e5e7eb;border-radius:9px;padding:6px 8px;font-size:13.5px;background:#fff;">
+                                style="border:1px solid var(--border);border-radius:9px;padding:6px 8px;font-size:13.5px;background:var(--card);color:var(--text);">
                             ${STAFF_ROLES.map(r => `<option value="${r[0]}"${r[0]===a.role?' selected':''}>${r[1]}</option>`).join('')}
                         </select>
                         <button onclick="removeStaff(${a.telegram_id}, 0)"
@@ -5583,7 +5584,7 @@
             const s = data.settings || {};
             const toggle = (label, key, val) => `<div class="stat-row"><span class="lbl">${label}</span><label style="position:relative;display:inline-block;width:44px;height:24px;"><input type="checkbox" ${val?'checked':''} style="opacity:0;width:0;height:0;" data-key="${key}" onchange="toggleSetting(this)"><span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${val?'#2481cc':'#ccc'};border-radius:12px;transition:.3s;"><span style="position:absolute;height:20px;width:20px;left:${val?'22px':'2px'};bottom:2px;background:white;border-radius:50%;transition:.3s;"></span></span></label></div>`;
             let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><button class="list-back" onclick="showScreen('screenAdmin')">← Orqaga</button><h2 style="font-size:18px;font-weight:800;">⚙️ Sozlamalar</h2></div>
-            <div class="stat-block"><div class="stat-row"><span class="lbl">💵 USD kursi</span><input type="number" id="usdRateInput" value="${s.usd_rate}" step="100" style="width:120px;text-align:right;border:1px solid #e5e7eb;border-radius:10px;padding:7px 9px;font-size:14px;"></div><button class="save-btn" onclick="saveUsdRate()">💾 Kursni saqlash</button></div>
+            <div class="stat-block"><div class="stat-row"><span class="lbl">💵 USD kursi</span><input type="number" id="usdRateInput" value="${s.usd_rate}" step="100" style="width:120px;text-align:right;border:1px solid var(--border);border-radius:10px;padding:7px 9px;font-size:14px;background:var(--card);color:var(--text);"></div><button class="save-btn" onclick="saveUsdRate()">💾 Kursni saqlash</button></div>
             <div class="stat-block">`;
             html += toggle('📦 Optom narx', 'wholesale_enabled', s.wholesale_enabled);
             html += toggle('🛍️ Dona narx', 'dona_enabled', s.dona_enabled);
