@@ -129,6 +129,35 @@ def _bind(phone: str, chat_id: int) -> tuple:
     return names, total
 
 
+async def ensure_shop_client(tg_id: int, phone: str, name: str) -> bool:
+    """Mijoz `pos.db` da ham bo'lsin — Mini App aynan shuni talab qiladi.
+
+    NEGA KERAK: Mini App foydalanuvchini `clients` jadvalidan topadi.
+    Kassadagi qarz daftari boshqa bazada (`marketplace.db`), shuning
+    uchun cheklar botida raqamini tasdiqlagan odam Mini App'ga kirmoqchi
+    bo'lsa «avtorizatsiya kerak» olardi — imzo to'g'ri bo'lsa ham.
+
+    Bor mijozga TEGILMAYDI: faqat Telegram ID si bo'sh bo'lsa biriktiriladi.
+    """
+    from database.channel_db import db
+
+    try:
+        if await db.get_client_by_tg(tg_id):
+            return True
+        found = await db.get_client_by_phone(phone)
+        if found:
+            if not found.get("telegram_id"):
+                await db.set_client_tg_id(found["id"], tg_id)
+            return True
+        shop = (name or "").strip() or f"Mijoz {str(phone)[-4:]}"
+        await db.add_client(tg_id=tg_id, shop_name=shop[:80], phone=phone,
+                            registered_by=tg_id, client_type="dona")
+        return bool(await db.get_client_by_tg(tg_id))
+    except Exception as e:
+        logger.warning("🧾 pos.db mijozi yaratilmadi (%s): %s", tg_id, e)
+        return False
+
+
 def _money(v) -> str:
     return f"{round(float(v or 0)):,}".replace(",", " ")
 
@@ -173,6 +202,11 @@ async def _on_contact(session, msg: dict) -> None:
     except Exception as e:
         logger.warning("🧾 Hisob bog'lanmadi: %s", e)
         names, total = [], 0
+
+    # Mini App `pos.db` dagi mijozni talab qiladi — kassadagi nom bilan
+    # (bo'lmasa Telegram ismi bilan) yaratamiz.
+    nick = " ".join(x for x in (frm.get("first_name"), frm.get("last_name")) if x)
+    await ensure_shop_client(chat_id, phone, names[0] if names else nick)
 
     # Imzolangan kirish nuqtasi: matn maydoni yonidagi doimiy tugma.
     await _set_menu_button(session, chat_id)
@@ -307,3 +341,54 @@ async def poll_loop(timeout_s: int = 50) -> None:
             except Exception as e:
                 logger.info("🧾 Cheklar boti — sikl xatosi: %s", e)
                 await asyncio.sleep(5)
+
+
+async def backfill() -> int:
+    """Eski botda ro'yxatdan o'tganlar uchun `pos.db` mijozini yaratadi.
+
+    Kassadagi bot mijozni faqat o'z bazasida saqlardi. Ular Mini App'ga
+    kira olishi uchun `clients` jadvalida ham bo'lishi kerak — bu
+    bir martalik to'ldirish. Qayta ishga tushirish xavfsiz: bor
+    mijozga tegilmaydi.
+
+    Ishlatish:  python -m bot.chek_bot backfill
+    """
+    import os
+    import sys as _sys
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    if root not in _sys.path:
+        _sys.path.insert(0, root)
+    from marketplace import debt as D
+    from marketplace.db import MarketplaceDB
+
+    with MarketplaceDB() as mdb:
+        D.ensure_schema(mdb.conn)
+        rows = mdb.conn.execute(
+            "SELECT name, chat_id, phone, phone2 FROM debt_clients "
+            "WHERE chat_id <> '' ORDER BY name").fetchall()
+
+    done = skipped = 0
+    for r in rows:
+        phone = (r["phone"] or r["phone2"] or "").strip()
+        if not phone:
+            # Telefonsiz mijozni yarata olmaymiz — `clients` da telefon
+            # kalit maydon. Kassada raqami yo'q, admin qo'lda kiritadi.
+            print(f"  ? {r['name']}: telefon yo'q — o'tkazildi")
+            skipped += 1
+            continue
+        ok = await ensure_shop_client(int(r["chat_id"]), phone, r["name"])
+        print(("  + " if ok else "  ! ") + f"{r['name']}  {phone}")
+        done += 1 if ok else 0
+    print(f"\nTayyor: {done} ta mijoz Mini App'ga kira oladi, "
+          f"{skipped} ta o'tkazildi")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _s
+
+    if len(_s.argv) > 1 and _s.argv[1] == "backfill":
+        raise SystemExit(asyncio.run(backfill()))
+    raise SystemExit("Ishlatish: python -m bot.chek_bot backfill")
