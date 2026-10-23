@@ -87,30 +87,37 @@ async def pick_pair(db) -> list:
         recent = set(json.loads(db.get_setting("reels_talk_recent", "[]") or "[]"))
     except ValueError:
         recent = set()
-    by_cat = {}
-    for p in idx.items.values():
-        if float(p.get("sell_price") or 0) <= 0 or not int(p.get("category_id") or 0):
-            continue
-        if p["id"] in recent or not _orig_path(p):
-            continue
-        by_cat.setdefault(int(p["category_id"]), []).append(p)
+    # Rasmli tovarlar kam (2026-10-23: 40 ta, ko'pi bo'limsiz) — shuning uchun
+    # juftlik bo'lim BO'YICHA yoki turdoshlik bo'yicha (nom so'zlari va
+    # «qayerda ishlatiladi» teglari umumiy) tanlanadi. Ikkalasi bir-birining
+    # o'rnini bosadigan tovar bo'lsin — aks holda «nega seni ko'p olishadi»
+    # hazili ma'nosiz.
+    pool = [p for p in idx.items.values()
+            if float(p.get("sell_price") or 0) > 0 and p["id"] not in recent and _orig_path(p)]
+
+    def kin(a, b) -> float:
+        ca, cb = int(a.get("category_id") or 0), int(b.get("category_id") or 0)
+        if ca and ca == cb:
+            return 1.0
+        ta, tb = idx.toks.get(a["id"], set()), idx.toks.get(b["id"], set())
+        return len(ta & tb) / max(1, len(ta | tb))
+
     best, best_s = None, -1e9
-    for plist in by_cat.values():
-        plist = sorted(plist, key=lambda p: -buyers.get(p["id"], 0))[:40]
-        for b in plist:
-            bb = buyers.get(b["id"], 0)
-            if bb < 3:
+    for b in pool:
+        bb = buyers.get(b["id"], 0)
+        if bb < 2:
+            continue
+        for a in pool:
+            if a["id"] == b["id"] or _family(a["name"]) == _family(b["name"]):
                 continue
-            for a in plist:
-                if a["id"] == b["id"] or _family(a["name"]) == _family(b["name"]):
-                    continue
-                pa, pb = float(a["sell_price"]), float(b["sell_price"])
-                ba = buyers.get(a["id"], 0)
-                if pa < 1.2 * pb or ba >= bb:
-                    continue
-                s = (bb - ba) + min(pa / pb, 3) * 2
-                if s > best_s:
-                    best, best_s = (a, b), s
+            pa, pb = float(a["sell_price"]), float(b["sell_price"])
+            ba = buyers.get(a["id"], 0)
+            k = kin(a, b)
+            if pa < 1.2 * pb or ba >= bb or k < 0.12:
+                continue
+            s = 4 * k + (bb - ba) * 0.5 + min(pa / pb, 3)
+            if s > best_s:
+                best, best_s = (a, b), s
     if not best:
         return []
     out = []
