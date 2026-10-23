@@ -42,15 +42,21 @@ async def sync_once() -> str:
     env = _env()
     if not env.get("TG_API_ID") or not env.get("YESPOS_BOT"):
         return "sozlanmagan"
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "marketplace.tg_receipts", "sync",
-        cwd=_REPO, env=env,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return "vaqt tugadi"
+    # Telethon sessiya fayli bir vaqtda BITTA jarayonda ochiladi —
+    # qarz eslatmalari ham o'sha sessiyani ishlatadi, shuning uchun
+    # ikkalasi bitta qulf ostida navbatma-navbat ishlaydi.
+    from bot.notify_worker import userbot_lock
+
+    async with userbot_lock():
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "marketplace.tg_receipts", "sync",
+            cwd=_REPO, env=env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return "vaqt tugadi"
     tail = (out or b"").decode(errors="ignore").strip().splitlines()[-3:]
     if proc.returncode == 0:
         # Yangi chek qatorlarini katalogga bog'laymiz — bog'lanmagan qator

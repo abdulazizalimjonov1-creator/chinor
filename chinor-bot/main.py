@@ -212,6 +212,10 @@ async def main():
     from bot import receipts_sync
     receipts_task = asyncio.create_task(receipts_sync.loop())
 
+    # ── Qarzdorlarga userbot xabari — navbatni bittalab bo'shatadi ──────
+    from bot import notify_worker
+    notify_task = asyncio.create_task(notify_worker.loop())
+
     # ── YesPOS → Chinor: tovar/qoldiq/narx (har 15 daqiqa, himoyali) ────
     from bot import yespos_sync
     yespos_task = asyncio.create_task(yespos_sync.loop(bot))
@@ -235,6 +239,7 @@ async def main():
         reels_pick_task.cancel()
         backup_task.cancel()
         receipts_task.cancel()
+        notify_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
         await bot.session.close()

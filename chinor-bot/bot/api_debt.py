@@ -710,6 +710,9 @@ async def api_debt_remind(request: web.Request):
     body = await _read_json(request)
     name = (body.get("name") or "").strip()
     extra = (body.get("text") or "").strip()
+    # via: bot — faqat botdan; userbot — shaxsiy akkauntdan (navbatga);
+    # auto — botda bo'lsa bot, bo'lmasa userbot.
+    via = (body.get("via") or "auto").strip().lower()
     if not name:
         return _err("Mijoz tanlanmadi")
 
@@ -717,19 +720,52 @@ async def api_debt_remind(request: web.Request):
     with _mdb() as mdb:
         D.ensure_schema(mdb.conn)
         row = mdb.conn.execute(
-            "SELECT chat_id, remind_open FROM debt_clients WHERE name = ?",
-            (name,)).fetchone()
+            "SELECT chat_id, phone, phone2, remind_open FROM debt_clients "
+            "WHERE name = ?", (name,)).fetchone()
         chat_id = (row["chat_id"] if row else "") or ""
+        phone = ((row["phone"] if row else "") or
+                 (row["phone2"] if row else "") or "")
         quiet = row is not None and int(row["remind_open"]) == 0
         debt_now = round(D.debt(mdb.conn, name))
 
     if quiet:
         return _err("Bu mijozga eslatma o'chirilgan")
-    if not chat_id:
-        return _err("Mijoz botda ro'yxatdan o'tmagan — unga yozib bo'lmaydi")
     if debt_now <= 0:
         return _err("Mijozning qarzi yo'q")
 
+    text = _remind_text(debt_now, extra)
+
+    # ── Bot orqali (xavfsiz, cheklovsiz) ────────────────────────────────
+    if chat_id and via in ("auto", "bot"):
+        ok = await _tg_send(chat_id, text)
+        return web.json_response({"ok": bool(ok), "via": "bot",
+                                  "debt": debt_now})
+    if via == "bot":
+        return _err("Mijoz botda ro'yxatdan o'tmagan — bot yoza olmaydi")
+
+    # ── Userbot orqali (navbatga) ───────────────────────────────────────
+    if not phone:
+        return _err("Telefon raqami yo'q — yuborib bo'lmaydi")
+
+    import re as _re
+
+    plain = _re.sub(r"<[^>]+>", "", text)      # userbot HTML ishlatmaydi
+    with _mdb() as mdb:
+        from marketplace import tg_notify as N
+
+        qid = N.enqueue(mdb, name, phone, plain, kind="debt",
+                        author=str(auth["tg_id"]))
+        st = N.status(mdb)
+    if not qid:
+        return _err("Bu mijoz allaqachon navbatda turibdi")
+    return web.json_response({
+        "ok": True, "via": "userbot", "debt": debt_now, "queued": qid,
+        "pending": st.get("pending", 0), "today": st.get("today", 0),
+        "limit": st.get("limit", 0),
+    })
+
+
+def _remind_text(debt_now: int, extra: str = "") -> str:
     from bot.config import CONTACT_PHONE_1
 
     text = (f"Assalomu alaykum! 👋\n\n"
@@ -739,9 +775,115 @@ async def api_debt_remind(request: web.Request):
         text += f"\n\n{extra}"
     text += (f"\n\nTo'lov yoki savol bo'lsa: {CONTACT_PHONE_1}\n"
              f"Xaridlaringizni Mini App'dan ko'rishingiz mumkin.")
+    return text
 
-    ok = await _tg_send(chat_id, text)
-    return web.json_response({"ok": bool(ok), "debt": debt_now})
+
+@DEBT_ROUTES.post("/api/debt/remind/bulk")
+async def api_debt_remind_bulk(request: web.Request):
+    """Bir nechta qarzdorga eslatma: botdagilarga bot, qolganiga userbot.
+
+    Shaxsiy akkauntdan ketma-ket yozish Telegram spam-qo'riqchisini
+    uyg'otadi, shuning uchun userbot qismi NAVBATGA tushadi va fonda
+    bittalab, tanaffus bilan ketadi (kunlik chegara bilan). Bu yerda
+    faqat navbatga qo'yiladi — hech narsa darhol yuborilmaydi.
+    """
+    from database.channel_db import db as _db_pos
+    from bot.web_api import _need_admin, _err, _read_json
+
+    auth, err = await _need_admin(request, _db_pos, "clients")
+    if err is not None:
+        return err
+
+    body = await _read_json(request)
+    names = [str(n).strip() for n in (body.get("names") or []) if str(n).strip()]
+    try:
+        min_debt = float(body.get("min") or 0)
+    except (TypeError, ValueError):
+        min_debt = 0.0
+    extra = (body.get("text") or "").strip()
+
+    D = _debt()
+    import re as _re
+
+    yuborildi = navbat = otkazildi = 0
+    sabablar = {}
+    with _mdb() as mdb:
+        from marketplace import tg_notify as N
+
+        D.ensure_schema(mdb.conn)
+        N.ensure_schema(mdb)
+        if not names:
+            names = [r["name"] for r in D.clients_with_debt(mdb.conn, max(1.0, min_debt))]
+
+        tasks = []
+        for name in names:
+            row = mdb.conn.execute(
+                "SELECT chat_id, phone, phone2, remind_open FROM debt_clients "
+                "WHERE name = ?", (name,)).fetchone()
+            qarz = round(D.debt(mdb.conn, name))
+            if qarz < max(1, min_debt):
+                otkazildi += 1
+                sabablar[name] = "qarzi yo'q"
+                continue
+            if row is not None and int(row["remind_open"]) == 0:
+                otkazildi += 1
+                sabablar[name] = "eslatma o'chiq"
+                continue
+            chat_id = (row["chat_id"] if row else "") or ""
+            phone = ((row["phone"] if row else "") or
+                     (row["phone2"] if row else "") or "")
+            text = _remind_text(qarz, extra)
+            if chat_id:
+                tasks.append((chat_id, text))
+                continue
+            if not phone:
+                otkazildi += 1
+                sabablar[name] = "telefon yo'q"
+                continue
+            if N.enqueue(mdb, name, phone, _re.sub(r"<[^>]+>", "", text),
+                         kind="debt", author=str(auth["tg_id"])):
+                navbat += 1
+            else:
+                otkazildi += 1
+                sabablar[name] = "allaqachon navbatda"
+        st = N.status(mdb)
+
+    # Botdagilarga DARHOL — bot uchun cheklov yo'q.
+    for chat_id, text in tasks:
+        if await _tg_send(chat_id, text):
+            yuborildi += 1
+
+    return web.json_response({
+        "ok": True, "sent": yuborildi, "queued": navbat,
+        "skipped": otkazildi, "reasons": sabablar,
+        "pending": st.get("pending", 0), "today": st.get("today", 0),
+        "limit": st.get("limit", 0),
+    })
+
+
+@DEBT_ROUTES.get("/api/debt/notify/status")
+async def api_debt_notify_status(request: web.Request):
+    """Userbot navbati holati — Mini App shu raqamlarni ko'rsatadi."""
+    from database.channel_db import db as _db_pos
+    from bot.web_api import _need_admin
+
+    auth, err = await _need_admin(request, _db_pos, "clients")
+    if err is not None:
+        return err
+
+    with _mdb() as mdb:
+        from marketplace import tg_notify as N
+
+        st = N.status(mdb)
+        rows = mdb.conn.execute(
+            """SELECT client, phone, status, error, created_at, sent_at
+                 FROM notify_queue ORDER BY id DESC LIMIT 30""").fetchall()
+    return web.json_response({
+        "ok": True, "stats": st,
+        "items": [{"client": r["client"], "phone": r["phone"],
+                   "status": r["status"], "error": r["error"] or "",
+                   "at": r["sent_at"] or r["created_at"]} for r in rows],
+    })
 
 
 def setup(app: web.Application) -> None:

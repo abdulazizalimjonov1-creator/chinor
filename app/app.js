@@ -3613,6 +3613,11 @@
 
             openTool('📕 Qarzdorlar', `
                 <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="openDebtNotify()">📨 Eslatma yuborish (hammasiga)</button>
+                    <div id="debtMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block">
                     <div class="big-label">Umumiy qarz</div>
                     <div class="big-num">${fmtSum(data.total)} so'm</div>
                     <div class="stat-row"><span class="lbl">👥 Qarzdorlar</span>
@@ -3657,7 +3662,9 @@
                     <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="debtDownload('ledger')">📥 Hisob-kitob (Excel)</button>
                     <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtRemind()">📨 Qarz eslatmasini yuborish</button>
+                            onclick="debtRemind('auto')">📨 Qarz eslatmasini yuborish</button>
+                    ${c.chat_id ? '' : `<button class="more-btn" style="width:100%;margin-top:6px"
+                            onclick="debtRemind('userbot')">📱 Shaxsiy akkauntdan yozish</button>`}
                     <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="openDebtEdit()">⚙️ Sozlamalar va qo'lda harakat</button>
                     <div id="debtMsg" class="list-status"></div>
@@ -3762,17 +3769,104 @@
             _debtMsg(`<span class="val-green">✅ ${data.sent}/${data.of} chek yuborildi</span>`);
         };
 
-        window.debtRemind = async function () {
-            if (!confirm(_debtName + ' ga qarz eslatmasi yuborilsinmi?')) return;
+        window.debtRemind = async function (via) {
+            const shaxsiy = via === 'userbot';
+            if (!confirm(_debtName + (shaxsiy
+                ? ' ga SHAXSIY akkauntdan yozilsinmi?\n\nXabar navbatga qo\'yiladi va '
+                  + 'fonda, tanaffus bilan yuboriladi (Telegram cheklovidan saqlanish uchun).'
+                : ' ga qarz eslatmasi yuborilsinmi?'))) return;
             _debtMsg('Yuborilmoqda...');
             const { ok, data } = await apiFetch('/api/debt/remind', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: _debtName }),
+                body: JSON.stringify({ name: _debtName, via: via || 'auto' }),
             });
             if (!ok || !data.ok) return _debtMsg(
                 '<span class="val-red">' + escapeHtml(data.error || 'Yuborilmadi') + '</span>');
-            _debtMsg('<span class="val-green">✅ Eslatma yuborildi</span>');
+            _debtMsg(data.via === 'userbot'
+                ? `<span class="val-green">✅ Navbatga qo'yildi</span>
+                   <small style="opacity:.7"> · navbatda ${data.pending},
+                   bugun ${data.today}/${data.limit}</small>`
+                : '<span class="val-green">✅ Bot orqali yuborildi</span>');
+        };
+
+        // ── Ommaviy eslatma ──────────────────────────────────────────────
+        // Botdagilarga DARHOL (bot uchun cheklov yo'q), qolganiga userbot
+        // NAVBATI orqali — shaxsiy akkauntdan ketma-ket yozish Telegram
+        // spam-qo'riqchisini uyg'otadi va akkaunt cheklanishi mumkin.
+        window.openDebtNotify = async function () {
+            openTool('📨 Eslatma yuborish');
+            const { ok, status, data } = await apiFetch('/api/debt/notify/status');
+            if (!ok || !data.ok) return openTool('📨 Eslatma yuborish', toolError(status, data));
+            const st = data.stats || {};
+
+            let rows = '';
+            (data.items || []).forEach(r => {
+                const belgi = r.status === 'sent' ? '✅' : r.status === 'pending' ? '⏳'
+                            : r.status === 'skipped' ? '⏭' : '❌';
+                rows += `<div class="toprow" style="align-items:flex-start">
+                    <span>${belgi} ${escapeHtml(r.client)}<br>
+                      <small style="opacity:.7">${escapeHtml((r.at || '').replace('T', ' ').slice(0, 16))}
+                      ${r.error ? '· ' + escapeHtml(r.error.slice(0, 50)) : ''}</small></span>
+                    <span class="val"><small>${escapeHtml(r.phone)}</small></span></div>`;
+            });
+            if (!rows) rows = '<div class="list-status">Hali xabar yuborilmagan</div>';
+
+            openTool('📨 Eslatma yuborish', `
+                <div class="stat-block">
+                    <div class="list-status" style="text-align:left">
+                        Botda ro'yxatdan o'tgan mijozga <b>bot</b> darrov yozadi.
+                        Qolganiga <b>shaxsiy akkaunt</b>dan yoziladi — u navbatga
+                        tushadi va fonda, tanaffus bilan ketadi. Telegram
+                        ketma-ket yozishni spam deb hisoblaydi, shuning uchun
+                        kuniga <b>${st.limit || 20}</b> tadan oshmaydi.
+                    </div>
+                    <div class="stat-row"><span class="lbl">⏳ Navbatda</span>
+                        <span class="val">${st.pending || 0}</span></div>
+                    <div class="stat-row"><span class="lbl">📤 Bugun yuborilgan</span>
+                        <span class="val">${st.today || 0} / ${st.limit || 20}</span></div>
+                    <div class="stat-row"><span class="lbl">❌ Xato</span>
+                        <span class="val">${st.failed || 0}</span></div>
+                    <div style="margin-top:8px">
+                        <div class="lbl">Eng kam qarz (so'm) — shundan kamiga yuborilmaydi</div>
+                        <input id="dnMin" type="number" value="100000"
+                               style="width:100%;padding:9px;border-radius:8px;
+                                      border:1px solid var(--border,#ccc)">
+                    </div>
+                    <div style="margin-top:8px">
+                        <div class="lbl">Qo'shimcha gap (ixtiyoriy)</div>
+                        <input id="dnText" type="text" placeholder="masalan: hafta oxirigacha..."
+                               style="width:100%;padding:9px;border-radius:8px;
+                                      border:1px solid var(--border,#ccc)">
+                    </div>
+                    <button class="more-btn" style="width:100%;margin-top:10px"
+                            onclick="debtNotifyAll()">📨 Yuborish</button>
+                    <div id="debtMsg" class="list-status"></div>
+                </div>
+                <div class="stat-block"><h3>Oxirgi xabarlar</h3>${rows}</div>
+                <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="openDebtors()">← Qarzdorlar</button>
+                </div>`);
+        };
+
+        window.debtNotifyAll = async function () {
+            const min = Number($('dnMin').value || 0);
+            const text = $('dnText').value.trim();
+            if (!confirm(`Qarzi ${fmtSum(min)} so'mdan ko'p BARCHA mijozlarga `
+                       + `eslatma yuborilsinmi?`)) return;
+            _debtMsg('Tayyorlanmoqda...');
+            const { ok, data } = await apiFetch('/api/debt/remind/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ min, text }),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Xato') + '</span>');
+            _debtMsg(`<span class="val-green">✅ Bot orqali ${data.sent} ta yuborildi,
+                ${data.queued} ta navbatga qo'yildi</span>
+                <small style="opacity:.7"> · o'tkazildi ${data.skipped},
+                bugun ${data.today}/${data.limit}</small>`);
         };
 
         window.openDebtEdit = async function () {
