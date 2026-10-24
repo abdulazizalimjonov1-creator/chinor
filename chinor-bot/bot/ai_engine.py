@@ -301,6 +301,55 @@ def read_document(fpath: str, prompt: str, validate=None, max_tokens: int = 3000
         _tls.img_tokens = 0
 
 
+def transcribe(fpath: str, mime: str = "", prompt: str = "") -> str:
+    """Ovozli xabarni matnga o'giradi. Bo'sh qaytsa — bo'lmadi.
+
+    Nega Gemini: o'zbek tilini tushunadigan bepul yo'l shu. Whisper'ning
+    kichik modellari o'zbekchani deyarli olmaydi, kattasi esa pullik.
+    """
+    import base64 as _b64
+    import mimetypes as _mt
+    mime = mime or _mt.guess_type(fpath)[0] or "audio/ogg"
+    try:
+        raw = open(fpath, "rb").read()
+    except OSError as e:
+        logger.warning("🎧 Ovoz fayli o'qilmadi: %s", e)
+        return ""
+    data = _b64.b64encode(raw).decode()
+    prompt = prompt or (
+        "Bu ovozli xabarni AYNAN matnga o'gir. Faqat matnning o'zini qaytar: "
+        "izoh, tarjima yoki qo'shimcha so'z yozma. Til — o'zbekcha (lotin yozuvi)."
+    )
+    models = [m for p_, m in _chain() if p_ == "gemini"] or ["gemini-2.5-flash"]
+    for model in models[:3]:
+        payload = {
+            "contents": [{"parts": [
+                {"inline_data": {"mime_type": mime, "data": data}},
+                {"text": prompt},
+            ]}],
+            "generationConfig": {"maxOutputTokens": 1200},
+        }
+        if "2.5" in model:
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+        body = json.dumps(payload).encode()
+
+        def _once(key: str, _m=model, _b=body) -> str:
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{_m}:generateContent?key={key}",
+                data=_b, headers={"Content-Type": "application/json", "User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+                return _gemini_text(json.load(r))
+
+        try:
+            out = (_call_with_keys("GEMINI_API_KEY", _once) or "").strip()
+            if out:
+                return out
+        except Exception as e:
+            logger.warning("🎧 %s ovozni o'gira olmadi: %s", model, e)
+    return ""
+
+
 def _call_gemini(model: str, prompt: str, img_b64: str = "",
                  system: str = "", search: bool = False) -> str:
     parts = []

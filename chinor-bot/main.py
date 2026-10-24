@@ -210,6 +210,8 @@ async def main():
     dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
     from handlers import ig_social_admin
     dp.include_router(ig_social_admin.router)      # 💬 Instagram izoh/lichka javobi
+    from handlers import idea_reel_admin
+    dp.include_router(idea_reel_admin.router)      # 💡 ovozli g'oya → rolik
     dp.include_router(kabinet.router)         # 🧾 mijoz kabineti (/hisobim …)
     dp.include_router(kanal_aniq.router)      # 📢 kanal id sini aniqlash
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq

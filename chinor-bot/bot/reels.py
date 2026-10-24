@@ -250,7 +250,10 @@ def _conn():
     # Eski bazaga yangi ustunlar (bir marta qo'shiladi)
     for col, decl in (("attempts", "INTEGER DEFAULT 0"),
                       ("next_try", "TEXT DEFAULT ''"),
-                      ("msg_id", "INTEGER DEFAULT 0")):
+                      ("msg_id", "INTEGER DEFAULT 0"),
+                      # Egasi ovozli g'oyada aytgan urg'u: «xususiyatlari
+                      # haqida gapir» kabi ko'rsatma ssenariyga qo'shiladi
+                      ("note", "TEXT DEFAULT ''")):
         try:
             c.execute(f"ALTER TABLE reels_queue ADD COLUMN {col} {decl}")
         except sqlite3.OperationalError:
@@ -349,7 +352,7 @@ def enqueue(product_id: int, image_path: str) -> int:
         c.close()
 
 
-def enqueue_manual(product_id: int, image_path: str) -> int:
+def enqueue_manual(product_id: int, image_path: str, note: str = "") -> int:
     """Egasi O'ZI tanlaganda navbatga qo'shadi.
 
     `enqueue` dan farqi: `worth_reel` darvozasi va kunlik chegara
@@ -366,9 +369,10 @@ def enqueue_manual(product_id: int, image_path: str) -> int:
         if row:
             return 0
         cur = c.execute(
-            "INSERT INTO reels_queue(product_id, image_path, created_at) "
-            "VALUES(?,?,?)",
-            (product_id, image_path, time.strftime("%Y-%m-%d %H:%M:%S")))
+            "INSERT INTO reels_queue(product_id, image_path, created_at, note) "
+            "VALUES(?,?,?,?)",
+            (product_id, image_path, time.strftime("%Y-%m-%d %H:%M:%S"),
+             (note or "")[:300]))
         c.commit()
         logger.info("🎯 #%s qo'lda navbatga qo'shildi", product_id)
         return cur.lastrowid
@@ -787,7 +791,7 @@ def product_facts(product: dict, image_path: str, cat: str) -> str:
 
 
 def _ad_prompt(name: str, cat: str, tags: list, desc: str,
-               facts: str = "") -> str:
+               facts: str = "", note: str = "") -> str:
     """Ssenariy so'rovi.
 
     Nima uchun bunchalik uzun: qisqa so'rovga («shu tovarga reklama yoz»)
@@ -796,7 +800,11 @@ def _ad_prompt(name: str, cat: str, tags: list, desc: str,
     namunalar beriladi — odam Gemini bilan suhbatda qanday tushuntirsa,
     shunday.
     """
+    urgu = (f"\n\n== EGASINING KO'RSATMASI ==\n{note.strip()}\n"
+            "Shu ko'rsatmaga amal qil: aynan shu tomonga urg'u ber.\n"
+            if (note or "").strip() else "")
     return (
+        urgu +
         "== TOVAR HAQIDA ==\n"
         f"Nomi: {name}\n"
         f"Bo'lim: {cat or '—'}\n"
@@ -999,7 +1007,8 @@ def _recheck(name: str, facts: str, hook: str, bullets: list) -> dict:
     return {}
 
 
-def ad_script(product: dict, cat: str, tags: list, facts: str = "") -> dict:
+def ad_script(product: dict, cat: str, tags: list, facts: str = "",
+              note: str = "") -> dict:
     """Rolik ssenariysi. AI ishlamasa — tovar ma'lumotidan yig'iladi,
     ya'ni video baribir "bu nima" degan savolga javob beradi."""
     name = (product.get("display_name") or product.get("name") or "").strip()
@@ -1023,7 +1032,7 @@ def ad_script(product: dict, cat: str, tags: list, facts: str = "") -> dict:
             except Exception:
                 shop_text = ""
             raw = ai_engine.chat(
-                _ad_prompt(name, cat, tags, desc, facts) + extra,
+                _ad_prompt(name, cat, tags, desc, facts, note) + extra,
                 system=_AD_SYS + ("\n\n" + shop_text if shop_text else ""),
                 validate=_ad_ok)
             # Javobni QAYSI model yozgani — zanjir holatidan o'qiymiz
@@ -2624,7 +2633,7 @@ async def _process(row: dict, db) -> None:
 
     # 2-bosqich: shu ma'lumot asosida reklama matni
     script = await loop.run_in_executor(
-        None, lambda: ad_script(p, cat, tags, facts))
+        None, lambda: ad_script(p, cat, tags, facts, row.get("note") or ""))
     logger.info("🎬 #%s ssenariy (%s): %s | %s", pid, script.get("source"),
                 script.get("hook"), " · ".join(script.get("bullets") or []))
 

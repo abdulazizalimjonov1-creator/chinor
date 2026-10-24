@@ -530,10 +530,29 @@ def _caption(pair, script) -> str:
     return "\n".join(lines)[:1000]
 
 
-async def produce(db) -> dict:
-    """Juftlik → dialog → ovoz → video → adminga tasdiq (reels_compare oqimi)."""
+async def pair_for(db, pids: list) -> list:
+    """Berilgan ikki tovarni `pick_pair` qaytaradigan shaklga keltiradi."""
+    from bot import api_recommend as R
+    from bot import api_labels
+    idx = await R._index(db)
+    buyers = dict(R._LAST_BUYERS)
+    out = []
+    for pid in list(pids)[:2]:
+        p = idx.items.get(int(pid))
+        if not p:
+            return []
+        info = await db._in_thread(api_labels.public_info, db, p["id"]) or {}
+        out.append({"p": p, "buyers": int(buyers.get(p["id"], 0)), "info": info})
+    return out if len(out) == 2 else []
+
+
+async def produce(db, pids: list = None) -> dict:
+    """Juftlik → dialog → ovoz → video → adminga tasdiq (reels_compare oqimi).
+
+    `pids` berilsa — juftlikni egasi tanlagan (g'oya orqali), aks holda
+    tizim o'zi topadi."""
     from bot import reels as R, reels_compare as C
-    pair = await pick_pair(db)
+    pair = await pair_for(db, pids) if pids else await pick_pair(db)
     if not pair:
         return {"ok": False, "error": "Mos juftlik yo'q (qimmatroq va ko'proq sotilgan arzonrog'i)"}
     loop = asyncio.get_running_loop()

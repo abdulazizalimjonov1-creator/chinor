@@ -1039,6 +1039,54 @@ async def produce(db, guide_id: int = 0) -> dict:
                                        "kartochkasi bor kamida 2 tovar kerak"}
     if len(rows) < 2:
         return {"ok": False, "error": "Taqqoslash uchun fakt kam — tovarlarga yorliq o'qiting"}
+    return await _build(db, topic, rows)
+
+
+async def entry_for(db, pid: int) -> dict:
+    """Bitta tovar → `_pick_pair` qaytaradigan shakl (qo'lda tanlash uchun)."""
+    from bot import api_recommend as R
+    from bot.api_guides import size_kg, _family
+    idx = await R._index(db)
+    p = idx.items.get(int(pid))
+    if not p:
+        return {}
+    info = await _info(db, p["id"])
+    kg = size_kg(p.get("name", ""))
+    return {"p": p, "info": info, "kg": kg,
+            "per": float(p["sell_price"]) / kg if kg > 0 else 0,
+            "buyers": int(_buyers_map().get(p["id"], 0)),
+            "facts": bool(info.get("facts")),
+            "rating": int(info.get("store_rating") or 0),
+            "img": bool(_img_path(p)), "fam": _family(p.get("name", ""))}
+
+
+async def produce_pair(db, pids: list, topic_text: str = "") -> dict:
+    """Egasi O'ZI tanlagan ikki tovarni taqqoslaydi (g'oya orqali).
+
+    `produce` mavzuni o'zi tanlaydi; bu esa berilgan juftlikni oladi —
+    qolgan hamma narsa (qatorlar, ssenariy, ovoz, tasdiq) bir xil."""
+    pair = []
+    for pid in list(pids)[:2]:
+        e = await entry_for(db, pid)
+        if not e:
+            return {"ok": False, "error": f"Tovar topilmadi: {pid}"}
+        pair.append(e)
+    if len(pair) < 2:
+        return {"ok": False, "error": "Taqqoslash uchun ikkita tovar kerak"}
+    rows = build_rows(pair)
+    if len(rows) < 2:
+        return {"ok": False, "error": "Taqqoslash uchun fakt kam — tovarlarga yorliq o'qiting"}
+    nomlar = " yoki ".join(str(e["p"].get("name") or "")[:28] for e in pair)
+    topic = {"guide": None, "pair": pair, "topic": (topic_text or nomlar + "?"),
+             "cid": int(pair[0]["p"].get("category_id") or 0),
+             "store": await store_info(db)}
+    return await _build(db, topic, rows)
+
+
+async def _build(db, topic: dict, rows: list) -> dict:
+    """Mavzu + qatorlar → video → adminga tasdiq uchun."""
+    if "store" not in topic:
+        topic["store"] = await store_info(db)
     pids = ",".join(str(s["p"]["id"]) for s in topic["pair"])
     c = _conn()
     try:
@@ -1048,7 +1096,6 @@ async def produce(db, guide_id: int = 0) -> dict:
     finally:
         c.close()
     loop = asyncio.get_event_loop()
-    topic["store"] = await store_info(db)
     script = await loop.run_in_executor(None, make_script, topic, rows)
     from bot import reels as R
     os.makedirs(R.REELS_DIR, exist_ok=True)
