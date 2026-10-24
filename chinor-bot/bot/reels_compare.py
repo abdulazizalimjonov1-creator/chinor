@@ -1149,6 +1149,9 @@ async def _publish_instagram(db, rid: int, row: dict, caption: str) -> str:
         None, lambda: R.publish_instagram(url, _ig_caption(caption)))
     if mid:
         logger.info("🎬 Taqqoslash videosi Instagram'da: #%s → %s", rid, mid)
+        # Lentaga chiqqan rolik story'da ham ko'rinsin (ig_story_auto)
+        from bot import ig_social
+        await ig_social.maybe_story(db, url)
     else:
         logger.warning("🎬 Taqqoslash videosi Instagram'ga chiqmadi (#%s): %s", rid, err)
     bot = getattr(db, "_bot", None)

@@ -208,6 +208,8 @@ async def main():
     dp.include_router(auth_setup.router)      # 🔑 Mini App login/parol yaratish
     from handlers import reels_compare_admin
     dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
+    from handlers import ig_social_admin
+    dp.include_router(ig_social_admin.router)      # 💬 Instagram izoh/lichka javobi
     dp.include_router(kabinet.router)         # 🧾 mijoz kabineti (/hisobim …)
     dp.include_router(kanal_aniq.router)      # 📢 kanal id sini aniqlash
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq
@@ -277,6 +279,10 @@ async def main():
     from bot import ig_stats
     ig_stats_task = asyncio.create_task(ig_stats.loop())
 
+    # ── Instagram izohlari va lichkasi: yangisi kelsa adminga ──────────
+    from bot import ig_social
+    ig_social_task = asyncio.create_task(ig_social.loop_forever())
+
     # ── Rasm yuklangandan keyingi ish uzilib qolgan bo'lsa — qayta ──────
     from bot import enrich_queue
     enrich_task = asyncio.create_task(enrich_queue.loop())
@@ -312,6 +318,7 @@ async def main():
         notify_task.cancel()
         debt_watch_task.cancel()
         ig_stats_task.cancel()
+        ig_social_task.cancel()
         enrich_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
