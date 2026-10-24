@@ -161,7 +161,27 @@ def _call(method: str, path: str, params: dict) -> tuple:
 
 
 def accounts() -> list:
-    """[(ig_id, token)] — reels.py dagi ro'yxat va token mantiqi bilan bir xil."""
+    """[(ig_id, token)] — ULANGAN BARCHA profillar.
+
+    `reels_ig_only` sozlamasi ataylab hisobga olinmaydi: u rolik QAYSI
+    profilga chiqishini tanlaydi, izoh va lichka esa ikkala profilga ham
+    keladi. 5 mingdan ortiq obunachili @chinors_market ga yozilgan savol
+    javobsiz qolmasligi kerak."""
+    from bot import reels as R
+    out = []
+    uid = R._cfg("IG_USER_ID")
+    if uid and R.ig_token():
+        out.append((uid, R.ig_token()))
+    for n in (2, 3):
+        u = (os.getenv(f"IG{n}_USER_ID") or "").strip()
+        t = (os.getenv(f"IG{n}_ACCESS_TOKEN") or "").strip()
+        if u and t:
+            out.append((u, R.ig_token(u, t)))
+    return out
+
+
+def post_accounts() -> list:
+    """[(ig_id, token)] — rolik/story CHIQADIGAN profillar (reels_ig_only)."""
     from bot import reels as R
     out = []
     for ig_id, base in R.ig_accounts():
@@ -177,7 +197,7 @@ def publish_story(media_url: str, ig_id: str = "", token: str = "",
     """Story qo'yadi → (media_id, xato). Instagram faylni O'ZI yuklab oladi,
     shuning uchun `media_url` ochiq HTTPS bo'lishi shart."""
     if not ig_id or not token:
-        accs = accounts()
+        accs = post_accounts()      # story ham post — tanlangan profilga
         if not accs:
             return "", "Instagram sozlanmagan"
         ig_id, token = accs[0]
