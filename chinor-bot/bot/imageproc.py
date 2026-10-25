@@ -234,8 +234,68 @@ def _mask_sane(a) -> bool:
         return True
 
 
+def _white_cut(im):
+    """Oq studiya fonidagi rasmni kesadi (chekkadan «suv bosish» usuli).
+
+    NEGA KERAK (2026-10-25): EPA katalogidagi burlar rembg orqali o'tganda
+    ingichka metall o'qi butunlay yo'qolib, faqat qora yorliq qolgan edi.
+    Neyron tarmoq ingichka va och rangli qismlarni tashlab yuboradi; oq
+    fonda esa buning hojati yo'q — fonni chekkadan boshlab oqizib topsa
+    bo'ladi va tovarning hamma joyi (uchi ham) saqlanadi.
+
+    Faqat chindan ham oq fonli rasmga ishlaydi: aks holda None qaytaradi
+    va odatdagi rembg ishlatiladi.
+    """
+    try:
+        import numpy as np
+        from PIL import Image, ImageFilter
+    except Exception:
+        return None
+    try:
+        small = im.convert("RGB")
+        k = 420 / max(small.size)
+        if k < 1:
+            small = small.resize((max(1, int(small.width * k)),
+                                  max(1, int(small.height * k))), Image.BILINEAR)
+        a = np.asarray(small).astype(np.int16)
+        mn, mx = a.min(2), a.max(2)
+        white = (mn >= 228) & ((mx - mn) <= 16)
+        if white.mean() < 0.12 or white.mean() > 0.97:
+            return None
+        edge = np.concatenate([white[0], white[-1], white[:, 0], white[:, -1]])
+        if edge.mean() < 0.80:                 # chekkasi oq emas — studiya emas
+            return None
+        bg = np.zeros_like(white)
+        bg[0], bg[-1] = white[0], white[-1]
+        bg[:, 0] |= white[:, 0]
+        bg[:, -1] |= white[:, -1]
+        for _ in range(4000):                  # fonni chekkadan oqizamiz
+            before = int(bg.sum())
+            bg[1:] |= bg[:-1] & white[1:]
+            bg[:-1] |= bg[1:] & white[:-1]
+            bg[:, 1:] |= bg[:, :-1] & white[:, 1:]
+            bg[:, :-1] |= bg[:, 1:] & white[:, :-1]
+            if int(bg.sum()) == before:
+                break
+        obj = ~bg
+        if obj.mean() < 0.02 or obj.mean() > 0.9:
+            return None
+        m = Image.fromarray((obj * 255).astype("uint8"), "L")
+        m = m.resize(im.size, Image.BILINEAR).filter(ImageFilter.GaussianBlur(1.1))
+        m = m.point(lambda v: 0 if v < 110 else (255 if v > 190 else int((v - 110) * 255 / 80)))
+        out = im.convert("RGBA")
+        out.putalpha(m)
+        return out
+    except Exception as e:
+        logger.warning("🖼 Oq fon kesilmadi: %s", e)
+        return None
+
+
 def cutout(im):
     """PIL Image → foni kesilgan RGBA. Kesib bo'lmasa None."""
+    w = _white_cut(im)                         # oq studiya foni — aniqroq
+    if w is not None:
+        return w
     sess = _get_session()
     if sess is None:
         return None
@@ -608,7 +668,7 @@ def compose(im, cut=None, canvas: int = CANVAS, tags=None):
 # ─── Asosiy funksiya ───────────────────────────────────────────────────────
 
 def brand(raw: bytes, canvas: int = CANVAS, tags=None,
-          category: str = "", scene: bool = True) -> tuple:
+          category: str = "", scene: bool = True, scene_name: str = "") -> tuple:
     """Asl rasm baytlari → (brend rasm JPEG baytlari, ma'lumot dict).
 
     `tags` — "qayerda ishlatiladi" so'zlari (2-3 ta): rasm pastidagi lentaga
@@ -637,7 +697,14 @@ def brand(raw: bytes, canvas: int = CANVAS, tags=None,
         # Fon kesilgan bo'lsa — tovarni HAQIQIY sahnaga qo'yamiz.
         # Kesilmagan rasmni sahnaga qo'yib bo'lmaydi (to'rtburchak bo'lib
         # yopishib qoladi), u holda eski yashil fon ishlatiladi.
-        sfile = scene_path(tags, category) if (scene and cut is not None) else ""
+        sfile = ""
+        if scene and cut is not None:
+            # `scene_name` — chaqiruvchi tanlagan sahna (teg qo'shmasdan).
+            if scene_name:
+                cand = os.path.join(SCENES_DIR, f"{scene_name}.jpg")
+                sfile = cand if os.path.isfile(cand) else ""
+            if not sfile:
+                sfile = scene_path(tags, category)
         if sfile:
             box = cut.getchannel("A").getbbox()
             obj = cut.crop(box) if box else cut
@@ -657,11 +724,12 @@ def brand(raw: bytes, canvas: int = CANVAS, tags=None,
 
 
 def brand_file(src_path: str, dst_path: str, canvas: int = CANVAS,
-               tags=None, category: str = "", scene: bool = True) -> dict:
+               tags=None, category: str = "", scene: bool = True,
+               scene_name: str = "") -> dict:
     """Fayldan faylga — to'plamli qayta ishlash skriptlari uchun."""
     with open(src_path, "rb") as f:
         raw = f.read()
-    data, info = brand(raw, canvas, tags, category, scene)
+    data, info = brand(raw, canvas, tags, category, scene, scene_name)
     if not info["ok"]:
         return info
     with open(dst_path, "wb") as f:
@@ -677,7 +745,7 @@ def brand_file(src_path: str, dst_path: str, canvas: int = CANVAS,
 
 def brand_file_isolated(src_path: str, dst_path: str, tags=None,
                         category: str = "", model: str = "",
-                        timeout: int = 240) -> dict:
+                        timeout: int = 240, scene_name: str = "") -> dict:
     """`brand_file` ni alohida jarayonda bajaradi. Natija: o'sha dict."""
     import json as _json
     import subprocess
@@ -685,6 +753,8 @@ def brand_file_isolated(src_path: str, dst_path: str, tags=None,
 
     args = [sys.executable, "-m", "bot.imageproc", src_path, dst_path,
             "--tags", ",".join(tags or []), "--category", category or ""]
+    if scene_name:
+        args += ["--scene", scene_name]
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _run(mdl: str) -> dict:
@@ -720,10 +790,11 @@ def _cli(argv=None) -> int:
     ap.add_argument("--tags", default="")
     ap.add_argument("--category", default="")
     ap.add_argument("--no-scene", action="store_true")
+    ap.add_argument("--scene", default="", help="sahna fayli nomi (teg qo'shmasdan)")
     a = ap.parse_args(argv)
     tags = [t.strip() for t in a.tags.split(",") if t.strip()]
     info = brand_file(a.src, a.dst, tags=tags, category=a.category,
-                      scene=not a.no_scene)
+                      scene=not a.no_scene, scene_name=a.scene)
     print(_json.dumps(info))
     return 0 if info.get("ok") else 1
 
