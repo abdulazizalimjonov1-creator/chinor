@@ -1190,12 +1190,32 @@ def cleanup(keep_videos: int = 30, label_days: int = 21) -> int:
     return gone
 
 
-async def daily_loop(hour: int = None):
-    """Belgilangan soatlarda taqqoslash videosi tayyorlab adminga yuboradi.
+async def _produce_best(db) -> dict:
+    """Kunlik rolik — FAQAT gapiradigan tovarlar.
 
-    2026-10-23 dan KUNIGA BIR NECHTA: o'lchov ko'rsatdiki, do'kon
-    uchun ishlaydigan yagona ko'rinish shu — mahsulot reklamasi
-    roliklari 15-108 ko'rish olgan, taqqoslash esa 1486 (32 ulashish).
+    2026-10-25, do'kon egasining qarori: statik taqqoslashni butunlay
+    olib tashlash. O'lchov: statik roliklar Instagram'da 4-110 ko'rish
+    olgan, gapiradigan tovarlar esa 1531 ko'rish va 32 ulashish.
+
+    Juftlik topilmasa (o'z surati bor tovarlar tugasa) o'sha kuni rolik
+    chiqmaydi — ishlamaydigan ko'rinishni chiqargandan ko'ra chiqarmagan
+    afzal. Statik `produce()` olib tashlanmadi, lekin endi faqat
+    qo'llanma orqali (api_guides) QO'LDA chaqiriladi.
+    """
+    from bot import reels_talk
+    try:
+        return await reels_talk.produce(db)
+    except Exception:
+        logger.exception("🗣 Gapiradigan tovarlar")
+        return {"ok": False, "error": "ichki xato"}
+
+
+async def daily_loop(hour: int = None):
+    """Belgilangan soatlarda kunlik rolik tayyorlab adminga yuboradi.
+
+    2026-10-23 dan KUNIGA BIR NECHTA. 2026-10-25 dan esa ko'rinish
+    bitta — GAPIRADIGAN TOVARLAR (`_produce_best`): o'lchov bo'yicha
+    statik taqqoslash 4-110 ko'rish olgan, gapiradiganlari 1531.
     Soatlar `REELS_COMPARE_HOURS` bilan beriladi (sukut 10 va 17).
     Har soat uchun alohida belgi qo'yiladi, shuning uchun bot qayta
     ishga tushsa ham bir soatda ikki marta yasalmaydi.
@@ -1217,8 +1237,8 @@ async def daily_loop(hour: int = None):
                     key = "reels_compare_day_%d" % h
                     if now.tm_hour >= h and _db.get_setting(key, "") != today:
                         _db.set_setting(key, today)
-                        res = await produce(_db)
-                        logger.info("🎬 Taqqoslash videosi (%s:00): %s", h, res)
+                        res = await _produce_best(_db)
+                        logger.info("🎬 Kunlik rolik (%s:00): %s", h, res)
                         n = await asyncio.get_event_loop().run_in_executor(
                             None, cleanup)
                         if n:

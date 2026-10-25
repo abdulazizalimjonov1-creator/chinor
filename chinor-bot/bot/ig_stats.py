@@ -78,20 +78,27 @@ def _get(path: str, token: str, **params) -> dict:
 def _kind(caption: str) -> str:
     """Rolik turi.
 
-    DIQQAT: profilda BIZDAN OLDINGI, odam yasagan roliklar ham bor va
+    DIQQAT 1: profilda BIZDAN OLDINGI, odam yasagan roliklar ham bor va
     ular million ko'rish olgan. Ularni bizning roliklar bilan bitta
     o'rtachaga qo'shib yuborsa, hisobot ma'nosiz bo'ladi — shuning
     uchun avval «bizniki»ni ajratamiz: bizning har bir matnda do'kon
     izohi (hashtag yoki manzil) bo'ladi.
+
+    DIQQAT 2 (2026-10-25 da tuzatildi): matn avval 300 belgida kesilardi,
+    uzunroq matnlarda esa hashtag aynan shu chegaradan keyin qolib,
+    O'ZIMIZNING roliklar «eski» deb belgilanardi va eski viral rolik
+    bilan bitta o'rtachaga tushardi. Endi 1000 belgi saqlanadi.
     """
     c = (caption or "").strip()
     low = c.lower()
     bizniki = ("#chinor" in low or "sergeli" in low or "t.me/" in low)
     if not bizniki:
         return "eski"                      # profilning o'z, odam yasagan posti
-    if c.startswith("🌳"):
+    if c.startswith("\U0001f333"):
         return "mahsulot"
-    if "qaysi" in low or "tanlagan" in low:
+    if "marta olishdi" in low:             # gapiradigan tovarlar matni
+        return "gapiruvchi"
+    if "\u279c" in c or "qaysi" in low or "tanlagan" in low:
         return "taqqoslash"
     return "boshqa"
 
@@ -128,7 +135,7 @@ def collect() -> dict:
                         v[d["name"]] = int(d["values"][0]["value"])
                     except Exception:
                         pass
-                cap = (m.get("caption") or "")[:300]
+                cap = (m.get("caption") or "")[:1000]
                 c.execute(
                     """INSERT INTO reels_stats
                        (media_id, ig_user, kind, caption, permalink, posted_at,
