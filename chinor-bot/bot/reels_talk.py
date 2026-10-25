@@ -84,6 +84,39 @@ def real_photo(p: dict) -> str:
     return path if os.path.basename(path).startswith("prod_") else ""
 
 
+_SIG_CACHE = {}
+
+
+def photo_sig(p: dict) -> str:
+    """Rasm MAZMUNI bo'yicha barmoq izi.
+
+    Yo'lni solishtirish yetmaydi: EPA katalogidan olingan rasmlar bir
+    nechta variantga (masalan ENCH-81 va ENCH-220 kalit to'plamlari)
+    aynan bir xil fayl bo'lib tushadi, nomi esa har tovarda boshqacha.
+    Bir xil rasmli ikki tovar rolikda bitta qahramondek ko'rinadi.
+    """
+    path = real_photo(p)
+    if not path:
+        return ""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (path, st.st_mtime_ns, st.st_size)
+    sig = _SIG_CACHE.get(key)
+    if sig is None:
+        import hashlib
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        sig = h.hexdigest()
+        if len(_SIG_CACHE) > 4000:
+            _SIG_CACHE.clear()
+        _SIG_CACHE[key] = sig
+    return sig
+
+
 def short_name(p: dict) -> str:
     nm = (p.get("display_name") or "").strip() or p.get("name", "")
     words = re.sub(r"[^\w' -]", " ", nm).split()
@@ -140,7 +173,7 @@ async def pick_pair(db) -> list:
                     continue
                 na = (a.get("display_name") or a["name"]).strip().lower()
                 nb = (b.get("display_name") or b["name"]).strip().lower()
-                if na == nb or real_photo(a) == real_photo(b):
+                if na == nb or photo_sig(a) == photo_sig(b):
                     continue
                 ta, tb = idx.toks.get(a["id"], set()), idx.toks.get(b["id"], set())
                 kin = len(ta & tb) / max(1, len(ta | tb))
