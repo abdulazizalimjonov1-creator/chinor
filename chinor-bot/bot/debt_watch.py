@@ -25,6 +25,8 @@ import logging
 import os
 import sys
 
+from bot.config import CONTACT_PHONE_1
+
 logger = logging.getLogger(__name__)
 
 INTERVAL = int(os.getenv("DEBT_WATCH_MINUTES", "7")) * 60
@@ -56,6 +58,11 @@ def _mk():
 
 def _pul(v) -> str:
     return f"{round(float(v or 0)):,}".replace(",", " ")
+
+
+async def _ish(fn, *a):
+    """Bazaga yozadigan ishni alohida ipda bajaramiz — bot qotmasin."""
+    return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
 
 
 def _tovarlar(conn, msg_id: int) -> list:
@@ -152,12 +159,15 @@ def collect() -> list:
         # Joriy qarz, mijozning chat'i va chek tarkibi — xabar matni uchun.
         for e in out:
             row = c.execute(
-                "SELECT chat_id, remind_open FROM debt_clients WHERE name = ?",
-                (e["mijoz"],)).fetchone()
+                "SELECT chat_id, remind_open, phone, phone2 FROM debt_clients "
+                "WHERE name = ?", (e["mijoz"],)).fetchone()
             if e["qoldiq"] is None:
                 e["qoldiq"] = D.debt(c, e["mijoz"])
             e["chat_id"] = (row["chat_id"] if row else "") or ""
             e["ochiq"] = (int(row["remind_open"]) if row else 1) == 1
+            # Botda bo'lmagan mijozga shaxsiy akkauntdan yozish uchun.
+            e["telefon"] = (((row["phone"] if row else "") or "")
+                            or ((row["phone2"] if row else "") or ""))
             e["tovarlar"] = (_tovarlar(c, e["msg_id"])
                              if e["tur"] == "qarz" else [])
 
@@ -210,6 +220,71 @@ def _mijoz_matni(e: dict) -> str:
     return matn if len(matn) <= 4000 else matn[:3900] + "\n…"
 
 
+def _userbot_matni(e: dict, bot_nomi: str = "") -> str:
+    """Botda BO'LMAGAN mijozga shaxsiy akkauntdan yoziladigan matn.
+
+    Bot HTML ishlatadi, userbot esa oddiy matn — Telethon teglarni
+    ko'rsatib qo'yadi, shuning uchun bu matn alohida yoziladi.
+
+    Oxirida bot YUMSHOQ taklif qilinadi: ko'p odam qarzini telefon
+    qilib so'raydi, botda esa o'zi ko'ra oladi.
+    """
+    qoldiq = float(e.get("qoldiq") or 0)
+    usul = (e.get("izoh") or "").strip()
+    satrlar = ["Assalomu alaykum! Chinor do'konidan xabar.", "",
+               f"✅ To'lovingiz qabul qilindi: {_pul(e['summa'])} so'm"
+               + (f" ({usul})" if usul else "")]
+    if qoldiq > 0:
+        satrlar.append(f"📕 Qoldiq qarzingiz: {_pul(qoldiq)} so'm")
+    else:
+        satrlar.append("🟢 Qarzingiz to'liq yopildi. Rahmat!")
+    satrlar.append("")
+    if bot_nomi:
+        satrlar.append(
+            f"Xohlasangiz, xaridlaringiz va qarz daftaringizni botimizdan "
+            f"o'zingiz ko'rib turishingiz mumkin: t.me/{bot_nomi} — "
+            f"«Start» bosib raqamingizni tasdiqlasangiz bo'ldi.")
+    else:
+        satrlar.append("Xohlasangiz, xaridlaringiz va qarzingizni "
+                       "botimizdan o'zingiz ko'rib turishingiz mumkin.")
+    satrlar += ["", f"Savol bo'lsa: {CONTACT_PHONE_1}"]
+    return "\n".join(satrlar)
+
+
+def _userbot_navbatga(e: dict, bot_nomi: str) -> bool:
+    """To'lov xabarini userbot navbatiga qo'yadi (sinxron — executor'da).
+
+    NEGA NAVBAT. Shaxsiy akkauntdan ketma-ket yozish Telegram
+    spam-qo'riqchisini uyg'otadi (PEER_FLOOD), shuning uchun xabar
+    `marketplace/tg_notify.py` navbatiga tushadi: u bittalab, tanaffus
+    va kunlik chegara bilan yuboradi (`bot/notify_worker.py` har 5
+    daqiqada navbatni bo'shatib turadi).
+    """
+    try:
+        _D, MarketplaceDB = _mk()
+        from marketplace import tg_notify as N
+
+        with MarketplaceDB() as mdb:
+            return bool(N.enqueue(mdb, e["mijoz"], e["telefon"],
+                                  _userbot_matni(e, bot_nomi),
+                                  kind="payment", author="auto"))
+    except Exception as ex:
+        logger.info("💳 Userbot navbatiga qo'shilmadi (%s): %s",
+                    e["mijoz"], ex)
+        return False
+
+
+def _userbot_yoqilgan() -> bool:
+    """`debt_userbot=0` — botda bo'lmagan mijozga yozish o'chiriladi."""
+    try:
+        from database.channel_db import db
+
+        return str(db.get_setting("debt_userbot", "1")).strip() \
+            not in ("0", "", "yo'q")
+    except Exception:
+        return True
+
+
 def _admin_matni(e: dict) -> str:
     if e["tur"] == "tolov":
         return (f"💵 <b>To'lov</b> — {e['mijoz']}\n"
@@ -248,7 +323,14 @@ async def run_once(bot) -> int:
         pass
     adminlar.discard(0)
 
-    yuborildi = 0
+    # Botda bo'lmagan mijozga shaxsiy akkauntdan yozish uchun.
+    userbot_ochiq = _userbot_yoqilgan()
+    try:
+        bot_nomi = (db.bot_username or "").lstrip("@")
+    except Exception:
+        bot_nomi = ""
+
+    yuborildi = navbatga = 0
     for e in events:
         # Mijozga — faqat botda bo'lsa va xabarni o'chirmagan bo'lsa.
         # YUBORISH `tg_out` ORQALI: mijozlarning ko'pi @cheklars_bot ga
@@ -262,6 +344,15 @@ async def run_once(bot) -> int:
             else:
                 logger.info("💳 Mijozga yetib bormadi (%s): %s",
                             e["mijoz"], tg_out.last_error())
+        elif (e["ochiq"] and e.get("telefon") and e["tur"] == "tolov"
+                and userbot_ochiq):
+            # BOTDA YO'Q MIJOZ. Bot unga yoza olmaydi (Telegram faqat
+            # /start bosganga ruxsat beradi), lekin raqami bor — shuning
+            # uchun to'lov xabari SHAXSIY akkaunt navbatiga tushadi.
+            # Faqat TO'LOV: odam pulini bergandan keyin «yetib bordimi?»
+            # deb qo'ng'iroq qiladi; qolgani so'ralmagan xabar bo'lardi.
+            if await _ish(_userbot_navbatga, e, bot_nomi):
+                navbatga += 1
         for chat in adminlar:
             try:
                 await bot.send_message(chat, _admin_matni(e), parse_mode="HTML")
@@ -269,7 +360,9 @@ async def run_once(bot) -> int:
             except Exception:
                 pass
         await asyncio.sleep(0.6)      # Telegram tezlik cheklovi
-    logger.info("💳 Qarz harakati: %s hodisa, %s xabar", len(events), yuborildi)
+    logger.info("💳 Qarz harakati: %s hodisa, %s xabar%s", len(events),
+                yuborildi,
+                f", {navbatga} ta userbot navbatida" if navbatga else "")
     return yuborildi
 
 
