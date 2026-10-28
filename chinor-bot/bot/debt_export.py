@@ -113,9 +113,11 @@ def receipts_xlsx(rows, title: str, path: str = "") -> str:
     return path
 
 
-def ledger_png(name: str, rows, debt_now: float, path: str = "",
-               limit: int = 40) -> str:
-    """Hisob-kitobni RASM qilib chizadi (telefon uchun).
+def _ledger_canvas(name: str, rows, debt_now: float, limit: int = 40):
+    """Hisob-kitob rasmini chizadi → (rasm, kesish mumkin y nuqtalari).
+
+    Rasmni PDF qilish uchun qatorlarni YARMIDAN kesmaslik kerak —
+    shuning uchun har qator oxiridagi y qaytariladi.
 
     NEGA KERAK: Android telefonlarda .xlsx ni ochadigan dastur ko'pincha
     yo'q — fayl «PDF» deb ko'rsatiladi yoki umuman ochilmaydi. Rasm esa
@@ -141,6 +143,7 @@ def ledger_png(name: str, rows, debt_now: float, path: str = "",
 
     im = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(im)
+    breaks = []
 
     f_big = _fnt(44, True)
     f_h = _fnt(26, True)
@@ -177,6 +180,7 @@ def ledger_png(name: str, rows, debt_now: float, path: str = "",
         d.text((W - pad - d.textlength(bal, font=f_s), y + 34), bal,
                font=f_s, fill=KUL)
         y += row_h
+        breaks.append(y)
 
     d.rectangle([0, H - foot_h, W, H], fill=OCH)
     d.text((pad, H - foot_h + 18),
@@ -185,7 +189,13 @@ def ledger_png(name: str, rows, debt_now: float, path: str = "",
     d.text((pad, H - foot_h + 48),
            "Sergeli, Chinor bekati yoni · har kuni 8:00–22:00",
            font=f_s, fill=KUL)
+    return im, breaks
 
+
+def ledger_png(name: str, rows, debt_now: float, path: str = "",
+               limit: int = 40) -> str:
+    """Hisob-kitob — bitta uzun rasm (telefon uchun eng qulayi)."""
+    im, _breaks = _ledger_canvas(name, rows, debt_now, limit)
     if not path:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = os.path.join(_OUT_DIR, f"hisob-{_safe(name)}-{stamp}.png")
@@ -193,8 +203,18 @@ def ledger_png(name: str, rows, debt_now: float, path: str = "",
     return path
 
 
-def receipts_png(title: str, recs, path: str = "") -> str:
-    """Bir nechta chekni BITTA rasmga chizadi (tovarlari bilan).
+def ledger_pdf(name: str, rows, debt_now: float, path: str = "",
+               limit: int = 120) -> str:
+    """Hisob-kitob — PDF (A4 sahifalarga bo'lingan)."""
+    im, breaks = _ledger_canvas(name, rows, debt_now, limit)
+    if not path:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(_OUT_DIR, f"hisob-{_safe(name)}-{stamp}.pdf")
+    return _save_pdf(im, breaks, path)
+
+
+def _receipts_canvas(title: str, recs):
+    """Cheklar rasmini chizadi → (rasm, kesish mumkin y nuqtalari).
 
     Mijoz «2-3 chekni yuboring» desa, har biriga alohida fayl yuborish
     noqulay: telefonda ularni yonma-yon ko'rib bo'lmaydi. Shuning uchun
@@ -217,6 +237,7 @@ def receipts_png(title: str, recs, path: str = "") -> str:
 
     im = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(im)
+    breaks = []
     f_big, f_h, f, f_s = _fnt(44, True), _fnt(26, True), _fnt(24), _fnt(20)
 
     d.rectangle([0, 0, W, head_h], fill=YASHIL)
@@ -260,6 +281,8 @@ def receipts_png(title: str, recs, path: str = "") -> str:
             q = f"qarzga {round(float(r['debt'])):,}".replace(",", " ")
             d.text((pad + 14, y + 30), q, font=f_s, fill=QIZIL)
         y += jami_h
+        # Chekning oxiri — PDF sahifasini shu yerda kesish mumkin.
+        breaks.append(y)
 
     d.rectangle([0, H - foot_h, W, H], fill=OCH)
     jt = f"HAMMASI: {round(jami_hammasi):,}".replace(",", " ") + " so'm"
@@ -267,12 +290,88 @@ def receipts_png(title: str, recs, path: str = "") -> str:
     d.text((pad, H - foot_h + 46),
            "Sergeli, Chinor bekati yoni · har kuni 8:00–22:00",
            font=f_s, fill=KUL)
+    return im, breaks
 
+
+def receipts_png(title: str, recs, path: str = "") -> str:
+    """Tanlangan cheklar — bitta uzun rasm."""
+    im, _breaks = _receipts_canvas(title, recs)
     if not path:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = os.path.join(_OUT_DIR, f"cheklar-{_safe(title)}-{stamp}.png")
     im.save(path, "PNG")
     return path
+
+
+def receipts_pdf(title: str, recs, path: str = "") -> str:
+    """Tanlangan cheklar — PDF (chop etishga va arxivga qulay).
+
+    NEGA PDF HAM KERAK. Rasmni telefon darrov ko'rsatadi, lekin uni
+    chop etish yoki hujjatga ilova qilish noqulay; Excel esa Android'da
+    ko'pincha umuman ochilmaydi. PDF ikkalasining o'rtasi: har qanday
+    qurilmada ochiladi va chop etilsa chek ko'rinishini saqlaydi.
+    """
+    im, breaks = _receipts_canvas(title, recs)
+    if not path:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(_OUT_DIR, f"cheklar-{_safe(title)}-{stamp}.pdf")
+    return _save_pdf(im, breaks, path)
+
+
+def photo_yaroqli(path: str) -> bool:
+    """Shu rasmni Telegram «photo» sifatida qabul qiladimi?
+
+    Telegram photo uchun chegara qo'yadi: tomonlar yig'indisi 10000 px dan
+    va fayl 10 MB dan oshmasligi kerak. 30 ta chek chizilgan rasm esa
+    osongina 12 000 px bo'lib ketadi — o'shanda `sendPhoto` «PHOTO_INVALID
+    _DIMENSIONS» deb rad etadi va mijozga HECH NARSA bormaydi. Shuning
+    uchun chaqiruvchi avval shuni so'raydi: yaroqsiz bo'lsa HUJJAT qilib
+    yuboradi (sifati ham saqlanadi).
+    """
+    try:
+        from PIL import Image
+
+        if os.path.getsize(path) > 9 * 1024 * 1024:
+            return False
+        with Image.open(path) as im:
+            w, h = im.size
+        return (w + h) <= 9000 and h <= 8000
+    except Exception:
+        return True
+
+
+# ── Uzun rasmni A4 sahifalarga bo'lish ──────────────────────────────────────
+# Rasm bitta ustun bo'lib cho'ziladi (eni 1000 px). A4 ning eni 210 mm,
+# bo'yi 297 mm — demak 1000 px eni uchun bir sahifa ≈ 1414 px bo'ladi.
+# Kesish joyi QATOR OXIRIGA to'g'rilanadi: aks holda chek nomi yoki
+# summasi ikki sahifaga bo'linib ketardi.
+
+_PAGE_H = 1414
+
+
+def _save_pdf(im, breaks, path: str) -> str:
+    pages = _paginate(im, breaks)
+    first, rest = pages[0], pages[1:]
+    first.save(path, "PDF", resolution=120.0, save_all=bool(rest),
+               append_images=rest)
+    return path
+
+
+def _paginate(im, breaks, page_h: int = _PAGE_H):
+    from PIL import Image
+
+    W, H = im.size
+    nuqta = sorted({int(b) for b in (breaks or []) if 0 < int(b) < H}) + [H]
+    sahifalar, tep = [], 0
+    while tep < H:
+        mumkin = [b for b in nuqta if tep < b <= tep + page_h]
+        past = max(mumkin) if mumkin else min(H, tep + page_h)
+        bolak = im.crop((0, tep, W, past))
+        sahifa = Image.new("RGB", (W, page_h), (255, 255, 255))
+        sahifa.paste(bolak, (0, 0))
+        sahifalar.append(sahifa)
+        tep = past
+    return sahifalar or [im]
 
 
 def _fnt(size: int, bold: bool = False):

@@ -146,7 +146,7 @@ def _mijoz_matni(e: dict) -> str:
     return (f"🤝 <b>Yangi xarid qarzga yozildi</b>\n\n"
             f"🧾 Summa: <b>{_pul(e['summa'])}</b> so'm\n"
             f"📕 Jami qarz: <b>{_pul(e['qoldiq'])}</b> so'm\n\n"
-            f"Batafsil: /hisobim")
+            f"Batafsil — «🛒 Do'kon va hisobim» tugmasi yoki /hisobim")
 
 
 def _admin_matni(e: dict) -> str:
@@ -190,13 +190,16 @@ async def run_once(bot) -> int:
     yuborildi = 0
     for e in events:
         # Mijozga — faqat botda bo'lsa va xabarni o'chirmagan bo'lsa.
+        # YUBORISH `tg_out` ORQALI: mijozlarning ko'pi @cheklars_bot ga
+        # /start bosgan, asosiy bot ularga yoza olmaydi (403) va xabar
+        # JIM yo'qolardi. `tg_out` ikkala tokenni ham sinaydi.
         if e["chat_id"] and e["ochiq"]:
-            try:
-                await bot.send_message(e["chat_id"], _mijoz_matni(e),
-                                       parse_mode="HTML")
+            from bot import tg_out
+
+            if await tg_out.send_text(e["chat_id"], _mijoz_matni(e)):
                 yuborildi += 1
-            except Exception as ex:
-                logger.info("💳 Mijozga yuborilmadi (%s): %s", e["mijoz"], ex)
+            else:
+                logger.info("💳 Mijozga yetib bormadi: %s", e["mijoz"])
         for chat in adminlar:
             try:
                 await bot.send_message(chat, _admin_matni(e), parse_mode="HTML")

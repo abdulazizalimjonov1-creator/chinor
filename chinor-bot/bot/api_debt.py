@@ -289,7 +289,7 @@ async def api_debt_clients(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
     if err is not None:
         return err
 
@@ -318,7 +318,7 @@ async def api_debt_client(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
     if err is not None:
         return err
 
@@ -363,7 +363,7 @@ async def api_debt_receipts(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
     if err is not None:
         return err
 
@@ -391,7 +391,7 @@ async def api_debt_client_save(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err, _read_json
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_add")
     if err is not None:
         return err
 
@@ -435,7 +435,7 @@ async def api_debt_move(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err, _read_json
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_pay")
     if err is not None:
         return err
 
@@ -623,26 +623,14 @@ async def api_debt_excel(request: web.Request):
 async def _tg_send(chat_id: str, text: str) -> bool:
     """Botdan mijozga xabar. Xato bo'lsa `False` — chaqiruvchi sanab boradi.
 
-    Bu yerda `aiogram` Bot nusxasi ishlatilmaydi: web API alohida jarayon
-    sifatida ham ishlaydi, o'sha paytda bot nusxasi bo'lmaydi. HTTP chaqiruv
-    har ikkala holatda ishlaydi.
+    Yuborish `bot/tg_out.py` orqali ketadi: mijoz asosiy botda ham,
+    «Cheklar boti»da (@cheklars_bot) ham bo'lishi mumkin, shuning uchun
+    ikkala token sinaladi. Ilgari faqat asosiy token ishlatilardi va
+    kassadan kelgan mijozlarga xabar JIM yo'qolardi.
     """
-    import aiohttp
+    from bot import tg_out
 
-    from bot.config import BOT_TOKEN
-
-    if not BOT_TOKEN or not chat_id:
-        return False
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML",
-               "disable_web_page_preview": True}
-    try:
-        timeout = aiohttp.ClientTimeout(total=25)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post(url, json=payload) as resp:
-                return resp.status == 200
-    except Exception:
-        return False
+    return await tg_out.send_text(chat_id, text)
 
 
 def _receipt_text(rec: dict) -> str:
@@ -678,7 +666,7 @@ async def api_debt_send(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err, _read_json
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
     if err is not None:
         return err
 
@@ -732,7 +720,7 @@ async def api_debt_remind(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err, _read_json
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_pay")
     if err is not None:
         return err
 
@@ -819,7 +807,7 @@ async def api_debt_remind_bulk(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin, _err, _read_json
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_pay")
     if err is not None:
         return err
 
@@ -896,7 +884,7 @@ async def api_debt_notify_status(request: web.Request):
     from database.channel_db import db as _db_pos
     from bot.web_api import _need_admin
 
-    auth, err = await _need_admin(request, _db_pos, "clients")
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
     if err is not None:
         return err
 
@@ -913,6 +901,166 @@ async def api_debt_notify_status(request: web.Request):
                    "status": r["status"], "error": r["error"] or "",
                    "at": r["sent_at"] or r["created_at"]} for r in rows],
     })
+
+
+# ─── Fayl yetkazish: Telegramga, brauzerdan chiqmasdan ──────────────────────
+# ILGARI QANDAY EDI. Mini App'dagi «Excel» va «Rasm» tugmalari havolani
+# BRAUZERDA ochardi: Telegram ilovasidan chiqib ketiladi, fayl «Downloads»
+# ga tushadi va uni mijozga yuborish uchun yana qidirish kerak bo'lardi.
+# ENDI: fayl shu yerda yasaladi va to'g'ridan-to'g'ri Telegramga yuboriladi —
+# o'ziga (`to=me`) yoki mijozga (`to=client`).
+
+_FMT = ("pdf", "png", "xlsx")
+
+
+def _build_file(conn, name: str, ids, kind: str, fmt: str):
+    """(yo'l, as_photo) — so'ralgan shakldagi fayl."""
+    from bot import debt_export
+
+    D = _debt()
+    if kind == "ledger":
+        rows = D.ledger(conn, name)
+        qarz = D.debt(conn, name)
+        if fmt == "pdf":
+            return debt_export.ledger_pdf(name, rows, qarz), False
+        if fmt == "png":
+            return debt_export.ledger_png(name, rows, qarz), True
+        return debt_export.ledger_xlsx(name, rows, qarz), False
+
+    recs = _collect(conn, [name], ids)
+    if not recs:
+        return "", False
+    if fmt == "pdf":
+        return debt_export.receipts_pdf(name, recs), False
+    if fmt == "png":
+        return debt_export.receipts_png(name, recs), True
+    return debt_export.receipts_xlsx(recs, name), False
+
+
+@DEBT_ROUTES.post("/api/debt/deliver")
+async def api_debt_deliver(request: web.Request):
+    """Admin: cheklarni/daftarni PDF, rasm yoki Excel qilib Telegramga yuboradi.
+
+    Body: {name, ids[], kind: receipts|ledger, fmt: pdf|png|xlsx, to: me|client}
+    """
+    from database.channel_db import db as _db_pos
+    from bot import tg_out
+    from bot.web_api import _need_admin, _err, _read_json
+
+    auth, err = await _need_admin(request, _db_pos, "clients_view")
+    if err is not None:
+        return err
+
+    body = await _read_json(request)
+    name = (body.get("name") or "").strip()
+    kind = (body.get("kind") or "receipts").strip().lower()
+    fmt = (body.get("fmt") or "pdf").strip().lower()
+    to = (body.get("to") or "me").strip().lower()
+    ids = [int(x) for x in (body.get("ids") or [])
+           if str(x).lstrip("-").isdigit()]
+    if not name:
+        return _err("Mijoz tanlanmadi")
+    if fmt not in _FMT:
+        return _err("Fayl turi noto'g'ri")
+    if kind not in ("receipts", "ledger"):
+        return _err("Hisobot turi noto'g'ri")
+    if len(ids) > 60:
+        return _err("Bir martada 60 tagacha chek")
+
+    D = _debt()
+    with _mdb() as mdb:
+        D.ensure_schema(mdb.conn)
+        row = mdb.conn.execute(
+            "SELECT chat_id FROM debt_clients WHERE name = ?", (name,)).fetchone()
+        chat_id = (row["chat_id"] if row else "") or ""
+        qarz = round(D.debt(mdb.conn, name))
+        path, as_photo = _build_file(mdb.conn, name, ids, kind, fmt)
+
+    if not path:
+        return _err("Chek topilmadi")
+
+    if to == "client":
+        if not chat_id:
+            return _err("Mijoz botda ro'yxatdan o'tmagan — unga yozib bo'lmaydi")
+        nishon = chat_id
+        caption = ("🧾 <b>Chinor</b> — xaridlaringiz" if kind == "receipts"
+                   else "💰 <b>Chinor</b> — hisob-kitob daftaringiz")
+        if ids and kind == "receipts":
+            caption += f"\n{len(ids)} ta chek"
+        if qarz > 0:
+            caption += f"\n📕 Joriy qarz: <b>{qarz:,}</b> so'm".replace(",", " ")
+    else:
+        nishon = auth["tg_id"]
+        caption = f"📎 <b>{name}</b> · " + ("cheklar" if kind == "receipts"
+                                            else "hisob-kitob")
+
+    ok = await tg_out.send_file(nishon, path, caption=caption,
+                                as_photo=as_photo)
+    if not ok:
+        return _err("Telegramga yuborilmadi — botga /start bosilganini tekshiring")
+    return web.json_response({"ok": True, "to": to, "fmt": fmt,
+                              "chat_id": str(nishon)})
+
+
+@DEBT_ROUTES.post("/api/my/deliver")
+async def api_my_deliver(request: web.Request):
+    """Mijoz: o'z chekini/daftarini Telegramga fayl qilib oladi.
+
+    Brauzerga chiqish shart emas — fayl shu suhbatga keladi.
+    Body: {kind: receipts|ledger, fmt: pdf|png|xlsx, count?}
+    """
+    from bot import debt_export, tg_out
+    from bot.web_api import _err, _read_json
+
+    auth, names, err = await _identity(request)
+    if err is not None:
+        return err
+    if not names:
+        return _err("Hisobingiz hali bog'lanmagan", 404)
+
+    body = await _read_json(request)
+    kind = (body.get("kind") or "receipts").strip().lower()
+    fmt = (body.get("fmt") or "pdf").strip().lower()
+    try:
+        count = max(0, min(60, int(body.get("count") or 0)))
+    except (TypeError, ValueError):
+        count = 0
+    if fmt not in _FMT:
+        return _err("Fayl turi noto'g'ri")
+
+    D = _debt()
+    as_photo = False
+    with _mdb() as mdb:
+        if kind == "ledger":
+            rows, jami = [], 0.0
+            for n in names:
+                rows += D.ledger(mdb.conn, n)
+                jami += D.debt(mdb.conn, n)
+            rows.sort(key=lambda r: r["at"] or "")
+            if fmt == "pdf":
+                path = debt_export.ledger_pdf(names[0], rows, jami)
+            elif fmt == "png":
+                path, as_photo = debt_export.ledger_png(names[0], rows, jami), True
+            else:
+                path = debt_export.ledger_xlsx(names[0], rows, jami)
+            caption = "💰 Hisob-kitob daftaringiz"
+        else:
+            recs = _collect(mdb.conn, names, limit=count or 10)
+            if not recs:
+                return _err("Chek topilmadi", 404)
+            if fmt == "pdf":
+                path = debt_export.receipts_pdf(names[0], recs)
+            elif fmt == "png":
+                path, as_photo = debt_export.receipts_png(names[0], recs), True
+            else:
+                path = debt_export.receipts_xlsx(recs, names[0])
+            caption = f"🧾 Oxirgi {len(recs)} ta xaridingiz"
+
+    ok = await tg_out.send_file(auth["tg_id"], path, caption=caption,
+                                as_photo=as_photo)
+    if not ok:
+        return _err("Telegramga yuborilmadi")
+    return web.json_response({"ok": True, "fmt": fmt, "kind": kind})
 
 
 def setup(app: web.Application) -> None:

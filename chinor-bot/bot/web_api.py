@@ -3771,7 +3771,7 @@ async def api_barcode_attach(request: web.Request):
     """
     from database.channel_db import db as _db
 
-    auth, err = await _need_admin(request, _db, "products")
+    auth, err = await _need_admin(request, _db, "products_edit")
     if err is not None:
         return err
 
