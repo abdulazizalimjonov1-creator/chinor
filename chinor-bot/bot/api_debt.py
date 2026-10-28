@@ -620,6 +620,10 @@ async def api_debt_excel(request: web.Request):
 
 # ─── Admin: mijozga yuborish ────────────────────────────────────────────────
 
+# Oxirgi yuborish xatosi — adminga sabab ko'rsatish uchun.
+_LAST_ERROR = {"why": ""}
+
+
 async def _tg_send(chat_id: str, text: str) -> bool:
     """Botdan mijozga xabar. Xato bo'lsa `False` — chaqiruvchi sanab boradi.
 
@@ -627,10 +631,17 @@ async def _tg_send(chat_id: str, text: str) -> bool:
     «Cheklar boti»da (@cheklars_bot) ham bo'lishi mumkin, shuning uchun
     ikkala token sinaladi. Ilgari faqat asosiy token ishlatilardi va
     kassadan kelgan mijozlarga xabar JIM yo'qolardi.
+
+    XATO JIM QOLMAYDI (2026-10-28): sabab jurnalga ham, `_LAST_ERROR` ga
+    ham yoziladi — «mijozga xabar bormayapti» degan shikoyatda nima
+    bo'lganini (bloklagan, chat topilmadi) ko'rsatib berish uchun.
     """
     from bot import tg_out
 
-    return await tg_out.send_text(chat_id, text)
+    ok = await tg_out.send_text(chat_id, text)
+    if not ok:
+        _LAST_ERROR["why"] = tg_out.last_error()
+    return ok
 
 
 def _receipt_text(rec: dict) -> str:
@@ -694,6 +705,7 @@ async def api_debt_send(request: web.Request):
     if not recs:
         return _err("Chek topilmadi")
 
+    _LAST_ERROR["why"] = ""
     sent = 0
     for rec in recs:
         ok = await _tg_send(chat_id, _receipt_text(rec))
@@ -706,6 +718,11 @@ async def api_debt_send(request: web.Request):
             f"💵 Jami: <b>{round(jami):,}</b> so'm\n"
             f"📕 Joriy qarz: <b>{debt_now:,}</b> so'm".replace(",", " "))
 
+    if sent == 0:
+        # Jim «ok» qaytarmaymiz: admin yuborildi deb o'ylab, mijoz esa
+        # hech narsa olmay qolardi.
+        return _err("Telegram xabarni qabul qilmadi: "
+                    + (_LAST_ERROR["why"] or "noma'lum sabab"))
     return web.json_response({"ok": True, "sent": sent, "of": len(recs)})
 
 
@@ -997,7 +1014,9 @@ async def api_debt_deliver(request: web.Request):
     ok = await tg_out.send_file(nishon, path, caption=caption,
                                 as_photo=as_photo)
     if not ok:
-        return _err("Telegramga yuborilmadi — botga /start bosilganini tekshiring")
+        return _err("Telegramga yuborilmadi: "
+                    + (tg_out.last_error()
+                       or "botga /start bosilganini tekshiring"))
     return web.json_response({"ok": True, "to": to, "fmt": fmt,
                               "chat_id": str(nishon)})
 
@@ -1059,7 +1078,8 @@ async def api_my_deliver(request: web.Request):
     ok = await tg_out.send_file(auth["tg_id"], path, caption=caption,
                                 as_photo=as_photo)
     if not ok:
-        return _err("Telegramga yuborilmadi")
+        return _err("Telegramga yuborilmadi: "
+                    + (tg_out.last_error() or "botga /start bosing"))
     return web.json_response({"ok": True, "fmt": fmt, "kind": kind})
 
 

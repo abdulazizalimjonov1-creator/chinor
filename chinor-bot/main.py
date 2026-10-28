@@ -292,6 +292,10 @@ async def main():
     from bot import yespos_local_import
     local_import_task = asyncio.create_task(yespos_local_import.loop())
 
+    # ── Tovarlarni kanalga SEKIN-ASTA chiqarish (kuniga bir nechta) ─────
+    from bot import channel_drip
+    drip_task = asyncio.create_task(channel_drip.loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -318,6 +322,7 @@ async def main():
         enrich_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
+        drip_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

@@ -29,6 +29,16 @@ _API = "https://api.telegram.org/bot{token}/{method}"
 # chat_id → shu chat uchun ishlagan token (keshda, jarayon umri davomida)
 _WORKS: dict[str, str] = {}
 
+# Oxirgi muvaffaqiyatsiz yuborishning sababi. XATO JIM QOLMASIN: admin
+# «yubordim» deb o'ylab, mijoz esa hech narsa olmay qolmasligi uchun
+# chaqiruvchi shu matnni foydalanuvchiga ko'rsatadi (bloklagan, chat
+# topilmadi va h.k.).
+_LAST: dict = {"why": ""}
+
+
+def last_error() -> str:
+    return _LAST.get("why") or ""
+
 
 def _tokens(chat_id: str) -> list:
     """Sinab ko'rish tartibi: avval shu chat uchun ilgari ishlagani."""
@@ -45,6 +55,7 @@ def _tokens(chat_id: str) -> list:
 def _ok(token: str, chat_id: str, data: dict) -> bool:
     if data.get("ok"):
         _WORKS[str(chat_id)] = token
+        _LAST["why"] = ""
         return True
     return False
 
@@ -77,8 +88,9 @@ async def send_text(chat_id, text: str, reply_markup: Optional[dict] = None,
                 oxirgi = str(data.get("description") or r.status)
             except Exception as e:          # tarmoq uzilishi va h.k.
                 oxirgi = str(e)
+    _LAST["why"] = str(oxirgi)[:160]
     if oxirgi:
-        logger.info("✉️ Xabar yuborilmadi (%s): %s", chat_id, oxirgi)
+        logger.warning("✉️ Xabar yuborilmadi (%s): %s", chat_id, oxirgi)
     return False
 
 
@@ -122,6 +134,7 @@ async def send_file(chat_id, path: str, caption: str = "",
                 oxirgi = str(data.get("description") or r.status)
             except Exception as e:
                 oxirgi = str(e)
+    _LAST["why"] = str(oxirgi)[:160]
     if oxirgi:
-        logger.info("📎 Fayl yuborilmadi (%s): %s", chat_id, oxirgi)
+        logger.warning("📎 Fayl yuborilmadi (%s): %s", chat_id, oxirgi)
     return False
