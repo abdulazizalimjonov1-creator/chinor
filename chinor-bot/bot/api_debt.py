@@ -23,10 +23,13 @@ ko'radi. Nom so'rov parametridan OLINMAYDI — aks holda boshqa nomni yozib
 begonaning hisobini ko'rish mumkin bo'lardi.
 """
 
+import logging
 import os
 import sys
 
 from aiohttp import web
+
+logger = logging.getLogger(__name__)
 
 DEBT_ROUTES = web.RouteTableDef()
 
@@ -620,8 +623,17 @@ async def api_debt_excel(request: web.Request):
 
 # ─── Admin: mijozga yuborish ────────────────────────────────────────────────
 
+# Oxirgi yuborish xatosi — adminga sabab ko'rsatish uchun.
+_LAST_ERROR = {"why": ""}
+
+
 async def _tg_send(chat_id: str, text: str) -> bool:
     """Botdan mijozga xabar. Xato bo'lsa `False` — chaqiruvchi sanab boradi.
+
+    XATO JIM QOLMAYDI (2026-10-28): ilgari sabab hech qayerga yozilmasdi va
+    «mijozga xabar bormayapti» degan shikoyatda nima bo'lganini bilib
+    bo'lmasdi. Endi Telegram javobi jurnalga tushadi (bloklagan, chat
+    topilmadi va h.k.).
 
     Bu yerda `aiogram` Bot nusxasi ishlatilmaydi: web API alohida jarayon
     sifatida ham ishlaydi, o'sha paytda bot nusxasi bo'lmaydi. HTTP chaqiruv
@@ -640,8 +652,19 @@ async def _tg_send(chat_id: str, text: str) -> bool:
         timeout = aiohttp.ClientTimeout(total=25)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(url, json=payload) as resp:
-                return resp.status == 200
-    except Exception:
+                if resp.status == 200:
+                    return True
+                try:
+                    body = await resp.json()
+                    why = body.get("description") or str(body)[:160]
+                except Exception:
+                    why = f"HTTP {resp.status}"
+                logger.warning("📨 Mijozga yuborilmadi (chat=%s): %s", chat_id, why)
+                _LAST_ERROR["why"] = str(why)[:160]
+                return False
+    except Exception as e:
+        logger.warning("📨 Mijozga yuborilmadi (chat=%s): %s", chat_id, e)
+        _LAST_ERROR["why"] = str(e)[:160]
         return False
 
 
@@ -707,9 +730,15 @@ async def api_debt_send(request: web.Request):
         return _err("Chek topilmadi")
 
     sent = 0
+    _LAST_ERROR["why"] = ""
     for rec in recs:
         ok = await _tg_send(chat_id, _receipt_text(rec))
         sent += 1 if ok else 0
+    if sent == 0:
+        # Jim «ok» qaytarmaymiz: admin yuborildi deb o'ylab, mijoz esa
+        # hech narsa olmay qolardi.
+        return _err("Telegram xabarni qabul qilmadi: "
+                    + (_LAST_ERROR["why"] or "noma'lum sabab"))
     if len(recs) > 1:
         jami = sum(float(r["payable"] or 0) for r in recs)
         await _tg_send(
