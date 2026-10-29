@@ -12,6 +12,6 @@ sys.path.insert(0, r"C:\chinor\chinor-bot")
 os.environ.setdefault("DATA_DIR", r"C:\chinor\data")
 from bot import print_agent, barcode_gen
 lb = {"name": "Sinov tovari", "price": 12345, "sku": 10011, "unit": "dona", "barcode": ""}
-code = barcode_gen.for_product(lb["barcode"], lb["sku"])
+code, kind = barcode_gen.for_product(lb["barcode"], lb["sku"])
 data = print_agent.tspl_label(lb, "30x20")
-print("OK | kod:", code, "| TSPL bayt:", len(data))
+print("OK | kod:", code, kind, "| TSPL bayt:", len(data))
