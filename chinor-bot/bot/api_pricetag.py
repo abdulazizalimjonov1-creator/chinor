@@ -171,7 +171,7 @@ def _tag_html(lb: dict, size: str) -> str:
     # bo'yidan oshmasligi kerak. Oshsa, pastdagi `fit` shriftni kichraytirib
     # yuboradi va nom o'qib bo'lmas holga keladi.
     if small:                                  # 30×20 mm — faqat eng zaruri
-        s = {"pad": "1.2mm", "logo": "2.6mm", "shop": "1.9mm", "nm": "2mm",
+        s = {"pad": "1.5mm", "logo": "2.6mm", "shop": "1.9mm", "nm": "2mm",
              "pr": "4mm", "cur": "0.4em", "bot": "1.7mm", "gap": ".5mm"}
     elif big:                                  # A4 ga bitta katta
         s = {"pad": "14mm", "logo": "26mm", "shop": "16mm", "nm": "15mm",
@@ -180,7 +180,7 @@ def _tag_html(lb: dict, size: str) -> str:
         s = {"pad": "4mm", "logo": "8mm", "shop": "5mm", "nm": "5mm",
              "pr": "12mm", "cur": "0.35em", "bot": "3.6mm", "gap": "2mm"}
     else:                                      # 60×40 mm
-        s = {"pad": "2mm", "logo": "5.5mm", "shop": "3mm", "nm": "3.4mm",
+        s = {"pad": "3mm", "logo": "5.5mm", "shop": "3mm", "nm": "3.4mm",
              "pr": "8mm", "cur": "0.33em", "bot": "2.2mm", "gap": "1mm"}
 
     img = (f'<img src="{LOGO_PATH}" alt="" style="height:{s["logo"]};width:{s["logo"]}">'
@@ -192,8 +192,8 @@ def _tag_html(lb: dict, size: str) -> str:
     from bot import barcode_gen
     bc_w, bc_h = SIZES[size].get("bc", (36, 9))
     try:
-        bars = barcode_gen.svg(barcode_gen.for_product(bc, lb.get("sku") or 0),
-                               bc_w, bc_h, show_text=not small)
+        code, kind = barcode_gen.for_product(bc, lb.get("sku") or 0)
+        bars = barcode_gen.svg(code, kind, bc_w, bc_h, show_text=not small)
     except ValueError:
         bars = ""
     bot_right = f'<span style="font-size:{s["bot"]}">{unit}</span>'

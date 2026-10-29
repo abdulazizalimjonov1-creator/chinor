@@ -88,3 +88,21 @@ agentning o'zi ham shu usulda ishga tushadi.
 
 **Printer nomi boshqacha bo'lsa:** `install.ps1` ga `-Printer "To'liq nomi"`
 qo'shing (nomlarni `Get-Printer` ko'rsatadi).
+
+## Qora oyna miltillab turibdimi?
+
+Agentning o'zi hech qachon oyna ochmaydi (`wscript` orqali ko'rinmas
+ishga tushadi). Miltillash odatda BOSHQA rejalashtirilgan vazifadan
+bo'ladi: Vazifalar rejalashtiruvchisi `powershell.exe` ni to'g'ridan-to'g'ri
+chaqirsa, `-WindowStyle Hidden` bilan ham oyna bir lahza paydo bo'ladi
+(avval yaratiladi, keyin yashiriladi).
+
+Qaysi vazifa ekanini topish:
+
+```powershell
+Get-ScheduledTask | ForEach-Object { foreach ($t in $_.Triggers) { if ($t.Repetition.Interval) { $_.TaskName + "  " + $t.Repetition.Interval + "  " + $_.Actions[0].Execute } } }
+```
+
+Davosi — shu papkadagi `start-hidden.vbs` kabi kichik VBS yozib, vazifani
+`wscript.exe "<yo'l>.vbs"` ga o'tkazish. 2026-10-29 da qabul kompyuterida
+`Chinor-Sync` (har 30 daqiqada) aynan shunday tuzatilgan.

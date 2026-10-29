@@ -32,24 +32,32 @@ va shtrix-kod raqami (bo'lsa). Uzun nom avtomatik kichrayadi.
 
 ## Shtrix-kod (skanerlash uchun)
 
-Har bir sennikda EAN-13 shtrix-kod bo'ladi:
+Har bir sennikda skanerlanadigan kod bo'ladi:
 
-- **Zavod kodi bor bo'lsa** (bazada ~2000 tovar) — o'sha kod bosiladi.
-  Nazorat raqami tekshiriladi; noto'g'ri bo'lsa ichki kodga o'tiladi.
-- **Kodi yo'q bo'lsa** (~5000 tovar) — do'konning ICHKI kodi yasaladi:
-  `200` + tovar id si (9 raqam) + nazorat raqami. `20…29` oralig'i standart
-  bo'yicha aynan do'kon ichki kodlariga ajratilgan, shuning uchun hech bir
-  zavod kodi bilan to'qnashmaydi.
+| Holat | Nima bosiladi | Skaner nima yuboradi |
+|---|---|---|
+| Zavod kodi bor (~2000 tovar) | o'sha **EAN-13** | `4780069000833` |
+| Kodi yo'q (~5000 tovar) | tovarning **O'Z raqami (SKU)**, Code 128 da | `15507` |
 
-Ichki kod skanerlanganda tovar topilishi uchun qidiruvga qo'shimcha qadam
-qo'yildi (`database/_products.py` → `_internal_sku`): Mini App va bot uni
-tovar id siga aylantiradi. **YesPOS kassasi bu kodlarni bilmaydi** — u
-boshqa tizim.
+**Nega shunday.** Avval kodsiz tovarlarga `200`+id dan EAN-13 yasalardi
+(do'kon ichki kodi). Chizma to'g'ri edi, lekin skaner kassaga
+`2000000155077` deb yuborardi — bunday artikul YesPOS'da yo'q, ya'ni kod
+o'qilsa ham tovar topilmasdi. Endi SKU ning o'zi bosiladi va kassa uni
+artikul bo'yicha topadi.
 
-Chizg'ich: `bot/barcode_gen.py` (kutubxonasiz). Chop etishda modul (eng
-ingichka chiziq) eni butun nuqta: 60×40 da 3 nuqta (0.375 mm), 30×20 da
-2 nuqta (0.25 mm) — kasr bo'lsa printer goh 2, goh 3 nuqta bosib, kod
-o'qilmay qoladi. Chizmalar mustaqil dekoder (zxing) bilan tekshirilgan.
+Eski, `200…` li senniklar ham ishlayveradi: qidiruvda ularni tovarga
+bog'laydigan qadam saqlab qolingan (`database/_products.py:_internal_sku`).
+
+Chizg'ich: `bot/barcode_gen.py` — kutubxonasiz, EAN-13 ham, Code 128 ham.
+Chop etishda modul (eng ingichka chiziq) eni BUTUN nuqta bo'ladi: kasr
+bo'lsa printer goh 2, goh 3 nuqta bosadi va kod o'qilmay qoladi.
+
+## Chekkadagi bo'sh joy
+
+Termal printer yorliqqa bir necha nuqta surilib bosishi odatiy hol —
+shuning uchun mazmun chekkadan 3 mm (60×40) va 1.5 mm (30×20) ichkarida
+chiziladi. Bu bo'shliqni kamaytirmang: 2026-10-29 da aynan shu sababdan
+`SKU 15507` ning boshi kesilib chiqqan edi.
 
 ## Ikki yo'l: to'g'ridan-to'g'ri printerga yoki brauzer orqali
 
@@ -106,6 +114,18 @@ Bir marta sozlanadi:
 
 Chrome tanlangan printer va sozlamani shu sayt uchun eslab qoladi — keyin
 faqat «Print» bosiladi.
+
+## Tekshirish (o'zgartirgandan keyin SHART)
+
+```bash
+python3 chinor-bot/tests/test_sennik.py
+```
+
+Shtrix-kod chizg'ichi, printer uchun TSPL va brauzer uchun HTML — uchalasi
+ham bir zumda tekshiriladi, server ham, baza ham, internet ham kerak emas.
+`zxing-cpp` o'rnatilgan bo'lsa (`pip install zxing-cpp`), chizilgan kodlar
+HAQIQIY dekoder bilan o'qib ko'riladi — ya'ni «skaner o'qiydimi» degan
+savolga javob beradi.
 
 ## Texnik tafsilot
 

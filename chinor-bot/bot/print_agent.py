@@ -146,22 +146,26 @@ def _fit_font(draw, text: str, width: int, start: int, bold: bool = True):
     return _font(10, bold)
 
 
-def _draw_barcode(d, im, code: str, cx: int, top: int, module: int,
+def _draw_barcode(d, code: str, kind: str, cx: int, top: int, max_w: int,
                   bar_h: int, txt_h: int) -> None:
     """Shtrix-kodni chizadi: chiziqlar + ostida raqamlari.
 
     Modul (eng ingichka chiziq) eni BUTUN nuqta bo'lishi shart — kasr
     bo'lsa, printer uni goh 2, goh 3 nuqta qilib bosadi va skaner o'qiy
-    olmaydi."""
+    olmaydi. Shuning uchun kodni beriladigan enga BUTUN songa bo'lib
+    joylaymiz."""
     from bot import barcode_gen as bg
-    bits = bg.bits(code)
+    bits = bg.bits_for(code, kind)
+    module = max(1, max_w // len(bits))
     w = len(bits) * module
     x0 = cx - w // 2
     for i, bit in enumerate(bits):
         if not bit:
             continue
-        # Qo'riqchi chiziqlar pastroq tushadi — skaner kod chekkasini shundan topadi
-        h = bar_h + (txt_h // 2 if i in bg.GUARDS else 0)
+        # EAN-13 da qo'riqchi chiziqlar pastroq tushadi — skaner kodning
+        # chekkasini shundan topadi.
+        uzun = kind == bg.EAN13 and i in bg.GUARDS
+        h = bar_h + (txt_h // 2 if uzun else 0)
         d.rectangle([x0 + i * module, top, x0 + (i + 1) * module - 1, top + h], fill=0)
     if txt_h >= 8:
         f = _font(txt_h, False)
@@ -181,9 +185,13 @@ def render_label(lb: dict, size_key: str):
 
     im = Image.new("L", (W, H), 255)
     d = ImageDraw.Draw(im)
-    pad = max(6, W // 26)
+    # Chekkada BO'SH JOY qoldiramiz: termal printer yorliqqa bir necha
+    # nuqta surilib bosishi odatiy hol, o'shanda yozuvning cheti kesilib
+    # ketmasin (60×40 da aynan shunday bo'lgan edi).
+    pad = max(10, W // 20)
     x0, x1 = pad, W - pad
-    y = pad
+    # Kichik sennikda mazmun yuqori chekkaga tiqilib qolgandi — pastroqqa
+    y = pad + (6 if small else 2)
 
     # 1) Sarlavha: logotip + do'kon nomi
     logo_h = int(H * (0.14 if small else 0.16))
@@ -205,8 +213,7 @@ def render_label(lb: dict, size_key: str):
     y += 4 if small else 7
 
     # 2) Pastdan yuqoriga: shtrix-kod joyi (modul eni butun nuqta bo'lsin)
-    code = barcode_gen.for_product(lb.get("barcode", ""), lb.get("sku") or 0)
-    module = 2 if small else 3
+    code, kind = barcode_gen.for_product(lb.get("barcode", ""), lb.get("sku") or 0)
     bar_h = int(H * (0.17 if small else 0.15))
     txt_h = int(H * (0.07 if small else 0.055))
     bottom = H - pad
@@ -246,7 +253,7 @@ def render_label(lb: dict, size_key: str):
 
     # 6) Shtrix-kod — eng pastda, markazda (chap va o'ngda bo'sh «sokin
     #    zona» qolishi shart, aks holda skaner kodni topa olmaydi)
-    _draw_barcode(d, im, code, W // 2, bc_top, module, bar_h, txt_h)
+    _draw_barcode(d, code, kind, W // 2, bc_top, x1 - x0, bar_h, txt_h)
 
     # Chegaraviy qiymat bilan — `convert("1")` ning o'zi Floyd-Steinberg
     # bilan «sepib» yuboradi va mayda yozuv kulrang to'r bo'lib chiqadi.
