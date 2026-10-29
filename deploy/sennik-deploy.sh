@@ -16,12 +16,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 echo "▶ 1/4  Bot fayllari → $SRV"
+# DIQQAT: ro'yxat to'liq bo'lsin. 2026-10-29 da `barcode_gen.py` shu yerga
+# qo'shilmay qolgani uchun prodda ImportError chiqqan edi (yangi modulni
+# chaqiradigan fayllar ko'chirilgan, modulning o'zi esa yo'q).
 scp -q chinor-bot/bot/print_agent.py \
        chinor-bot/bot/api_pricetag.py \
+       chinor-bot/bot/barcode_gen.py \
        chinor-bot/bot/web_api.py \
        "$SRV:C:/chinor/chinor-bot/bot/"
+scp -q chinor-bot/database/_products.py "$SRV:C:/chinor/chinor-bot/database/"
 scp -q app/index.html app/app.js app/style.css "$SRV:C:/chinor/app/"
-echo "   ✓ ko'chirildi"
+
+# Ko'chirilganini TEKSHIRAMIZ: fayl yetib bormasa yoki eskisi qolsa, xato
+# faqat tugma bosilganda, foydalanuvchi oldida chiqadi.
+for f in bot/print_agent.py bot/api_pricetag.py bot/barcode_gen.py \
+         bot/web_api.py database/_products.py; do
+    want="$(shasum -a 256 "chinor-bot/$f" | cut -c1-16)"
+    got="$(ssh "$SRV" "powershell -Command \"(Get-FileHash C:\\chinor\\chinor-bot\\$(echo $f | tr / \\\\) -Algorithm SHA256).Hash.ToLower().Substring(0,16)\"" | tr -d '\r\n ')"
+    if [ "$want" != "$got" ]; then
+        echo "   ✗ MOS EMAS: $f (mahalliy $want, serverda $got)" >&2
+        exit 1
+    fi
+done
+echo "   ✓ ko'chirildi va tekshirildi"
 
 echo "▶ 2/4  Mini App → Cloudflare Pages"
 npx --yes wrangler pages deploy "$ROOT/app" \
