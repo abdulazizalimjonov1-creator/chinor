@@ -300,25 +300,62 @@
                 // qaytishni aynan o'sha biladi — zanjirni bu yerda
                 // qaytadan yozgandan ko'ra tugmani bosgan ma'qul.
                 const sc = document.querySelector('.screen.active');
+                // Mijoz ekranida «orqaga» tugmasi yo'q: u yerda qaytish —
+                // ochiq bo'limdan (Katalog / AI / Hisob) asosiysiga.
+                if (sc && sc.id === 'screenClient') {
+                    const tablar = [...document.querySelectorAll('.cl-tab')];
+                    const faol = tablar.find(t => t.classList.contains('active'));
+                    if (faol && tablar[0] && faol !== tablar[0]) {
+                        clientTab(tablar[0], 'home');
+                    }
+                    return;
+                }
                 const tugma = sc && [...sc.querySelectorAll('.list-back')]
                     .find(b => b.offsetParent !== null);
                 if (tugma) { tugma.click(); return; }
                 if (_navZaxira) navBack(_navZaxira);
             }
 
+            // Kamera to'liq ekranda bo'lsa — o'sha ishora qo'shni
+            // kameraga o'tkazadi: nazoratchi har safar ro'yxatga
+            // qaytmasin. Chetidan boshlash shart emas, ekranning
+            // istalgan joyidan surilaveradi.
+            let kamera = false;
+
+            function ovOchiq() {
+                const ov = $('camOverlay');
+                return !!(ov && ov.style.display === 'flex');
+            }
+
+            function kameraBekor() {
+                const b = $('camOvBody');
+                if (b) b.style.transform = '';
+            }
+
             document.addEventListener('touchstart', (e) => {
                 if (e.touches.length !== 1) return;
-                const ov = $('camOverlay');
-                if (ov && ov.style.display === 'flex') return;   // kamera to'liq ekranda
                 const t = e.touches[0];
+                kamera = false;
+                if (ovOchiq()) {
+                    if (camKorinadiganlar().length < 2) return;
+                    kamera = true; x0 = t.clientX; y0 = t.clientY; dx = 0;
+                    return;
+                }
                 if (t.clientX > CHET) return;
                 x0 = t.clientX; y0 = t.clientY; dx = 0;
                 faol = document.querySelector('.screen.active');
             }, { passive: true });
 
             document.addEventListener('touchmove', (e) => {
-                if (!faol) return;
                 const t = e.touches[0];
+                if (kamera) {
+                    if (Math.abs(t.clientY - y0) > 70) { kamera = false; kameraBekor(); return; }
+                    dx = t.clientX - x0;
+                    const b = $('camOvBody');
+                    if (b) b.style.transform = 'translateX(' + (dx * 0.6) + 'px)';
+                    return;
+                }
+                if (!faol) return;
                 const ddx = t.clientX - x0;
                 if (ddx < 0 || Math.abs(t.clientY - y0) > 60) { bekor(); return; }
                 dx = ddx;
@@ -328,13 +365,23 @@
             }, { passive: true });
 
             document.addEventListener('touchend', () => {
+                if (kamera) {
+                    kamera = false;
+                    const yon = Math.abs(dx) > Math.min(90, window.innerWidth * 0.22)
+                        ? (dx < 0 ? 1 : -1) : 0;
+                    kameraBekor(); dx = 0;
+                    if (yon) camGoto(yon);
+                    return;
+                }
                 if (!faol) return;
                 const yetarli = dx > Math.min(110, window.innerWidth * 0.28);
                 bekor();
                 if (yetarli) ortga();
             }, { passive: true });
 
-            document.addEventListener('touchcancel', bekor, { passive: true });
+            document.addEventListener('touchcancel', () => {
+                kamera = false; kameraBekor(); bekor();
+            }, { passive: true });
         })();
 
         // ===== Error helpers =====
@@ -6325,6 +6372,13 @@
         };
 
         // ── To'liq ekran ────────────────────────────────────────────────
+        // To'liq ekranda ko'rsatiladigan kameralar — to'rdagi tartibda.
+        // Bittasini ochib, chap-o'ngga surib qolganlariga o'tiladi:
+        // nazoratchi har safar ro'yxatga qaytmasligi kerak.
+        function camKorinadiganlar() {
+            return _camList.filter(c => c.enabled && (c.main_path || c.sub_path));
+        }
+
         window.camOpen = function (id) {
             const cam = _camList.find(c => c.id === id);
             if (!cam) return;
@@ -6335,33 +6389,45 @@
                 ov.id = 'camOverlay'; ov.className = 'cam-overlay';
                 document.body.appendChild(ov);
             }
+            const ro = camKorinadiganlar();
+            const idx = ro.findIndex(c => c.id === id);
+            const kop = ro.length > 1;
             ov.innerHTML =
-                '<div class="cam-ov-bar"><b>' + escapeHtml(cam.name) + '</b>' +
+                '<div class="cam-ov-bar"><b id="camOvName">' + escapeHtml(cam.name) +
+                (kop ? ' <span class="cam-ov-num">' + (idx + 1) + '/' + ro.length + '</span>' : '') +
+                '</b>' +
                 '<button onclick="camClose()">✕</button></div>' +
-                '<div class="cam-ov-body"><img id="camOvImg" alt="" ' +
-                'onerror="camOvFallback()"><div class="cam-ov-wait" id="camOvWait">Ulanmoqda…</div></div>' +
-                '<div class="cam-ov-foot" id="camOvFoot">Jonli oqim</div>';
+                '<div class="cam-ov-body" id="camOvBody">' +
+                (kop ? '<button class="cam-ov-nav chap" onclick="camGoto(-1)">‹</button>' : '') +
+                '<img id="camOvImg" alt="" onerror="camOvFallback()">' +
+                (kop ? '<button class="cam-ov-nav ong" onclick="camGoto(1)">›</button>' : '') +
+                '<div class="cam-ov-wait" id="camOvWait">Ulanmoqda…</div></div>' +
+                '<div class="cam-ov-foot" id="camOvFoot">' +
+                (kop ? 'Jonli oqim · chapga-o\'ngga suring' : 'Jonli oqim') + '</div>';
             ov.style.display = 'flex';
             const img = $('camOvImg');
             img.onload = () => { const w = $('camOvWait'); if (w) w.style.display = 'none'; };
             img.src = camUrl(id, 'live.mjpg', 'full');
         };
 
-        // Uzluksiz oqim o'tmasa (tarmoq yoki tunnel yo'l qo'ymasa) —
-        // kadrma-kadr so'raymiz: sifati o'sha, faqat biroz uzuq-yuluq.
-        window.camOvFallback = function () {
-            if (!_camFullId || _camFullTimer) return;
-            const foot = $('camOvFoot');
-            if (foot) foot.textContent = 'Kadrma-kadr rejim';
-            const step = () => {
-                const img = $('camOvImg');
-                if (!img || !_camFullId) return;
-                img.src = camUrl(_camFullId, 'snap.jpg', 'full') + '&_=' + Date.now();
-            };
-            const img = $('camOvImg');
-            if (img) img.onerror = null;
-            step();
-            _camFullTimer = setInterval(step, 900);
+        // Qo'shni kameraga o'tish (-1 chapga, +1 o'ngga; ro'yxat aylanma).
+        window.camGoto = function (yon) {
+            const ro = camKorinadiganlar();
+            if (ro.length < 2 || !_camFullId) return;
+            const i = ro.findIndex(c => c.id === _camFullId);
+            const keyingi = ro[(i + yon + ro.length) % ro.length];
+            // Eski oqimni uzamiz, aks holda u fonda ishlab turaveradi
+            // va server bekorga ikkita kamerani dekodlaydi.
+            const eski = $('camOvImg');
+            if (eski) eski.src = '';
+            if (_camFullTimer) { clearInterval(_camFullTimer); _camFullTimer = null; }
+            camOpen(keyingi.id);
+            const body = $('camOvBody');
+            if (body) {
+                body.classList.remove('surildi-chap', 'surildi-ong');
+                void body.offsetWidth;
+                body.classList.add(yon > 0 ? 'surildi-ong' : 'surildi-chap');
+            }
         };
 
         window.camClose = function () {
@@ -6541,6 +6607,15 @@
         // ================================================================
         // ESC KEY
         // ================================================================
+        // Kamera to'liq ekranda: strelkalar bilan qo'shnisiga, Esc bilan chiqish
+        document.addEventListener('keydown', (e) => {
+            const ov = $('camOverlay');
+            if (!ov || ov.style.display !== 'flex') return;
+            if (e.key === 'ArrowRight') camGoto(1);
+            else if (e.key === 'ArrowLeft') camGoto(-1);
+            else if (e.key === 'Escape') camClose();
+        });
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && screenLogin.classList.contains('active')) {
                 loginInput.blur();
