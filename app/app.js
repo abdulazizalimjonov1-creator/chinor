@@ -6396,6 +6396,18 @@
                    '?t=' + encodeURIComponent(_camToken) + '&p=' + profile;
         }
 
+        // Oqim tokeni server XOTIRASIDA turadi — bot qayta ishga tushsa
+        // yo'qoladi va telefonda ochiq turgan to'r jimgina «ulanmadi»
+        // bo'lib qoladi (serverda 401 lar ko'rinadi). Kadr kelmaganda
+        // tokenni o'zimiz yangilaymiz: odam bo'limni qayta ochmasin.
+        let _camTokenAt = 0;
+        async function camTokenYangila() {
+            if (Date.now() - _camTokenAt < 15000) return;   // har kadrda emas
+            _camTokenAt = Date.now();
+            const { ok, data } = await apiFetch('/api/cams');
+            if (ok && data.ok && data.token) _camToken = data.token;
+        }
+
         function camStop() {
             if (_camTimer) { clearInterval(_camTimer); _camTimer = null; }
         }
@@ -6471,6 +6483,7 @@
         window.camImgErr = function (id) {
             const st = $('camSt' + id);
             if (st) { st.style.display = 'block'; st.textContent = 'ulanmadi'; }
+            camTokenYangila();        // sabab eskirgan token bo'lsa — o'zi tuzaladi
         };
 
         // ── To'liq ekran ────────────────────────────────────────────────
@@ -6530,6 +6543,24 @@
                 void body.offsetWidth;
                 body.classList.add(yon > 0 ? 'surildi-ong' : 'surildi-chap');
             }
+        };
+
+        // Uzluksiz oqim o'tmasa (tarmoq yoki tunnel yo'l qo'ymasa) —
+        // kadrma-kadr so'raymiz: sifati o'sha, faqat biroz uzuq-yuluq.
+        window.camOvFallback = function () {
+            if (!_camFullId || _camFullTimer) return;
+            camTokenYangila();
+            const foot = $('camOvFoot');
+            if (foot) foot.textContent = 'Kadrma-kadr rejim';
+            const step = () => {
+                const img = $('camOvImg');
+                if (!img || !_camFullId) return;
+                img.src = camUrl(_camFullId, 'snap.jpg', 'full') + '&_=' + Date.now();
+            };
+            const img = $('camOvImg');
+            if (img) img.onerror = null;
+            step();
+            _camFullTimer = setInterval(step, 900);
         };
 
         window.camClose = function () {
