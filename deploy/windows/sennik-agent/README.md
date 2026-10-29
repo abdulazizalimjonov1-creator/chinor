@@ -15,8 +15,14 @@ shuni to'liq nusxalab qo'ying — papkani ko'chirish shart emas, agent
 serverdan yuklab olinadi:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol='Tls12'; $d='C:\ChinorSennik'; md $d -Force|Out-Null; iwr https://kassa.chinorpos.com/updates/sennik-agent.zip -OutFile "$env:TEMP\sa.zip" -UseBasicParsing; Expand-Archive "$env:TEMP\sa.zip" $d -Force; cd $d; .\install.ps1 -Server https://kassa.chinorpos.com -Token <KALIT> -Key qabul -Name "Qabul kompyuteri"
+[Net.ServicePointManager]::SecurityProtocol='Tls12'; $d='C:\ChinorSennik'; md $d -Force|Out-Null; iwr https://kassa.chinorpos.com/updates/sennik-agent.zip -OutFile "$env:TEMP\sa.zip" -UseBasicParsing; Expand-Archive "$env:TEMP\sa.zip" $d -Force; Get-ChildItem $d | Unblock-File; powershell -NoProfile -ExecutionPolicy Bypass -File $d\install.ps1 -Server https://kassa.chinorpos.com -Token <KALIT> -Key qabul -Name "Qabul kompyuteri"
 ```
+
+Skript `-ExecutionPolicy Bypass` bilan ALOHIDA chaqiriladi: ko'p
+kompyuterlarda PowerShell skript ishlatishni taqiqlab qo'yadi
+(«выполнение сценариев отключено»). `Unblock-File` esa internetdan
+yuklangan fayldagi «begona» belgisini olib tashlaydi. Tizim sozlamasi
+o'zgartirilmaydi.
 
 `<KALIT>` ni administratordan oling (`deploy/sennik-deploy.sh` oxirida
 chiqadi). Boshqa kompyuterda `-Key` va `-Name` ni almashtiring.
@@ -72,6 +78,11 @@ yoqib, Mini App'dan qaytadan bosiladi.
 
 **Kompyuter o'chiq bo'lsa?** Sennik serverdagi navbatda turadi; kompyuter
 yoqilgach o'zi chiqadi (bot qayta ishga tushsa navbat tozalanadi).
+
+**«Выполнение сценариев отключено» desa:** skriptni to'g'ridan-to'g'ri
+emas, `powershell -ExecutionPolicy Bypass -File <yo'l>` orqali chaqiring
+(yuqoridagi buyruqda shunday). Tizim siyosatini o'zgartirish shart emas —
+agentning o'zi ham shu usulda ishga tushadi.
 
 **O'chirish:** `schtasks /Delete /TN Chinor-sennik /F` va papkani o'chiring.
 
