@@ -3348,6 +3348,183 @@
                  : ('Xato: ' + ((data && data.error) || status))) + '</div>';
         }
 
+        // ── Sennik (narx yorlig'i) chop etish ────────────────────────────
+        // Mini App faqat BUYURADI: tovar, o'lcham va nusxa soni. Senniklarni
+        // server HTML qilib tayyorlaydi, chop etishni esa brauzer bajaradi
+        // (printer tanlash oynasi shu yerda chiqadi). Shu sababli bu yerda
+        // sennik ko'rinishi QAYTA chizilmaydi — ko'rinish bitta joyda,
+        // serverda turadi va ikkisi bir-biridan uzilib qolmaydi.
+        let _tagSize  = '60x40';
+        let _tagSizes = [];
+        let _tagMax   = 400;
+        let _tagOptom = false;
+        let _tagSel   = [];          // [{id, name, price, copies}]
+        let _tagTimer = null;
+
+        window.openPriceTags = async function () {
+            openTool('🏷 Sennik chop etish');
+            const { ok, status, data } = await apiFetch('/api/admin/pricetag/sizes');
+            if (!ok || !data.ok) return openTool('🏷 Sennik chop etish', toolError(status, data));
+            _tagSizes = data.sizes || [];
+            _tagMax   = data.max || 400;
+            if (!_tagSizes.some(s => s.k === _tagSize)) {
+                _tagSize = data.default || (_tagSizes[0] || {}).k || '60x40';
+            }
+            openTool('🏷 Sennik chop etish', `
+                <div class="sn-hint">Tovarni toping → nusxa sonini qo'ying → <b>Chop etish</b>.
+                    Senniklar brauzerda ochiladi, printer tanlash oynasi o'sha yerda chiqadi.
+                    Havolani printer ulangan boshqa kompyuterda ham ochsa bo'ladi.</div>
+                <div class="sn-sizes" id="tagSizes"></div>
+                <label class="sn-check"><input type="checkbox" id="tagOptom"> Optom narxi bilan</label>
+                <div class="search-bar" style="margin:12px 0">
+                    <span class="search-ic">🔍</span>
+                    <input type="text" id="tagSearch" placeholder="Tovar nomi yoki shtrix-kodi..." autocomplete="off">
+                    <button type="button" class="scan-btn" onclick="scanInto('tag')" title="Shtrix-kodni skanerlash">📷</button>
+                </div>
+                <div id="tagResults"></div>
+                <div class="cl-sheet-sub">Tanlanganlar (<span id="tagCount">0</span>)</div>
+                <div id="tagSel"></div>
+                <div id="tagOut"></div>
+                <button class="sn-print" id="tagPrintBtn" onclick="tagPrint()">🖨 Chop etish</button>`);
+            $('tagSearch').addEventListener('input', e => {
+                clearTimeout(_tagTimer);
+                const q = e.target.value.trim();
+                _tagTimer = setTimeout(() => _tagSearch(q), 300);
+            });
+            $('tagOptom').checked = _tagOptom;
+            $('tagOptom').addEventListener('change', e => { _tagOptom = e.target.checked; });
+            _tagSizesRender();
+            _tagSelRender();
+        };
+
+        function _tagSizesRender() {
+            const box = $('tagSizes');
+            if (!box) return;
+            box.innerHTML = _tagSizes.map(s => `
+                <button class="sn-size${s.k === _tagSize ? ' on' : ''}" onclick="tagSetSize('${s.k}')">
+                    <b>${escapeHtml(s.title)}</b><span>${escapeHtml(s.hint)}</span></button>`).join('');
+        }
+
+        window.tagSetSize = function (k) {
+            _tagSize = k;
+            _tagSizesRender();
+            const out = $('tagOut');
+            if (out) out.innerHTML = '';      // eski havola boshqa o'lchamda edi
+        };
+
+        async function _tagSearch(q, autoOpen) {
+            const box = $('tagResults');
+            if (!box) return;
+            if (!q) { box.innerHTML = ''; return; }
+            const { ok, data } = await apiFetch('/api/products?page=0&q=' + encodeURIComponent(q));
+            const items = (ok && data.ok) ? (data.items || data.products || []).slice(0, 12) : [];
+            // Skanerdan kelgan va bitta tovar topilgan bo'lsa — darrov qo'shamiz
+            if (autoOpen && items.length === 1) {
+                tagAdd(items[0].id, items[0].name, items[0].price_sum);
+                box.innerHTML = '';
+                const inp = $('tagSearch'); if (inp) inp.value = '';
+                return;
+            }
+            box.innerHTML = items.map(p => `<div class="g-row" onclick="tagAdd(${p.id}, ${JSON.stringify(p.name)}, ${p.price_sum || 0})">
+                <div><b>${escapeHtml(p.name)}</b><div class="g-meta">SKU ${p.id} · ${fmtSum(p.price_sum)} so'm · qoldiq ${fmtQty(p.qty)}</div></div>
+                <span>＋</span></div>`).join('')
+                || '<div class="list-status">Topilmadi</div>';
+        }
+
+        window.tagAdd = function (id, name, price) {
+            const cur = _tagSel.find(x => x.id === id);
+            if (cur) { cur.copies = Math.min(cur.copies + 1, 100); }
+            else { _tagSel.push({ id, name: name || ('#' + id), price: price || 0, copies: 1 }); }
+            _tagSelRender();
+            toast('🏷 Qo\'shildi');
+        };
+
+        window.tagCopies = function (id, delta) {
+            const cur = _tagSel.find(x => x.id === id);
+            if (!cur) return;
+            cur.copies = Math.max(0, Math.min(cur.copies + delta, 100));
+            if (!cur.copies) _tagSel = _tagSel.filter(x => x.id !== id);
+            _tagSelRender();
+        };
+
+        window.tagClear = function () { _tagSel = []; _tagSelRender(); };
+
+        function _tagTotal() { return _tagSel.reduce((n, x) => n + x.copies, 0); }
+
+        function _tagSelRender() {
+            const box = $('tagSel'), cnt = $('tagCount'), btn = $('tagPrintBtn');
+            if (!box) return;
+            box.innerHTML = _tagSel.map(x => `<div class="sn-row">
+                <div class="sn-nm"><b>${escapeHtml(x.name)}</b>
+                    <div class="g-meta">SKU ${x.id} · ${fmtSum(x.price)} so'm</div></div>
+                <div class="sn-cnt">
+                    <button onclick="tagCopies(${x.id}, -1)">−</button>
+                    <span>${x.copies}</span>
+                    <button onclick="tagCopies(${x.id}, 1)">＋</button>
+                </div></div>`).join('')
+                || '<div class="list-status">Hali tanlanmadi</div>';
+            if (_tagSel.length) {
+                box.innerHTML += `<button class="sn-clear" onclick="tagClear()">🗑 Ro'yxatni tozalash</button>`;
+            }
+            const total = _tagTotal();
+            if (cnt) cnt.textContent = total;
+            if (btn) {
+                btn.disabled = !total || total > _tagMax;
+                btn.textContent = total > _tagMax
+                    ? `⚠️ Juda ko'p (${total} / ${_tagMax})`
+                    : (total ? `🖨 ${total} ta sennikni chop etish` : '🖨 Chop etish');
+            }
+        }
+
+        window.tagPrint = async function () {
+            if (!_tagSel.length) return toast('Avval tovar tanlang');
+            const btn = $('tagPrintBtn'), out = $('tagOut');
+            btn.disabled = true; btn.textContent = '⏳ Tayyorlanmoqda...';
+            const { ok, status, data } = await apiFetch('/api/admin/pricetags', {
+                method: 'POST',
+                body: JSON.stringify({
+                    size: _tagSize, optom: _tagOptom,
+                    items: _tagSel.map(x => ({ id: x.id, copies: x.copies }))
+                })
+            });
+            _tagSelRender();
+            if (!ok || !data.ok) { if (out) out.innerHTML = toolError(status, data); return; }
+            const url = API_BASE_URL + data.url;
+            if (out) out.innerHTML = `<div class="sn-out">
+                <b>✅ ${data.count} ta sennik tayyor</b>
+                <div class="g-meta">Havola ${data.ttl_min} daqiqa ishlaydi. Printer ulangan
+                    kompyuterda shu havolani oching va Ctrl+P bilan chop eting.</div>
+                <div class="sn-link" id="tagLink">${escapeHtml(url)}</div>
+                <div class="sn-row">
+                    <button class="sn-open" onclick="tagOpen('${url}')">🖨 Ochish</button>
+                    <button class="sn-copy" onclick="tagCopy()">📋 Havoladan nusxa</button>
+                </div></div>`;
+            tagOpen(url);
+        };
+
+        window.tagOpen = function (url) {
+            // Telegram ichidagi WebView'da chop etish oynasi yo'q — havolani
+            // TASHQI brauzerda ochamiz (printer o'sha yerda ko'rinadi).
+            try {
+                if (tg && tg.openLink) tg.openLink(url);
+                else window.open(url, '_blank');
+            } catch (e) { toast('Ochilmadi — havoladan nusxa oling'); }
+        };
+
+        window.tagCopy = function () {
+            const el = $('tagLink');
+            const text = el ? el.textContent : '';
+            if (!text) return;
+            try {
+                navigator.clipboard.writeText(text);
+                toast('📋 Nusxa olindi');
+            } catch (e) {
+                const r = document.createRange(); r.selectNode(el);
+                getSelection().removeAllRanges(); getSelection().addRange(r);
+                toast('Havolani belgilab nusxa oling');
+            }
+        };
+
         // ── Kategoriyalar ────────────────────────────────────────────────
         window.openCategories = async function () {
             openTool('🗂 Kategoriyalar');
@@ -5048,6 +5225,11 @@
                 const inp = $('qeSearch');
                 if (inp) inp.value = cleaned;
                 qeSearch(cleaned, true);
+            } else if (_scanTarget === 'tag') {
+                // Sennik — skanerlangan tovar darrov ro'yxatga tushadi
+                const inp = $('tagSearch');
+                if (inp) inp.value = cleaned;
+                _tagSearch(cleaned, true);
             } else if (_scanTarget === 'label') {
                 // Yorliq o'qitish — tovarni shtrix-kod bilan topamiz
                 const inp = $('lblSearch');

@@ -4591,6 +4591,9 @@ def create_app() -> web.Application:
     # Yorliq/yo'riqnomadan zavod ma'lumoti (admin tasdiqlaydi) + do'kon bahosi
     from bot import api_labels
     api_labels.setup(app)
+    # Sennik (narx yorlig'i) chop etish — Mini App buyuradi, brauzer chop etadi
+    from bot import api_pricetag
+    api_pricetag.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)

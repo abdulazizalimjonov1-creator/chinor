@@ -1526,3 +1526,71 @@
     #clientPickModal > div { background: var(--card) !important; }
     #clientPickModal input { background: var(--card); color: var(--text); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   SENNIK (narx yorlig'i) CHOP ETISH — admin bo'limi
+   Sennikning O'ZI bu yerda chizilmaydi: uni server HTML qilib beradi va
+   brauzer chop etadi. Bu yerdagi uslublar faqat BUYURTMA ekraniga tegishli
+   (o'lcham tanlash, tanlangan tovarlar, nusxa soni).
+   ═══════════════════════════════════════════════════════════════════ */
+.sn-hint {
+    font-size: 13px; line-height: 1.5; color: var(--text-color);
+    background: var(--primary-light); border-radius: 14px; padding: 11px 13px;
+}
+.sn-sizes { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
+.sn-size {
+    flex: 1 1 46%; text-align: left; cursor: pointer;
+    background: var(--card); color: var(--text);
+    border: 1.5px solid var(--border); border-radius: 14px; padding: 9px 11px;
+}
+.sn-size b { display: block; font-size: 14px; }
+.sn-size span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.sn-size.on { border-color: var(--primary-mid); background: var(--primary-light); color: var(--ink-strong); }
+.sn-size.on span { color: var(--ink-strong); opacity: .75; }
+.sn-check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+.sn-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-top: 8px; border-radius: 12px;
+    background: var(--card-bg); border: 1px solid var(--border);
+}
+.sn-nm { min-width: 0; }
+.sn-nm b { font-size: 14px; word-break: break-word; }
+.sn-cnt { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.sn-cnt button {
+    width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    font-size: 16px; line-height: 1;
+}
+.sn-cnt span { min-width: 24px; text-align: center; font-weight: 700; }
+.sn-clear {
+    width: 100%; margin-top: 10px; padding: 9px; border-radius: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 13px;
+}
+.sn-print {
+    position: sticky; bottom: 10px; width: 100%; margin: 14px 0 6px; padding: 14px;
+    border: 0; border-radius: 16px; cursor: pointer; font-size: 15px; font-weight: 700;
+    background: var(--primary); color: #fff;
+}
+.sn-print:disabled { opacity: .5; cursor: default; }
+.sn-out {
+    margin-top: 14px; padding: 12px; border-radius: 14px;
+    background: var(--primary-light); color: var(--text-color);
+}
+.sn-link {
+    margin: 8px 0; padding: 8px 10px; border-radius: 10px; font-size: 12px;
+    word-break: break-all; background: var(--card); color: var(--text);
+    border: 1px solid var(--border); user-select: all;
+}
+.sn-open, .sn-copy {
+    flex: 1; padding: 10px; border-radius: 12px; cursor: pointer;
+    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
+}
+.sn-open { background: var(--primary); color: #fff; border-color: var(--primary); }
+.sn-copy { background: var(--card); color: var(--text); }
+
+@media (prefers-color-scheme: dark) {
+    .sn-hint      { background: rgba(82,183,136,0.18); color: var(--text); }
+    .sn-size.on   { background: rgba(82,183,136,0.22); color: var(--text); }
+    .sn-size.on span { color: var(--text); }
+    .sn-out       { background: rgba(82,183,136,0.18); color: var(--text); }
+}

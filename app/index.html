@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chinor — Kirish</title>
-    <link rel="stylesheet" href="style.css?v=12">
+    <link rel="stylesheet" href="style.css?v=13">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -95,6 +95,7 @@
                 <button class="quick-card card-orange" onclick="openViewAs()"><span class="card-icon">👁</span><h4>Mijoz ko'rinishi</h4><p>Mini App'ni mijoz ko'zi bilan sinash</p></button>
                 <button class="quick-card card-green" onclick="openQuickEdit()"><span class="card-icon">📸</span><h4>Tovarni to'ldirish</h4><p>Skaner → rasm, yo'riqnoma, tavsif bir joyda</p></button>
                 <button class="quick-card card-blue" onclick="openLabels()"><span class="card-icon">📄</span><h4>Yorliq o'qitish</h4><p>Bor tovarga yo'riqnoma (skaner bilan)</p></button>
+                <button class="quick-card card-purple" onclick="openPriceTags()"><span class="card-icon">🏷</span><h4>Sennik chop etish</h4><p>Narx yorlig'i: 60×40, 30×20 yoki A4</p></button>
                 <button class="quick-card card-teal" onclick="openGuidesAdmin()"><span class="card-icon">🧐</span><h4>Maslahatlar</h4><p>Mijozlar uchun savol-javob</p></button>
                 <button class="quick-card card-orange" onclick="openReceipts()"><span class="card-icon">🧾</span><h4>Cheklar</h4><p>Barcha kassa cheklari</p></button>
                 <button class="quick-card card-red" onclick="openDebtors()"><span class="card-icon">📕</span><h4>Qarzdorlar</h4><p>Kimda qancha qarz bor</p></button>
@@ -526,6 +527,6 @@
 
     </main>
     <input type="file" id="scanFileInput" accept="image/*" capture="environment" style="display:none">
-    <script src="app.js?v=23"></script>
+    <script src="app.js?v=24"></script>
 </body>
 </html>
