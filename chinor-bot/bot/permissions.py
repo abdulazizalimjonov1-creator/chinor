@@ -11,9 +11,12 @@ Glavniy admin (bot/config.py:GLAVNIY_ADMIN_ID) har doim hammasiga ruxsatga ega.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Dict, List, Optional, Set
 
 from bot.config import GLAVNIY_ADMIN_ID
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Ruxsat kalitlari (qisqa, DB ga yoziladi) ────────────────────────────────
@@ -37,6 +40,19 @@ PERMISSIONS: Dict[str, str] = {
     "usd_rate":       "💱 USD kursini o'zgartirish",
     "ai_analytics":   "🤖 AI Analitika (Gemini)",
     "cams":           "📹 Kameralar",
+}
+
+# ── Taxalluslar (alias) ─────────────────────────────────────────────────────
+# Kod ba'zi joyda ruxsatni QISQA nom bilan so'ragan: `"clients"`, `"products"`.
+# Bunday kalit PERMISSIONS da yo'q edi — natijada `has_permission` har doim
+# False qaytarardi va TO'LIQ huquqli admin ham «Ruxsat yo'q» olardi (eng
+# ko'rinadigan joyi: Mini App'dagi «📕 Qarzdorlar» umuman ochilmasdi).
+# Endi qisqa nom aniq kalitga keltiriladi.
+PERMISSION_ALIASES: Dict[str, str] = {
+    "clients":  "clients_view",
+    "products": "products_view",
+    "client":   "clients_view",
+    "product":  "products_view",
 }
 
 # Tartibli ro'yxat — UI da shu tartibda ko'rsatamiz
@@ -131,14 +147,34 @@ def is_glavniy(uid: int) -> bool:
     return uid == GLAVNIY_ADMIN_ID
 
 
+def resolve_perm(perm: str) -> str:
+    """Qisqa yoki eski nomni haqiqiy ruxsat kalitiga keltiradi."""
+    perm = (perm or "").strip()
+    return PERMISSION_ALIASES.get(perm, perm)
+
+
 async def has_permission(db, uid: int, perm: str) -> bool:
     """Berilgan foydalanuvchida `perm` ruxsati bormi?
-    Glavniy admin har doim True. Admin bo'lmasa False."""
+    Glavniy admin har doim True. Admin bo'lmasa False.
+
+    NOMA'LUM KALIT. Agar kod ro'yxatda YO'Q ruxsatni so'rasa, bu kodning
+    xatosi — foydalanuvchining emas. Ilgari bunday holatda hamma rad
+    etilardi va sababini topish qiyin bo'lardi (403, hech qanday iz yo'q).
+    Endi ogohlantirish yoziladi va qaror ROLGA qarab chiqadi: to'liq
+    adminga ruxsat beriladi, qolganiga yo'q.
+    """
     if is_glavniy(uid):
         return True
     admin = await db.get_admin(uid)
     if not admin:
         return False
+    perm = resolve_perm(perm)
+    if perm and perm not in PERMISSIONS:
+        role = (admin.get("role") or "full").strip().lower()
+        logger.warning(
+            "Noma'lum ruxsat kaliti so'raldi: %r (rol=%s) — kodni tekshirish kerak",
+            perm, role)
+        return role == "full"
     return perm in effective_permissions(admin)
 
 
