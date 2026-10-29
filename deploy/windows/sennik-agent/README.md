@@ -36,8 +36,12 @@ o'zi tiklanadi.
 **Kompyuterga og'irlik qilmaydimi?** Yo'q: dastur deyarli doim serverdan
 javob kutib turadi, protsessorni ishlatmaydi (bo'sh turganda ~0%).
 
-**Printer o'chiq bo'lsa?** Sennik navbatda qoladi, xato `agent.log` ga
-yoziladi va Mini App'da ko'rinadi. Printer yoqilgach qayta yuboriladi.
+**Printer o'chiq bo'lsa?** Dastur 3 marta urinadi (5 soniyadan). Baribir
+chiqmasa, xato `agent.log` ga yoziladi va Mini App'da ko'rinadi — printerni
+yoqib, Mini App'dan qaytadan bosiladi.
+
+**Kompyuter o'chiq bo'lsa?** Sennik serverdagi navbatda turadi; kompyuter
+yoqilgach o'zi chiqadi (bot qayta ishga tushsa navbat tozalanadi).
 
 **O'chirish:** `schtasks /Delete /TN Chinor-sennik /F` va papkani o'chiring.
 

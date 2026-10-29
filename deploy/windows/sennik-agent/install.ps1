@@ -1,4 +1,4 @@
-# Chinor sennik agentini shu kompyuterga o'rnatadi.
+﻿# Chinor sennik agentini shu kompyuterga o'rnatadi.
 #
 # Nima qiladi: config.json yozadi va "kirishda ishga tushadigan" vazifa
 # yaratadi. Administrator huquqi KERAK EMAS, dastur joriy foydalanuvchi

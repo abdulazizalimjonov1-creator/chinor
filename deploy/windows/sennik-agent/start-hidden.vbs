@@ -1,7 +1,7 @@
-' Agentni KO'RINMAS holda ishga tushiradi.
-' PowerShell'ni to'g'ridan-to'g'ri vazifa rejalashtiruvchidan chaqirsak,
-' har safar qora oyna "chaqnab" o'tadi — kompyuterda ishlayotgan odamga
-' xalaqit beradi. Bu yerda esa oyna umuman yaratilmaydi (Run ... , 0).
+' Chinor sennik agentini KORINMAS holda ishga tushiradi.
+' PowerShell togridan-togri chaqirilsa, har safar qora oyna chaqnab
+' otadi va kompyuterdagi odamga xalaqit beradi. Bu yerda oyna umuman
+' yaratilmaydi (Run ..., 0, False).
 Dim sh, fso, base
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")

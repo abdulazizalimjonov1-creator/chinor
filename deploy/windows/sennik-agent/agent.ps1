@@ -1,4 +1,4 @@
-# Chinor — sennik agenti.
+﻿# Chinor — sennik agenti.
 #
 # Printer ulangan kompyuterda JIM turadi: serverdan navbatni so'rab, kelgan
 # baytlarni USB printerga uzatadi. Ekranda hech narsa ochilmaydi, hech narsa
@@ -30,9 +30,13 @@ function Write-Log($msg) {
 if (-not (Test-Path $cfgPath)) { Write-Log "config.json topilmadi"; exit 1 }
 $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 
+# Windows PowerShell 5 sukut bo'yicha TLS 1.0 bilan ulanadi — Cloudflare
+# ortidagi server esa uni rad etadi va agent «aloqa yo'q» deb o'tiraveradi.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+
 # Printerga XOM (RAW) baytlarni yuborish — Windows drayveri matnga
 # aralashmasin: TSPL buyruqlari printerga o'zgarishsiz borishi kerak.
-Add-Type -TypeDefinition @"
+Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public class ChinorRaw {
@@ -62,7 +66,7 @@ public class ChinorRaw {
     } finally { Marshal.FreeCoTaskMem(p); ClosePrinter(h); }
   }
 }
-"@
+'@
 
 $headers = @{ 'X-Print-Token' = $cfg.token }
 $pollUrl = $cfg.server.TrimEnd('/') + '/api/print-agent/poll'
@@ -83,13 +87,21 @@ while ($true) {
              -ContentType 'application/json' -Headers $headers -TimeoutSec 60
         $quiet = $false
         foreach ($j in @($r.jobs)) {
-            $ok = $true; $err = ''
-            try {
-                [ChinorRaw]::Send($cfg.printer, [Convert]::FromBase64String($j.data))
-                Write-Log "chop etildi: $($j.name)"
-            } catch {
-                $ok = $false; $err = $_.Exception.Message
-                Write-Log "XATO ($($j.name)): $err"
+            $ok = $false; $err = ''
+            $bytes = [Convert]::FromBase64String($j.data)
+            # Printer bir zum band bo'lishi yoki yangi yoqilgan bo'lishi
+            # mumkin — darrov taslim bo'lmaymiz, 3 marta urinamiz.
+            for ($try = 1; $try -le 3; $try++) {
+                try {
+                    [ChinorRaw]::Send($cfg.printer, $bytes)
+                    $ok = $true; $err = ''
+                    Write-Log "chop etildi: $($j.name)"
+                    break
+                } catch {
+                    $err = $_.Exception.Message
+                    Write-Log "urinish $try/3 ($($j.name)): $err"
+                    if ($try -lt 3) { Start-Sleep -Seconds 5 }
+                }
             }
             try {
                 $d = @{ key = $cfg.key; id = $j.id; ok = $ok; error = $err } | ConvertTo-Json -Compress
