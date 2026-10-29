@@ -36,6 +36,7 @@ PERMISSIONS: Dict[str, str] = {
     "low_stock":      "⚠️ Past qoldiq ro'yxati",
     "usd_rate":       "💱 USD kursini o'zgartirish",
     "ai_analytics":   "🤖 AI Analitika (Gemini)",
+    "cams":           "📹 Kameralar",
 }
 
 # Tartibli ro'yxat — UI da shu tartibda ko'rsatamiz
@@ -48,6 +49,7 @@ PERMISSION_ORDER: List[str] = [
     "stats", "export", "low_stock",
     "usd_rate",
     "ai_analytics",
+    "cams",
 ]
 
 

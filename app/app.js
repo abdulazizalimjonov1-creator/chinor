@@ -6102,6 +6102,320 @@
         };
 
         // ================================================================
+        // 📹 KAMERALAR — do'kondagi IP kameralarni ko'rish
+        // ================================================================
+        // Kameralar do'kon tarmog'ida turadi, telefon esa tashqarida —
+        // shuning uchun tasvirni SERVER olib beradi (bot/api_cams.py).
+        // Bu yerda ikki ko'rinish bor:
+        //   • to'r      — har kameradan 2 soniyada bitta kadr (trafik kam);
+        //   • to'liq    — uzluksiz oqim (MJPEG), kechikish ~1 soniya.
+        // Oqim manzili `<img src=...>` ga yoziladi, unga header qo'shib
+        // bo'lmaydi — shuning uchun server bergan qisqa muddatli token
+        // manzilning o'zida ketadi.
+        let _camList   = [];
+        let _camToken  = '';
+        let _camSubnet = '';
+        let _camTimer  = null;
+        let _camFullId = 0;       // to'liq ekranda turgan kamera
+        let _camFullTimer = null; // oqim ishlamasa — kadrma-kadr zaxira
+
+        function camUrl(id, file, profile) {
+            return API_BASE_URL + '/api/cams/' + id + '/' + file +
+                   '?t=' + encodeURIComponent(_camToken) + '&p=' + profile;
+        }
+
+        function camStop() {
+            if (_camTimer) { clearInterval(_camTimer); _camTimer = null; }
+        }
+
+        // To'r ochiq turganini tekshiramiz: boshqa bo'limga o'tilsa
+        // kadrlarni so'rashdan to'xtaymiz (bekorga trafik ketmasin).
+        function camVisible() {
+            const sc = $('screenTool');
+            return sc && sc.classList.contains('active') &&
+                   ($('camGrid') || $('camSetup'));
+        }
+
+        window.openCams = async function () {
+            navMark('openCams');
+            camStop();
+            openTool('📹 Kameralar');
+            const { ok, status, data } = await apiFetch('/api/cams');
+            if (!ok || !data.ok) return openTool('📹 Kameralar', toolError(status, data));
+            _camList   = data.cams || [];
+            _camToken  = data.token || '';
+            _camSubnet = data.subnet || '';
+            camRenderGrid(data.ffmpeg === false);
+        };
+
+        function camRenderGrid(noFfmpeg) {
+            const on = _camList.filter(c => c.enabled && (c.main_path || c.sub_path));
+            let html = '';
+            if (noFfmpeg) {
+                html += '<div class="cam-warn">⚠️ Serverda <b>ffmpeg</b> o\'rnatilmagan — ' +
+                        'tasvir ko\'rsatib bo\'lmaydi.</div>';
+            }
+            html += '<div class="cam-top">' +
+                    '<button class="cam-btn" onclick="openCamsSetup()">⚙️ Sozlash</button>' +
+                    '<button class="cam-btn" onclick="openCams()">🔄 Yangilash</button>' +
+                    '</div>';
+            if (!on.length) {
+                html += '<div class="cam-empty"><span>📹</span>' +
+                        '<h3>Kamera qo\'shilmagan</h3>' +
+                        '<p>Do\'kon tarmog\'idagi kameralarni topib, ro\'yxatga qo\'shing.</p>' +
+                        '<button class="cam-btn primary" onclick="openCamsSetup()">⚙️ Sozlashni ochish</button></div>';
+            } else {
+                html += '<div class="cam-grid" id="camGrid">';
+                on.forEach(c => {
+                    html += '<div class="cam-card" onclick="camOpen(' + c.id + ')">' +
+                            '<div class="cam-shot"><img id="camImg' + c.id + '" alt="" ' +
+                            'onerror="camImgErr(' + c.id + ')" onload="camImgOk(' + c.id + ')">' +
+                            '<div class="cam-state" id="camSt' + c.id + '">ulanmoqda…</div></div>' +
+                            '<div class="cam-name">' + escapeHtml(c.name) + '</div></div>';
+                });
+                html += '</div>';
+            }
+            openTool('📹 Kameralar', html);
+            if (on.length) {
+                camTick();                                  // birinchi kadr darrov
+                _camTimer = setInterval(camTick, 2500);
+            }
+        }
+
+        function camTick() {
+            if (!camVisible() || !$('camGrid')) return camStop();
+            if (_camFullId) return;                 // to'liq ekranda — to'r kutib turadi
+            const t = Date.now();
+            _camList.forEach(c => {
+                const img = $('camImg' + c.id);
+                if (img) img.src = camUrl(c.id, 'snap.jpg', 'grid') + '&_=' + t;
+            });
+        }
+
+        window.camImgOk = function (id) {
+            const st = $('camSt' + id); if (st) st.style.display = 'none';
+            const img = $('camImg' + id); if (img) img.classList.add('on');
+        };
+        window.camImgErr = function (id) {
+            const st = $('camSt' + id);
+            if (st) { st.style.display = 'block'; st.textContent = 'ulanmadi'; }
+        };
+
+        // ── To'liq ekran ────────────────────────────────────────────────
+        window.camOpen = function (id) {
+            const cam = _camList.find(c => c.id === id);
+            if (!cam) return;
+            _camFullId = id;
+            let ov = $('camOverlay');
+            if (!ov) {
+                ov = document.createElement('div');
+                ov.id = 'camOverlay'; ov.className = 'cam-overlay';
+                document.body.appendChild(ov);
+            }
+            ov.innerHTML =
+                '<div class="cam-ov-bar"><b>' + escapeHtml(cam.name) + '</b>' +
+                '<button onclick="camClose()">✕</button></div>' +
+                '<div class="cam-ov-body"><img id="camOvImg" alt="" ' +
+                'onerror="camOvFallback()"><div class="cam-ov-wait" id="camOvWait">Ulanmoqda…</div></div>' +
+                '<div class="cam-ov-foot" id="camOvFoot">Jonli oqim</div>';
+            ov.style.display = 'flex';
+            const img = $('camOvImg');
+            img.onload = () => { const w = $('camOvWait'); if (w) w.style.display = 'none'; };
+            img.src = camUrl(id, 'live.mjpg', 'full');
+        };
+
+        // Uzluksiz oqim o'tmasa (tarmoq yoki tunnel yo'l qo'ymasa) —
+        // kadrma-kadr so'raymiz: sifati o'sha, faqat biroz uzuq-yuluq.
+        window.camOvFallback = function () {
+            if (!_camFullId || _camFullTimer) return;
+            const foot = $('camOvFoot');
+            if (foot) foot.textContent = 'Kadrma-kadr rejim';
+            const step = () => {
+                const img = $('camOvImg');
+                if (!img || !_camFullId) return;
+                img.src = camUrl(_camFullId, 'snap.jpg', 'full') + '&_=' + Date.now();
+            };
+            const img = $('camOvImg');
+            if (img) img.onerror = null;
+            step();
+            _camFullTimer = setInterval(step, 900);
+        };
+
+        window.camClose = function () {
+            _camFullId = 0;
+            if (_camFullTimer) { clearInterval(_camFullTimer); _camFullTimer = null; }
+            const img = $('camOvImg');
+            if (img) img.src = '';           // oqimni uzamiz, aks holda fonda davom etadi
+            const ov = $('camOverlay');
+            if (ov) { ov.style.display = 'none'; ov.innerHTML = ''; }
+        };
+
+        // ── Sozlash: ro'yxat, topish, qo'shish ──────────────────────────
+        window.openCamsSetup = function (found) {
+            navMark('openCamsSetup');
+            camStop();
+            let html = '<div id="camSetup">' +
+                '<div class="cam-top">' +
+                '<button class="cam-btn" onclick="openCams()">👁 Ko\'rish</button>' +
+                '<button class="cam-btn" onclick="camDiscover()">🔍 Tarmoqdan topish</button>' +
+                '</div>' +
+                '<div id="camFound">' + (found || '') + '</div>';
+            if (_camList.length) {
+                html += '<div class="cam-rows">';
+                _camList.forEach(c => {
+                    const sozlangan = c.main_path || c.sub_path;
+                    html += '<div class="cam-row">' +
+                        '<div class="cam-row-main"><b>' + escapeHtml(c.name) + '</b>' +
+                        '<span>' + escapeHtml(c.host) + (c.port !== 554 ? ':' + c.port : '') +
+                        (sozlangan ? '' : ' · <i>yo\'li aniqlanmagan</i>') +
+                        (c.enabled ? '' : ' · <i>o\'chiq</i>') + '</span></div>' +
+                        '<div class="cam-row-btns">' +
+                        '<button class="cam-mini" onclick="camForm(' + c.id + ')">✏️</button>' +
+                        '<button class="cam-mini" onclick="camDelete(' + c.id + ')">🗑</button>' +
+                        '</div></div>';
+                });
+                html += '</div>';
+            }
+            html += '<button class="cam-btn primary wide" onclick="camForm(0)">➕ Kamera qo\'shish</button>';
+            html += '<div class="cam-hint">Kameralar server bilan bitta tarmoqda bo\'lishi kerak ' +
+                    '(' + escapeHtml(_camSubnet || '192.168.x') + '.x). Parol kameraning ' +
+                    'o\'z sozlamasidan olinadi — odatda <b>admin</b>.</div>';
+            html += '</div>';
+            openTool('📹 Kameralar — sozlash', html);
+        };
+
+        window.camDiscover = async function () {
+            const box = $('camFound');
+            if (box) box.innerHTML = '<div class="cam-hint">🔍 Tarmoq tekshirilmoqda…</div>';
+            const { ok, status, data } = await apiFetch('/api/admin/cams/discover', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (!ok || !data.ok) {
+                if (box) box.innerHTML = toolError(status, data);
+                return;
+            }
+            const yangi = (data.found || []).filter(f => !f.added);
+            let html = '<div class="cam-found"><b>Topildi: ' + (data.found || []).length +
+                       ' ta qurilma</b> (' + escapeHtml(data.subnet) + '.x)';
+            if (!yangi.length) {
+                html += '<p>Yangi kamera yo\'q — topilganlarning hammasi ro\'yxatda.</p>';
+            } else {
+                html += '<p>Qo\'shish uchun bosing:</p><div class="cam-chips">';
+                yangi.forEach(f => {
+                    html += '<button class="cam-chip" onclick="camForm(0,\'' +
+                            escapeHtml(f.host) + '\')">' + escapeHtml(f.host) + '</button>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+            if (box) box.innerHTML = html;
+        };
+
+        window.camForm = function (id, host) {
+            const c = _camList.find(x => x.id === id) || {};
+            navMark('camForm', id, host);
+            openTool(id ? '✏️ Kamerani tahrirlash' : '➕ Yangi kamera',
+                '<div class="cam-form">' +
+                '<label>Nomi</label>' +
+                '<input id="cfName" type="text" placeholder="Masalan: Kirish eshigi" value="' +
+                    escapeHtml(c.name || '') + '">' +
+                '<label>IP manzil *</label>' +
+                '<input id="cfHost" type="text" inputmode="decimal" placeholder="192.168.1.10" value="' +
+                    escapeHtml(c.host || host || '') + '">' +
+                '<label>RTSP port</label>' +
+                '<input id="cfPort" type="number" inputmode="numeric" value="' + (c.port || 554) + '">' +
+                '<label>Login</label>' +
+                '<input id="cfUser" type="text" autocomplete="off" placeholder="admin" value="' +
+                    escapeHtml(c.username || '') + '">' +
+                '<label>Parol' + (c.has_password ? ' (saqlangan — o\'zgartirmasangiz bo\'sh qoldiring)' : '') + '</label>' +
+                '<input id="cfPass" type="password" autocomplete="new-password" placeholder="' +
+                    (c.has_password ? '••••••••' : 'kamera paroli') + '">' +
+                '<div class="cam-paths">' +
+                '<label>Oqim yo\'li (bo\'sh qoldiring — o\'zi aniqlaydi)</label>' +
+                '<input id="cfMain" type="text" placeholder="/Streaming/Channels/101" value="' +
+                    escapeHtml(c.main_path || '') + '">' +
+                '<input id="cfSub" type="text" placeholder="/Streaming/Channels/102 (kichik oqim)" value="' +
+                    escapeHtml(c.sub_path || '') + '">' +
+                '</div>' +
+                '<div id="cfStatus" class="cam-hint"></div>' +
+                '<button class="cam-btn primary wide" onclick="camSave(' + (id || 0) + ')">💾 Saqlash</button>' +
+                (id ? '<button class="cam-btn wide" onclick="camProbe(' + id + ')">🔎 Oqim yo\'lini aniqlash</button>' : '') +
+                '<button class="cam-btn wide" onclick="openCamsSetup()">← Bekor qilish</button>' +
+                '</div>');
+        };
+
+        function camStatus(msg) {
+            const s = $('cfStatus'); if (s) s.innerHTML = msg;
+        }
+
+        window.camSave = async function (id) {
+            const host = ($('cfHost').value || '').trim();
+            if (!host) return camStatus('⚠️ IP manzil kiriting.');
+            const body = {
+                id: id,
+                name: ($('cfName').value || '').trim(),
+                host: host,
+                port: parseInt($('cfPort').value || '554', 10) || 554,
+                username: ($('cfUser').value || '').trim(),
+                main_path: ($('cfMain').value || '').trim(),
+                sub_path: ($('cfSub').value || '').trim(),
+                enabled: true
+            };
+            // Parol bo'sh bo'lsa YUBORMAYMIZ — serverda eskisi saqlanib qoladi
+            const pass = $('cfPass').value;
+            if (pass) body.password = pass;
+            else if (!id) body.password = '';
+            camStatus('💾 Saqlanmoqda…');
+            const { ok, status, data } = await apiFetch('/api/admin/cams/save', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!ok || !data.ok) return camStatus(toolError(status, data));
+            const yangi = data.cam;
+            const i = _camList.findIndex(x => x.id === yangi.id);
+            if (i >= 0) _camList[i] = yangi; else _camList.push(yangi);
+            // Yo'l hali noma'lum bo'lsa — darrov aniqlab beramiz, odam
+            // kamera modelini qidirib o'tirmasin.
+            if (!yangi.main_path) return camProbe(yangi.id, true);
+            openCamsSetup();
+        };
+
+        window.camProbe = async function (id, saqlandi) {
+            camStatus('🔎 Kamera tekshirilmoqda… (yarim daqiqagacha ketishi mumkin)');
+            const body = { id: id };
+            const pass = $('cfPass') ? $('cfPass').value : '';
+            if (pass) body.password = pass;
+            const user = $('cfUser') ? ($('cfUser').value || '').trim() : '';
+            if (user) body.username = user;
+            const { ok, status, data } = await apiFetch('/api/admin/cams/probe', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!ok) return camStatus(toolError(status, data));
+            if (!data.ok) {
+                return camStatus('❌ Ulanmadi: ' + escapeHtml(data.error || '') +
+                    '<br>Login/parolni tekshiring' +
+                    (saqlandi ? ' — kamera ro\'yxatga qo\'shildi, keyin qayta urinib ko\'ring.' : '.'));
+            }
+            const c = _camList.find(x => x.id === id);
+            if (c) { c.main_path = data.main_path; c.sub_path = data.sub_path; }
+            camStatus('✅ Topildi: <code>' + escapeHtml(data.main_path) + '</code>');
+            setTimeout(openCams, 900);
+        };
+
+        window.camDelete = async function (id) {
+            const c = _camList.find(x => x.id === id);
+            if (!confirm('«' + ((c && c.name) || id) + '» kamerasi ro\'yxatdan o\'chirilsinmi?')) return;
+            const { ok, data } = await apiFetch('/api/admin/cams/delete', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            });
+            if (ok && data.ok) _camList = _camList.filter(x => x.id !== id);
+            openCamsSetup();
+        };
+
+        // ================================================================
         // ESC KEY
         // ================================================================
         document.addEventListener('keydown', (e) => {

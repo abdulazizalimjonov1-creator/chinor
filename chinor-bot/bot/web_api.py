@@ -4628,6 +4628,9 @@ def create_app() -> web.Application:
     # Sennikni USB printerga to'g'ridan-to'g'ri yuborish (kompyuterdagi agent)
     from bot import print_agent
     print_agent.setup(app)
+    # Do'kondagi IP kameralar — server oqimni olib Mini App'ga uzatadi
+    from bot import api_cams
+    api_cams.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
