@@ -3549,9 +3549,12 @@
             if (paper) _tagTarget = 'browser';
             const rows = _tagAgents.map(a => {
                 const off = !a.online || paper;
+                // Oxirgi xato ko'rinib tursin: printer o'chiq yoki nomi
+                // noto'g'ri bo'lsa, admin sababni shu yerda ko'radi.
                 const hint = paper ? 'A4 bu printerga chiqmaydi'
-                           : (a.online ? (a.printer || 'printerga to\'g\'ridan-to\'g\'ri')
-                                       : 'hozir ulanmagan');
+                           : (!a.online ? 'hozir ulanmagan'
+                           : (a.last_error ? '⚠️ ' + a.last_error
+                                           : (a.printer || 'printerga to\'g\'ridan-to\'g\'ri')));
                 return `<button class="sn-size${a.key === _tagTarget ? ' on' : ''}${off ? ' off' : ''}"
                     ${off ? 'disabled' : ''} onclick="tagSetTarget('${a.key}')">
                     <b>${a.online ? '🟢' : '⚪️'} ${escapeHtml(a.name)}</b>
