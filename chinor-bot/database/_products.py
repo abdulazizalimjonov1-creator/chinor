@@ -29,6 +29,19 @@ def _norm_codes(barcodes, barcode="") -> List[str]:
     return out
 
 
+def _internal_sku(code: str) -> int:
+    """Sennikdagi DO'KON ICHKI shtrix-kodi bo'lsa — tovar id si, aks holda 0.
+
+    Shtrix-kodi yo'q tovarlarga sennik chop etishda `200` + id dan iborat
+    EAN-13 bosiladi (bot/barcode_gen.py). Skaner shu kodni o'qiganda tovar
+    topilishi kerak — aks holda sennikdagi kod bekorga turadi."""
+    try:
+        from bot.barcode_gen import sku_from_code
+        return sku_from_code(code)
+    except Exception:
+        return 0
+
+
 class ProductsMixin:
     # ── SKU (mahsulot ID) ────────────────────────────────────────────────────
     @staticmethod
@@ -326,6 +339,15 @@ class ProductsMixin:
                 ).fetchall()
                 if rows:
                     return _out(rows)
+                # 1b) Do'kon ichki kodi (sennikdan skanerlangan)
+                pid = _internal_sku(q)
+                if pid:
+                    rows = conn.execute(
+                        "SELECT * FROM products WHERE id=? AND is_active=1",
+                        (pid,)
+                    ).fetchall()
+                    if rows:
+                        return _out(rows)
                 # 2) Raqam bo'lsa — ID yoki shtrix-kodning bir qismi
                 if q.isdigit():
                     rows = conn.execute(
@@ -402,6 +424,14 @@ class ProductsMixin:
                     "  SELECT product_id FROM product_barcodes WHERE code=?)) LIMIT 1",
                     (bc, bc)
                 ).fetchone()
+                if not r:
+                    # Sennikdagi do'kon ichki kodi ham tanilsin
+                    pid = _internal_sku(bc)
+                    if pid:
+                        r = conn.execute(
+                            "SELECT * FROM products WHERE id=? AND is_active=1",
+                            (pid,)
+                        ).fetchone()
                 if not r:
                     return None
                 p = self._row_to_product(r)

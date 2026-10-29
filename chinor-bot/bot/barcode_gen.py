@@ -1,0 +1,116 @@
+"""Sennik uchun EAN-13 shtrix-kod chizmasi (kutubxonasiz, sof Python).
+
+Nega EAN-13 va faqat shu:
+  • Do'kondagi 7000 tovardan 2000 tasida zavod shtrix-kodi bor — u aynan
+    EAN-13 (13 raqam).
+  • Qolganlarida kod yo'q. Ular uchun DO'KON ICHKI kodini yasaymiz:
+    `200` + tovar id si (9 raqam) + nazorat raqami. `20…29` oralig'i
+    standart bo'yicha aynan do'kon ichki kodlari uchun ajratilgan, ya'ni
+    hech bir zavod kodi bilan to'qnashmaydi.
+  • Bitta simvolika — bitta chizg'ich, bitta tekshiruv. Code128 jadvali
+    107 qatorli, xatosi esa faqat skanerda bilinadi.
+
+Skaner ichki kodni o'qiganda `bot/web_api` tovarni id bo'yicha topadi
+(`sku_from_code`).
+"""
+
+from __future__ import annotations
+
+# 1 = qora chiziq, 0 = oq. L kodlar 0 bilan, R kodlar 1 bilan boshlanadi.
+_L = ("0001101", "0011001", "0010011", "0111101", "0100011",
+      "0110001", "0101111", "0111011", "0110111", "0001011")
+_G = ("0100111", "0110011", "0011011", "0100001", "0011101",
+      "0111001", "0000101", "0010001", "0001001", "0010111")
+_R = ("1110010", "1100110", "1101100", "1000010", "1011100",
+      "1001110", "1010000", "1000100", "1001000", "1110100")
+# Birinchi raqam chap yarmidagi L/G tartibi bilan "yashiringan"
+_PARITY = ("LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG",
+           "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL")
+
+MODULES = 95                      # EAN-13 doim 95 modul
+INTERNAL_PREFIX = "200"           # do'kon ichki kodlari
+
+
+def checksum(d12: str) -> int:
+    """EAN-13 nazorat raqami (12 ta raqamdan)."""
+    s = sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(d12))
+    return (10 - s % 10) % 10
+
+
+def is_valid_ean13(code: str) -> bool:
+    code = (code or "").strip()
+    return (len(code) == 13 and code.isdigit()
+            and int(code[12]) == checksum(code[:12]))
+
+
+def internal_code(product_id: int) -> str:
+    """Shtrix-kodi yo'q tovar uchun do'kon ichki EAN-13 i."""
+    body = f"{INTERNAL_PREFIX}{int(product_id):09d}"[:12]
+    return body + str(checksum(body))
+
+
+def sku_from_code(code: str) -> int:
+    """Ichki kod bo'lsa — tovar id si, aks holda 0."""
+    code = (code or "").strip()
+    if not is_valid_ean13(code) or not code.startswith(INTERNAL_PREFIX):
+        return 0
+    try:
+        return int(code[len(INTERNAL_PREFIX):12])
+    except ValueError:
+        return 0
+
+
+def bits(code: str) -> list:
+    """EAN-13 ning 95 moduli: 1 = qora, 0 = oq."""
+    code = (code or "").strip()
+    if len(code) == 12 and code.isdigit():
+        code += str(checksum(code))
+    if not is_valid_ean13(code):
+        raise ValueError(f"EAN-13 emas: {code!r}")
+    d = [int(c) for c in code]
+    out = [1, 0, 1]                                   # chap qo'riqchi
+    for i, digit in enumerate(d[1:7]):
+        table = _L if _PARITY[d[0]][i] == "L" else _G
+        out += [int(b) for b in table[digit]]
+    out += [0, 1, 0, 1, 0]                            # o'rta qo'riqchi
+    for digit in d[7:]:
+        out += [int(b) for b in _R[digit]]
+    out += [1, 0, 1]                                  # o'ng qo'riqchi
+    return out
+
+
+def for_product(barcode: str, product_id: int) -> str:
+    """Sennikka chiqadigan kod: zavodniki (to'g'ri bo'lsa) yoki ichki kod."""
+    bc = (barcode or "").strip()
+    if is_valid_ean13(bc):
+        return bc
+    # 12 raqamli (nazorat raqamisiz) kod ham uchraydi — to'ldiramiz
+    if len(bc) == 12 and bc.isdigit():
+        return bc + str(checksum(bc))
+    return internal_code(product_id)
+
+
+# Qo'riqchi chiziqlar (chap/o'rta/o'ng) pastga uzunroq tushadi — skaner
+# shunga qarab kodning chekkasini topadi.
+GUARDS = set(range(0, 3)) | set(range(45, 50)) | set(range(92, 95))
+
+
+def svg(code: str, width_mm: float, height_mm: float, show_text: bool = True) -> str:
+    """Brauzerdagi sennik uchun — chizmani SVG qilib qaytaradi."""
+    b = bits(code)
+    mw = width_mm / MODULES
+    bar_h = height_mm - (height_mm * 0.26 if show_text else 0)
+    rects = []
+    for i, bit in enumerate(b):
+        if not bit:
+            continue
+        h = bar_h + (height_mm * 0.07 if i in GUARDS and show_text else 0)
+        rects.append(f'<rect x="{i*mw:.3f}" y="0" width="{mw:.3f}" height="{h:.3f}"/>')
+    text = ""
+    if show_text:
+        text = (f'<text x="{width_mm/2:.2f}" y="{height_mm:.2f}" fill="#000" '
+                f'font-family="monospace" font-size="{height_mm*0.24:.2f}" '
+                f'text-anchor="middle" letter-spacing="{mw*0.5:.3f}">{code}</text>')
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width_mm}mm" '
+            f'height="{height_mm}mm" viewBox="0 0 {width_mm} {height_mm}" '
+            f'shape-rendering="crispEdges">{"".join(rects)}{text}</svg>')

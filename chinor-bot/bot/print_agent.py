@@ -146,10 +146,33 @@ def _fit_font(draw, text: str, width: int, start: int, bold: bool = True):
     return _font(10, bold)
 
 
+def _draw_barcode(d, im, code: str, cx: int, top: int, module: int,
+                  bar_h: int, txt_h: int) -> None:
+    """Shtrix-kodni chizadi: chiziqlar + ostida raqamlari.
+
+    Modul (eng ingichka chiziq) eni BUTUN nuqta bo'lishi shart — kasr
+    bo'lsa, printer uni goh 2, goh 3 nuqta qilib bosadi va skaner o'qiy
+    olmaydi."""
+    from bot import barcode_gen as bg
+    bits = bg.bits(code)
+    w = len(bits) * module
+    x0 = cx - w // 2
+    for i, bit in enumerate(bits):
+        if not bit:
+            continue
+        # Qo'riqchi chiziqlar pastroq tushadi — skaner kod chekkasini shundan topadi
+        h = bar_h + (txt_h // 2 if i in bg.GUARDS else 0)
+        d.rectangle([x0 + i * module, top, x0 + (i + 1) * module - 1, top + h], fill=0)
+    if txt_h >= 8:
+        f = _font(txt_h, False)
+        tw = _text_w(d, code, f)
+        d.text((cx - tw // 2, top + bar_h + txt_h // 2), code, font=f, fill=0)
+
+
 def render_label(lb: dict, size_key: str):
     """Sennik rasmi (PIL '1' rejimi — oq-qora, printer aynan shuni bosadi)."""
     from PIL import Image, ImageDraw
-    from bot import api_pricetag
+    from bot import api_pricetag, barcode_gen
 
     cfg = api_pricetag.SIZES.get(size_key) or {}
     mm_w, mm_h = cfg.get("mm", (60, 40))
@@ -162,11 +185,10 @@ def render_label(lb: dict, size_key: str):
     x0, x1 = pad, W - pad
     y = pad
 
-    # 1) Sarlavha: logotip + do'kon nomi + chiziq
+    # 1) Sarlavha: logotip + do'kon nomi
     logo_h = int(H * (0.14 if small else 0.16))
     try:
-        from bot.api_pricetag import _logo_bytes
-        raw = _logo_bytes()
+        raw = api_pricetag._logo_bytes()
         if raw:
             lg = Image.open(io.BytesIO(raw)).convert("L")
             lg = lg.resize((logo_h, logo_h), Image.LANCZOS)
@@ -182,26 +204,36 @@ def render_label(lb: dict, size_key: str):
     d.line((x0, y, x1, y), fill=0, width=2)
     y += 4 if small else 7
 
-    # 2) Nomi — 2 (kichik sennikda) yoki 3 qator
+    # 2) Pastdan yuqoriga: shtrix-kod joyi (modul eni butun nuqta bo'lsin)
+    code = barcode_gen.for_product(lb.get("barcode", ""), lb.get("sku") or 0)
+    module = 2 if small else 3
+    bar_h = int(H * (0.17 if small else 0.15))
+    txt_h = int(H * (0.07 if small else 0.055))
+    bottom = H - pad
+    bc_top = bottom - bar_h - txt_h - (0 if small else 2)
+
+    # 3) Kichik qator (SKU va birlik) — faqat kattaroq sennikda joy bor
+    foot_bottom = bc_top
+    if not small:
+        foot_f = _font(int(H * 0.055), False)
+        foot_y = bc_top - int(foot_f.size * 1.35)
+        d.text((x0, foot_y), f"SKU {lb['sku']}", font=_font(foot_f.size, True), fill=0)
+        unit = lb.get("unit") or ""
+        if unit:
+            d.text((x1 - _text_w(d, unit, foot_f), foot_y), unit, font=foot_f, fill=0)
+        foot_bottom = foot_y - 2
+
+    # 4) Nomi — 2 (kichik sennikda) yoki 3 qator
     name_f = _font(int(H * (0.085 if small else 0.09)), True)
     lines = _wrap(d, lb["name"], name_f, x1 - x0, 2 if small else 3)
     for ln in lines:
         d.text((x0, y), ln, font=name_f, fill=0)
         y += int(name_f.size * 1.15)
 
-    # 3) Pastki qator: SKU va shtrix-kod / birlik
-    foot_f = _font(int(H * (0.065 if small else 0.062)), False)
-    foot_y = H - pad - int(foot_f.size * 1.2)
-    d.line((x0, foot_y - 4, x1, foot_y - 4), fill=0, width=1)
-    d.text((x0, foot_y), f"SKU {lb['sku']}", font=_font(foot_f.size, True), fill=0)
-    right = lb.get("barcode") if (lb.get("barcode") and not small) else (lb.get("unit") or "")
-    if right:
-        d.text((x1 - _text_w(d, right, foot_f), foot_y), right, font=foot_f, fill=0)
-
-    # 4) Narx — qolgan bo'sh joyni to'ldiradi, o'ng tomonda
+    # 5) Narx — nom bilan shtrix-kod orasidagi bo'sh joyni to'ldiradi
     price = api_pricetag._fmt_sum(lb["price"])
     cur = " so'm"
-    space_h = foot_y - 8 - y
+    space_h = foot_bottom - 4 - y
     price_f = _fit_font(d, price + cur, x1 - x0, max(12, int(space_h * 0.95)))
     cur_f = _font(max(8, int(price_f.size * 0.36)), False)
     pw = _text_w(d, price, price_f) + _text_w(d, cur, cur_f)
@@ -211,6 +243,10 @@ def render_label(lb: dict, size_key: str):
     d.text((px + _text_w(d, price, price_f),
             py + price_f.size - cur_f.size - int(cur_f.size * 0.15)),
            cur, font=cur_f, fill=0)
+
+    # 6) Shtrix-kod — eng pastda, markazda (chap va o'ngda bo'sh «sokin
+    #    zona» qolishi shart, aks holda skaner kodni topa olmaydi)
+    _draw_barcode(d, im, code, W // 2, bc_top, module, bar_h, txt_h)
 
     # Chegaraviy qiymat bilan — `convert("1")` ning o'zi Floyd-Steinberg
     # bilan «sepib» yuboradi va mayda yozuv kulrang to'r bo'lib chiqadi.

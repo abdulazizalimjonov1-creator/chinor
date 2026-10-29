@@ -30,6 +30,27 @@ parolsiz). Shu sababli u qisqa muddatli: 2 soatdan keyin ishlamaydi.
 Sennikda: do'kon logosi, tovar nomi, narxi, SKU (= tovar id), o'lchov birligi
 va shtrix-kod raqami (bo'lsa). Uzun nom avtomatik kichrayadi.
 
+## Shtrix-kod (skanerlash uchun)
+
+Har bir sennikda EAN-13 shtrix-kod bo'ladi:
+
+- **Zavod kodi bor bo'lsa** (bazada ~2000 tovar) — o'sha kod bosiladi.
+  Nazorat raqami tekshiriladi; noto'g'ri bo'lsa ichki kodga o'tiladi.
+- **Kodi yo'q bo'lsa** (~5000 tovar) — do'konning ICHKI kodi yasaladi:
+  `200` + tovar id si (9 raqam) + nazorat raqami. `20…29` oralig'i standart
+  bo'yicha aynan do'kon ichki kodlariga ajratilgan, shuning uchun hech bir
+  zavod kodi bilan to'qnashmaydi.
+
+Ichki kod skanerlanganda tovar topilishi uchun qidiruvga qo'shimcha qadam
+qo'yildi (`database/_products.py` → `_internal_sku`): Mini App va bot uni
+tovar id siga aylantiradi. **YesPOS kassasi bu kodlarni bilmaydi** — u
+boshqa tizim.
+
+Chizg'ich: `bot/barcode_gen.py` (kutubxonasiz). Chop etishda modul (eng
+ingichka chiziq) eni butun nuqta: 60×40 da 3 nuqta (0.375 mm), 30×20 da
+2 nuqta (0.25 mm) — kasr bo'lsa printer goh 2, goh 3 nuqta bosib, kod
+o'qilmay qoladi. Chizmalar mustaqil dekoder (zxing) bilan tekshirilgan.
+
 ## Ikki yo'l: to'g'ridan-to'g'ri printerga yoki brauzer orqali
 
 XP-365B **USB** bilan ulangan — serverdan unga to'g'ridan-to'g'ri yozib

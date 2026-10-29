@@ -45,15 +45,15 @@ MAX_JOBS = 50               # xotirada shundan ortig'i saqlanmaydi
 # uchun (har sennik alohida varaq), `cols/rows` — A4 varaqdagi to'r.
 SIZES = {
     "60x40": {"title": "60×40 mm", "page": "60mm 40mm", "w": "60mm", "h": "40mm",
-              "one_per_page": True,  "mm": (60, 40), "gap_mm": 2,
+              "one_per_page": True,  "mm": (60, 40), "gap_mm": 2, "bc": (34, 7.5),
               "hint": "Rulon printer (ma'lumot qabul qiluvchi kompyuter)"},
     "30x20": {"title": "30×20 mm", "page": "30mm 20mm", "w": "30mm", "h": "20mm",
-              "one_per_page": True,  "mm": (30, 20), "gap_mm": 2,
+              "one_per_page": True,  "mm": (30, 20), "gap_mm": 2, "bc": (23, 4.5),
               "hint": "Rulon printer (server kompyuter)"},
     "a4":    {"title": "A4 — 8 ta", "page": "A4", "w": "97mm", "h": "66mm",
-              "one_per_page": False, "paper": True, "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
+              "one_per_page": False, "paper": True, "bc": (46, 10), "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
     "a4big": {"title": "A4 — 1 ta katta", "page": "A4", "w": "194mm", "h": "271mm",
-              "one_per_page": True, "paper": True,  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
+              "one_per_page": True, "paper": True, "bc": (120, 28),  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
 }
 DEFAULT_SIZE = "60x40"
 
@@ -142,7 +142,8 @@ html,body{background:#f1f3f5;font-family:Arial,Helvetica,"Segoe UI",sans-serif;c
 .tag .bot{display:flex;justify-content:space-between;align-items:flex-end;
      border-top:.3mm solid #d1d5db;padding-top:.6mm;color:#374151}
 .tag .sku{font-weight:700;letter-spacing:.04em}
-.tag .bc{font-family:"Courier New",monospace;letter-spacing:.02em}
+.tag .bars{display:flex;justify-content:center;align-items:flex-end;flex:0 0 auto}
+.tag .bars svg{display:block}
 
 @media print{
   html,body{background:#fff}
@@ -165,25 +166,40 @@ def _tag_html(lb: dict, size: str) -> str:
     sku = html.escape(str(lb.get("sku") or ""))
     bc = html.escape(lb.get("barcode") or "")
 
+    # Balandliklar sennikka SIG'ADIGAN qilib hisoblangan: sarlavha + nom +
+    # narx + pastki qator + shtrix-kod + oraliqlar yig'indisi sennik
+    # bo'yidan oshmasligi kerak. Oshsa, pastdagi `fit` shriftni kichraytirib
+    # yuboradi va nom o'qib bo'lmas holga keladi.
     if small:                                  # 30×20 mm — faqat eng zaruri
-        s = {"pad": "1.2mm", "logo": "3.4mm", "shop": "2.3mm", "nm": "2.3mm",
-             "pr": "5mm", "cur": "0.4em", "bot": "1.9mm", "gap": ".8mm"}
+        s = {"pad": "1.2mm", "logo": "2.6mm", "shop": "1.9mm", "nm": "2mm",
+             "pr": "4mm", "cur": "0.4em", "bot": "1.7mm", "gap": ".5mm"}
     elif big:                                  # A4 ga bitta katta
         s = {"pad": "14mm", "logo": "26mm", "shop": "16mm", "nm": "15mm",
              "pr": "46mm", "cur": "0.3em", "bot": "8mm", "gap": "8mm"}
     elif size == "a4":                         # A4 varaqdagi kartochka
-        s = {"pad": "5mm", "logo": "11mm", "shop": "6mm", "nm": "6mm",
-             "pr": "17mm", "cur": "0.35em", "bot": "4mm", "gap": "3mm"}
+        s = {"pad": "4mm", "logo": "8mm", "shop": "5mm", "nm": "5mm",
+             "pr": "12mm", "cur": "0.35em", "bot": "3.6mm", "gap": "2mm"}
     else:                                      # 60×40 mm
-        s = {"pad": "2.2mm", "logo": "6.5mm", "shop": "3.4mm", "nm": "3.6mm",
-             "pr": "10mm", "cur": "0.33em", "bot": "2.5mm", "gap": "1.4mm"}
+        s = {"pad": "2mm", "logo": "5.5mm", "shop": "3mm", "nm": "3.4mm",
+             "pr": "8mm", "cur": "0.33em", "bot": "2.2mm", "gap": "1mm"}
 
     img = (f'<img src="{LOGO_PATH}" alt="" style="height:{s["logo"]};width:{s["logo"]}">'
            if _logo_bytes() else "")
     cut = "" if SIZES[size]["one_per_page"] else "border:.3mm dashed #9ca3af;"
-    bot_right = (f'<span class="bc" style="font-size:{s["bot"]}">{bc}</span>'
-                 if bc and not small else
-                 f'<span style="font-size:{s["bot"]}">{unit}</span>')
+    # Shtrix-kod: zavodniki yoki do'kon ichki kodi (skanerlash uchun).
+    # Raqamlari chiziqlar ostida chiqadi, shuning uchun pastki qatorda
+    # faqat o'lchov birligi qoladi.
+    from bot import barcode_gen
+    bc_w, bc_h = SIZES[size].get("bc", (36, 9))
+    try:
+        bars = barcode_gen.svg(barcode_gen.for_product(bc, lb.get("sku") or 0),
+                               bc_w, bc_h, show_text=not small)
+    except ValueError:
+        bars = ""
+    bot_right = f'<span style="font-size:{s["bot"]}">{unit}</span>'
+    foot = ("" if small else
+            f'<div class="bot" style="font-size:{s["bot"]}">'
+            f'<span class="sku">SKU {sku}</span>{bot_right}</div>')
     return (
         f'<div class="tag" style="width:{SIZES[size]["w"]};height:{SIZES[size]["h"]};'
         f'padding:{s["pad"]};gap:{s["gap"]};{cut}">'
@@ -191,8 +207,8 @@ def _tag_html(lb: dict, size: str) -> str:
         f'  <div class="nm" data-fit style="font-size:{s["nm"]}">{name}</div>'
         f'  <div class="pr" data-fit style="font-size:{s["pr"]}">{price}'
         f'<i style="font-size:{s["cur"]}"> so\'m</i></div>'
-        f'  <div class="bot" style="font-size:{s["bot"]}">'
-        f'<span class="sku">SKU {sku}</span>{bot_right}</div>'
+        f'  {foot}'
+        f'  <div class="bars">{bars}</div>'
         f'</div>')
 
 
