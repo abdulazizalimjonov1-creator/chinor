@@ -2596,12 +2596,29 @@ async def login(request: web.Request):
         "ok": True,
         "role": role,
         "session_token": session_token,
+        "is_glavniy": 1 if tg_id == GLAVNIY_ADMIN_ID else 0,
+        "perms": _my_perms(role, tg_id, user),
         "user": {
             "id": int(user.get("telegram_id") or user.get("id") or 0),
             "name": display_name,
             "username": user.get("username", ""),
         }
     })
+
+
+def _my_perms(role: str, tg_id: int, user: dict) -> list:
+    """Foydalanuvchining o'z ruxsatlari — Mini App shunga qarab bo'lim
+    tugmalarini ko'rsatadi.
+
+    Ilgari panelda HAMMA tugma turardi va ruxsati yo'q xodim bo'limni
+    ochganda 403 olardi: tizim buzuqdek tuyulardi. Endi ro'yxat login
+    javobida keladi va mos kelmagan tugma umuman chizilmaydi."""
+    if role != "admin":
+        return []
+    from bot.permissions import PERMISSIONS, effective_permissions, is_glavniy
+    if is_glavniy(tg_id):
+        return sorted(PERMISSIONS.keys())
+    return sorted(effective_permissions(user or {}))
 
 
 @ROUTES.post("/api/auth/telegram")
@@ -2642,6 +2659,8 @@ async def auth_telegram(request: web.Request):
         "ok": True,
         "role": role,
         "session_token": _create_session(auth),
+        "is_glavniy": 1 if auth.get("is_glavniy") else 0,
+        "perms": _my_perms(role, auth.get("tg_id") or 0, user),
         "user": {
             "id": int(user.get("telegram_id") or user.get("id") or 0),
             "name": display_name,
@@ -4249,7 +4268,9 @@ async def api_staff(request: web.Request):
             "pending": 1,
         })
     return web.json_response({"ok": True, "items": items,
-                              "can_manage": 1 if _staff_can_manage(auth) else 0})
+                              "can_manage": 1 if _staff_can_manage(auth) else 0,
+                              # Bo'lim-bo'lim ruxsat — faqat bosh adminda
+                              "can_perms": 1 if auth.get("is_glavniy") else 0})
 
 
 @ROUTES.post("/api/staff/add")
@@ -4298,8 +4319,8 @@ async def api_staff_role(request: web.Request):
     except (TypeError, ValueError):
         tg_id = 0
     role = (body.get("role") or "").strip().lower()
-    if not tg_id or role not in ("full", "products", "cashier", "stats"):
-        return _err("telegram_id va rol (full/products/cashier/stats) kerak")
+    if not tg_id or role not in ("full", "products", "cashier", "stats", "custom"):
+        return _err("telegram_id va rol kerak (full/products/cashier/stats/custom)")
     if tg_id == GLAVNIY_ADMIN_ID:
         return _err("Glavniy adminning roli o'zgartirilmaydi")
     a = await _db.get_admin(tg_id)
@@ -4307,6 +4328,80 @@ async def api_staff_role(request: web.Request):
         return _err("Xodim topilmadi", 404)
     await _db.set_admin_role(tg_id, role)
     return web.json_response({"ok": True, "telegram_id": tg_id, "role": role})
+
+
+@ROUTES.get("/api/staff/perms")
+async def api_staff_perms_get(request: web.Request):
+    """Bitta xodimning bo'lim-bo'lim ruxsatlari.
+
+    FAQAT BOSH ADMIN. Kim nimani ko'rishini belgilash — do'kon egasining
+    ishi; «to'liq admin» rolidagi xodim ham buni o'zgartira olmaydi,
+    aks holda o'ziga istalgan huquqni yozib olardi.
+
+    Query: telegram_id. Javobda barcha kalitlar ro'yxati ham bor —
+    Mini App ularni qo'lda takrorlamasin (yangi bo'lim qo'shilganda
+    ro'yxat o'zi yangilanadi)."""
+    from database.channel_db import db as _db
+    from bot.permissions import (PERMISSIONS, PERMISSION_ORDER, ROLE_LABELS,
+                                 ROLE_PRESETS, effective_permissions)
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not auth.get("is_glavniy"):
+        return _err("Ruxsatlarni faqat bosh admin boshqaradi", 403)
+    try:
+        tg_id = int(request.query.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    if not tg_id:
+        return _err("telegram_id kerak")
+    admin = await _db.get_admin(tg_id)
+    if not admin:
+        return _err("Xodim topilmadi", 404)
+    return web.json_response({
+        "ok": True,
+        "telegram_id": tg_id,
+        "name": admin.get("full_name", "") or "",
+        "role": (admin.get("role") or "full").strip().lower(),
+        "perms": sorted(effective_permissions(admin)),
+        "all": [{"k": k, "label": PERMISSIONS[k]} for k in PERMISSION_ORDER
+                if k in PERMISSIONS],
+        "roles": [{"k": k, "label": ROLE_LABELS.get(k, k),
+                   "perms": sorted(ROLE_PRESETS.get(k, ()))}
+                  for k in ("full", "products", "cashier", "stats")],
+    })
+
+
+@ROUTES.post("/api/staff/perms")
+async def api_staff_perms_save(request: web.Request):
+    """Xodimga bo'lim-bo'lim ruxsat berish. FAQAT BOSH ADMIN.
+
+    Body: {telegram_id, perms: [...]}. Rol `custom` ga o'tadi —
+    tayyor rol (full/cashier/...) tanlansa ruxsatlar yana o'sha
+    roldan olinadi va bu ro'yxat e'tiborsiz qoladi."""
+    from database.channel_db import db as _db
+    from bot.permissions import PERMISSIONS, serialize_permissions
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not auth.get("is_glavniy"):
+        return _err("Ruxsatlarni faqat bosh admin boshqaradi", 403)
+    body = await _read_json(request)
+    try:
+        tg_id = int(body.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    if not tg_id:
+        return _err("telegram_id kerak")
+    if tg_id == GLAVNIY_ADMIN_ID:
+        return _err("Bosh adminning ruxsatlari cheklanmaydi")
+    if not await _db.get_admin(tg_id):
+        return _err("Xodim topilmadi", 404)
+    perms = {str(x) for x in (body.get("perms") or []) if x in PERMISSIONS}
+    await _db.set_admin_role(tg_id, "custom")
+    await _db.set_admin_permissions(tg_id, serialize_permissions(perms))
+    return web.json_response({"ok": True, "telegram_id": tg_id,
+                              "perms": sorted(perms)})
 
 
 @ROUTES.post("/api/staff/remove")

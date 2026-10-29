@@ -577,6 +577,11 @@
                 _sessionToken = data.session_token;
                 try { localStorage.setItem('chinor_session', _sessionToken); } catch(_) {}
             }
+            // Qaysi bo'limlar ochiq — server aytadi. Ruxsati yo'q
+            // bo'limning tugmasi umuman chizilmaydi: ilgari hamma tugma
+            // turardi-yu, bosilganda «ruxsat yo'q» chiqardi.
+            if (data && Array.isArray(data.perms)) _myPerms = new Set(data.perms);
+            _isGlavniy = !!(data && data.is_glavniy);
             const u = (data && data.user) || {};
             const letter = (u.name || 'U').charAt(0).toUpperCase();
             if (data && data.role === 'admin') _isAdminUser = true;
@@ -587,6 +592,7 @@
             if (data && data.role === 'admin') {
                 adminAvatar.textContent = letter;
                 adminName.textContent = `Xush kelibsiz, ${u.name}!`;
+                perimsniQolla();
                 showScreen(screenAdmin);
                 loadDashboardStats();
             } else {
@@ -617,6 +623,29 @@
 
         // ── Admin: mijoz ko'rinishiga o'tish / qaytish ──────────────────
         let _isAdminUser = false;
+
+        // Shu foydalanuvchining ruxsatlari (login javobidan). Bo'sh
+        // to'plam — hali kelmagan: u holda hech narsa yashirilmaydi,
+        // aks holda tarmoq sekin bo'lsa panel bo'm-bo'sh ko'rinardi.
+        let _myPerms = null;
+        let _isGlavniy = false;
+
+        // Panel tugmalarini ruxsatga qarab yashiradi. Tugmaning kaliti
+        // HTML'da `data-perm` da turadi (bir nechta kalit — vergul
+        // bilan: bittasi yetarli).
+        function perimsniQolla() {
+            if (!_myPerms) return;
+            document.querySelectorAll('[data-perm]').forEach(el => {
+                const kerak = (el.getAttribute('data-perm') || '')
+                    .split(',').map(x => x.trim()).filter(Boolean);
+                const bor = !kerak.length || kerak.some(k => _myPerms.has(k));
+                el.style.display = bor ? '' : 'none';
+            });
+            // Bosh adminning o'ziga atalgan joylar
+            document.querySelectorAll('[data-glavniy]').forEach(el => {
+                el.style.display = _isGlavniy ? '' : 'none';
+            });
+        }
 
         function _enterClientView() {
             clientAvatar.textContent = (_viewAs.name || 'M').charAt(0).toUpperCase();
@@ -6056,6 +6085,10 @@
             ['products', '📦 Mahsulotlar'],
             ['cashier',  '💵 Kassir'],
             ['stats',    '📊 Hisobotlar'],
+            // «Maxsus» — bo'limlar qo'lda tanlangan holat. Ro'yxatda
+            // turishi kerak, aks holda shunday xodimning roli
+            // ko'rsatkichda noto'g'ri chiqardi.
+            ['custom',   '⚙️ Maxsus (qo\'lda)'],
         ];
         const _roleLabel = r =>
             (STAFF_ROLES.find(x => x[0] === r) || ['', '🔰 Cheklangan'])[1];
@@ -6137,6 +6170,11 @@
                                 style="border:none;background:#fee;color:#c00;border-radius:8px;padding:6px 10px;margin-left:6px;cursor:pointer;">🗑</button>
                     </span></div>`;
                 }
+                // Bo'lim-bo'lim ruxsat — faqat do'kon egasi uchun.
+                if (data.can_perms && !a.is_glavniy && a.telegram_id) {
+                    html += `<button class="cam-btn wide" onclick="openStaffPerms(${a.telegram_id})">
+                        ⚙️ Bo'limlarni sozlash</button>`;
+                }
                 html += '</div>';
             });
             if (!active.length) html += '<div class="list-status">Xodimlar yo\'q</div>';
@@ -6172,6 +6210,70 @@
                 'bad_phone':     'Telefon raqami noto\'g\'ri'
             }[kod] || kod || 'Qo\'shilmadi';
             toast('❌ ' + izoh);
+        };
+
+        // ── Xodim uchun bo'lim-bo'lim ruxsat (faqat bosh admin) ────────
+        // Tayyor rollar (Kassir, Mahsulotchi...) tezkor tanlov uchun
+        // qoladi; bu yerda esa har bir bo'limni alohida yoqib-o'chirish
+        // mumkin — shunda rol «Maxsus» ga o'tadi.
+        let _permsFor = 0;
+
+        window.openStaffPerms = async function (tgId) {
+            navMark('openStaffPerms', tgId);
+            openTool('\u2699\ufe0f Bo\'lim ruxsatlari');
+            const { ok, status, data } = await apiFetch(
+                '/api/staff/perms?telegram_id=' + encodeURIComponent(tgId));
+            if (!ok || !data.ok) return openTool('\u2699\ufe0f Bo\'lim ruxsatlari', toolError(status, data));
+            _permsFor = tgId;
+            const bor = new Set(data.perms || []);
+            const rollar = data.roles || [];
+            let html = '<div class="perm-head"><b>' + escapeHtml(data.name || ('ID ' + tgId)) +
+                       '</b><span>Hozirgi rol: ' +
+                       escapeHtml((rollar.find(r => r.k === data.role) || {}).label || data.role) +
+                       '</span></div>';
+            html += '<div class="perm-roles">';
+            rollar.forEach(r => {
+                html += '<button class="cam-chip" onclick="permRole(\'' + r.k + '\')">' +
+                        escapeHtml(r.label) + '</button>';
+            });
+            html += '<button class="cam-chip" onclick="permHammasi(1)">Hammasi</button>' +
+                    '<button class="cam-chip" onclick="permHammasi(0)">Hech biri</button></div>';
+            html += '<div class="perm-list">';
+            (data.all || []).forEach(x => {
+                html += '<label class="perm-row"><span>' + escapeHtml(x.label) + '</span>' +
+                        '<input type="checkbox" value="' + x.k + '"' +
+                        (bor.has(x.k) ? ' checked' : '') + '></label>';
+            });
+            html += '</div>';
+            html += '<button class="cam-btn primary wide" onclick="saveStaffPerms()">\ud83d\udcbe Saqlash</button>';
+            html += '<button class="cam-btn wide" onclick="openStaff()">\u2190 Xodimlarga qaytish</button>';
+            html += '<div class="cam-hint">Belgilangan bo\'limlargina ko\'rinadi. ' +
+                    'Bu sozlamani faqat siz o\'zgartira olasiz.</div>';
+            // Tayyor rollarning tarkibi — tugma bosilganda shundan olinadi
+            window._permRoles = {};
+            rollar.forEach(r => { window._permRoles[r.k] = r.perms || []; });
+            openTool('\u2699\ufe0f Bo\'lim ruxsatlari', html);
+        };
+
+        function permQutilar() {
+            return [...document.querySelectorAll('.perm-list input[type=checkbox]')];
+        }
+        window.permHammasi = function (yoq) {
+            permQutilar().forEach(c => { c.checked = !!yoq; });
+        };
+        window.permRole = function (rol) {
+            const ro = new Set((window._permRoles || {})[rol] || []);
+            permQutilar().forEach(c => { c.checked = ro.has(c.value); });
+        };
+
+        window.saveStaffPerms = async function () {
+            const perms = permQutilar().filter(c => c.checked).map(c => c.value);
+            const { ok, status, data } = await apiFetch('/api/staff/perms', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ telegram_id: _permsFor, perms: perms })
+            });
+            if (ok && data.ok) { toast('\u2705 Saqlandi (' + perms.length + ' ta bo\'lim)'); openStaff(); }
+            else toast('\u274c ' + ((data && data.error) || ('Xato ' + status)));
         };
 
         window.setStaffRole = async function (tgId, role) {
