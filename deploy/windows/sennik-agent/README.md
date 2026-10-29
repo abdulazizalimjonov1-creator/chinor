@@ -25,6 +25,19 @@ ishlayotgan odam faqat printerdan chiqqan sennikni ko'radi.
 Tayyor. Dastur darhol ishga tushadi va kompyuter har yoqilganda (kirishda)
 o'zi tiklanadi.
 
+## Printerni alohida sinash
+
+Serverga bog'lanmasdan, printerning o'zini tekshirish (nosozlikda birinchi
+qadam) — tayyor sinov sennigi faylini to'g'ridan-to'g'ri yuboradi:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File print-test.ps1
+```
+
+Yorliq chiqsa — printer, o'lcham va drayver joyida; muammo serverda yoki
+tarmoqda. Chiqmasa — printerni, qog'ozni va `config.json` dagi printer
+nomini tekshiring.
+
 ## Tekshirish
 
 - Jurnal: `agent.log` — «Ishga tushdi», keyin har chop etilgan sennik.
