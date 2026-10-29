@@ -9,7 +9,7 @@ param([string]$File = "", [string]$Printer = "")
 $ErrorActionPreference = 'Stop'
 $base = Split-Path -Parent $MyInvocation.MyCommand.Definition
 if (-not $Printer) {
-    $cfg = Get-Content (Join-Path $base 'config.json') -Raw | ConvertFrom-Json
+    $cfg = (Get-Content (Join-Path $base 'config.json') -Raw -Encoding UTF8) -replace "^\uFEFF", "" | ConvertFrom-Json
     $Printer = $cfg.printer
 }
 if (-not $File) {
@@ -26,13 +26,13 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public class ChinorRaw {
-  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)]
-  public struct DI { [MarshalAs(UnmanagedType.LPStr)] public string n;
-                     [MarshalAs(UnmanagedType.LPStr)] public string p;
-                     [MarshalAs(UnmanagedType.LPStr)] public string t; }
-  [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+  public struct DI { [MarshalAs(UnmanagedType.LPWStr)] public string n;
+                     [MarshalAs(UnmanagedType.LPWStr)] public string p;
+                     [MarshalAs(UnmanagedType.LPWStr)] public string t; }
+  [DllImport("winspool.Drv",EntryPoint="OpenPrinterW",SetLastError=true,CharSet=CharSet.Unicode)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
   [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
-  [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
+  [DllImport("winspool.Drv",EntryPoint="StartDocPrinterW",SetLastError=true,CharSet=CharSet.Unicode)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
   [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
   [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h);
   [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);

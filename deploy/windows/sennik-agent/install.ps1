@@ -43,6 +43,14 @@ $cfg = [ordered]@{ server = $Server.TrimEnd('/'); token = $Token; key = $Key
     ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 Write-Host "config.json yozildi — printer: $Printer" -ForegroundColor Green
 
+# Eski nusxa ishlab tursa — to'xtatamiz. Aks holda qayta o'rnatgandan keyin
+# ikkita agent birga ishlaydi va eskisi hali ham eski sozlama bilan turadi.
+schtasks /Query /TN $TaskName 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) { schtasks /End /TN $TaskName 2>$null | Out-Null }
+Get-CimInstance Win32_Process |
+    Where-Object { $_.CommandLine -like '*ChinorSennik*' -and $_.ProcessId -ne $PID } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 $vbs = Join-Path $base 'start-hidden.vbs'
 schtasks /Create /SC ONLOGON /TN $TaskName /TR "wscript.exe `"$vbs`"" /RL LIMITED /F | Out-Null
 schtasks /Run /TN $TaskName | Out-Null

@@ -28,7 +28,10 @@ function Write-Log($msg) {
 }
 
 if (-not (Test-Path $cfgPath)) { Write-Log "config.json topilmadi"; exit 1 }
-$cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+# -Encoding UTF8 SHART: PowerShell 5 sukut bo'yicha faylni ANSI deb o'qiydi
+# va kirillcha printer nomi («Xprinter XP-365B (копия 1)») buzilib ketadi —
+# keyin OpenPrinter 1801 (noto'g'ri printer nomi) xatosini beradi.
+$cfg = (Get-Content $cfgPath -Raw -Encoding UTF8) -replace "^\uFEFF", "" | ConvertFrom-Json
 
 # Windows PowerShell 5 sukut bo'yicha TLS 1.0 bilan ulanadi — Cloudflare
 # ortidagi server esa uni rad etadi va agent «aloqa yo'q» deb o'tiraveradi.
@@ -40,13 +43,13 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public class ChinorRaw {
-  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)]
-  public struct DI { [MarshalAs(UnmanagedType.LPStr)] public string n;
-                     [MarshalAs(UnmanagedType.LPStr)] public string p;
-                     [MarshalAs(UnmanagedType.LPStr)] public string t; }
-  [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+  public struct DI { [MarshalAs(UnmanagedType.LPWStr)] public string n;
+                     [MarshalAs(UnmanagedType.LPWStr)] public string p;
+                     [MarshalAs(UnmanagedType.LPWStr)] public string t; }
+  [DllImport("winspool.Drv",EntryPoint="OpenPrinterW",SetLastError=true,CharSet=CharSet.Unicode)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
   [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
-  [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
+  [DllImport("winspool.Drv",EntryPoint="StartDocPrinterW",SetLastError=true,CharSet=CharSet.Unicode)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
   [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
   [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h);
   [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);
