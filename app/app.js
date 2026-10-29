@@ -3476,6 +3476,7 @@
         let _tagMax   = 400;
         let _tagOptom = false;
         let _tagSel   = [];          // [{id, name, price, copies}]
+        let _tagFound = [];          // oxirgi qidiruv natijasi (tugma shundan oladi)
         let _tagTimer = null;
 
         window.openPriceTags = async function () {
@@ -3542,11 +3543,21 @@
                 const inp = $('tagSearch'); if (inp) inp.value = '';
                 return;
             }
-            box.innerHTML = items.map(p => `<div class="g-row" onclick="tagAdd(${p.id}, ${JSON.stringify(p.name)}, ${p.price_sum || 0})">
+            // Nomni onclick ichiga YOZMAYMIZ: tovar nomlarida apostrof va
+            // qo'shtirnoq bor ("Arra yog'och 40sm", 18" kalit) — ular HTML
+            // atributini vaqtidan oldin yopib, tugmani o'lik qilib qo'yadi.
+            // Shuning uchun tugma faqat tartib raqamini beradi.
+            _tagFound = items;
+            box.innerHTML = items.map((p, i) => `<div class="g-row" onclick="tagAddAt(${i})">
                 <div><b>${escapeHtml(p.name)}</b><div class="g-meta">SKU ${p.id} · ${fmtSum(p.price_sum)} so'm · qoldiq ${fmtQty(p.qty)}</div></div>
                 <span>＋</span></div>`).join('')
                 || '<div class="list-status">Topilmadi</div>';
         }
+
+        window.tagAddAt = function (i) {
+            const p = _tagFound[i];
+            if (p) tagAdd(p.id, p.name, p.price_sum);
+        };
 
         window.tagAdd = function (id, name, price) {
             const cur = _tagSel.find(x => x.id === id);
