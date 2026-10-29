@@ -94,6 +94,27 @@
             }
         } catch (_) { /* eski mijoz — oddiy holatda qolaveradi */ }
 
+        // SAHIFA KATTALASHIB QOLMASIN.
+        // Yozuvi kichik maydonga bosilganda iPhone sahifani o'zi
+        // kattalashtiradi va klaviatura yopilgach qaytarmaydi — ilova
+        // shu holda qolib ketadi. Asosiy yechim uslubda (barmoqli
+        // ekranlarda maydonlar 16px), bu esa zaxira: agar eski WebView
+        // baribir kattalashtirsa, maydon yopilgach o'lchamni qaytaramiz.
+        // viewport'ni bir zumga o'zgartirish WebView'ni qayta
+        // hisoblashga majburlaydi — boshqa yo'li yo'q.
+        (function () {
+            const vp = document.querySelector('meta[name=viewport]');
+            if (!vp) return;
+            const asl = vp.getAttribute('content');
+            document.addEventListener('focusout', () => {
+                const vv = window.visualViewport;
+                if (!vv || vv.scale <= 1.01) return;
+                vp.setAttribute('content',
+                    'width=device-width, initial-scale=1.0, maximum-scale=0.99, user-scalable=no');
+                setTimeout(() => vp.setAttribute('content', asl), 80);
+            });
+        })();
+
         // ----- DOM refs -----
         const $ = (id) => document.getElementById(id);
 

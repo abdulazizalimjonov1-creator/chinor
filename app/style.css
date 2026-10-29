@@ -1692,3 +1692,17 @@
     padding: 7px 11px; border-radius: 999px; cursor: pointer; font-size: 13px;
     background: var(--primary); color: #fff; border: 0;
 }
+
+/* ───────── Sahifa o'zidan-o'zi kattalashib ketmasin ─────────
+   iPhone (va Telegram'ning WebView'i) yozuvi 16px dan KICHIK bo'lgan
+   maydonga bosilganda sahifani avtomatik kattalashtiradi — klaviatura
+   yopilgandan keyin esa uni qaytarmaydi: ilova shu zoom bilan qolib
+   ketadi, bir bo'limdan ikkinchisiga o'tilsa ham. Shuning uchun
+   barmoq bilan ishlatiladigan qurilmalarda barcha kiritish
+   maydonlari kamida 16px. (Sichqonchali ekranlarda bu muammo yo'q,
+   shu sababli u yerda asl o'lchamlar saqlanadi.) */
+@media (pointer: coarse) {
+    input, textarea, select {
+        font-size: 16px !important;
+    }
+}
