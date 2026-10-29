@@ -3477,22 +3477,34 @@
         let _tagOptom = false;
         let _tagSel   = [];          // [{id, name, price, copies}]
         let _tagFound = [];          // oxirgi qidiruv natijasi (tugma shundan oladi)
+        let _tagAgents = [];         // printer ulangan kompyuterlar
+        let _tagTarget = 'browser';  // qayerga: 'browser' yoki kompyuter kaliti
         let _tagTimer = null;
 
         window.openPriceTags = async function () {
             openTool('🏷 Sennik chop etish');
             const { ok, status, data } = await apiFetch('/api/admin/pricetag/sizes');
             if (!ok || !data.ok) return openTool('🏷 Sennik chop etish', toolError(status, data));
-            _tagSizes = data.sizes || [];
-            _tagMax   = data.max || 400;
+            _tagSizes  = data.sizes || [];
+            _tagAgents = data.agents || [];
+            _tagMax    = data.max || 400;
             if (!_tagSizes.some(s => s.k === _tagSize)) {
                 _tagSize = data.default || (_tagSizes[0] || {}).k || '60x40';
             }
+            // Printer ulangan kompyuter bo'lsa — sukut bo'yicha o'shanga
+            // yuboramiz: oyna ochilmaydi, sennik darrov chiqadi.
+            const online = _tagAgents.filter(a => a.online);
+            if (!online.some(a => a.key === _tagTarget)) {
+                _tagTarget = online.length ? online[0].key : 'browser';
+            }
             openTool('🏷 Sennik chop etish', `
                 <div class="sn-hint">Tovarni toping → nusxa sonini qo'ying → <b>Chop etish</b>.
-                    Senniklar brauzerda ochiladi, printer tanlash oynasi o'sha yerda chiqadi.
-                    Havolani printer ulangan boshqa kompyuterda ham ochsa bo'ladi.</div>
+                    Printer ulangan kompyuter tanlansa, sennik o'sha zahoti chiqadi —
+                    hech qanday oyna ochilmaydi. <b>Brauzer orqali</b> esa havola beradi
+                    (A4 va boshqa printerlar uchun).</div>
                 <div class="sn-sizes" id="tagSizes"></div>
+                <div class="cl-sheet-sub">Qayerdan chiqsin</div>
+                <div class="sn-sizes" id="tagTargets"></div>
                 <label class="sn-check"><input type="checkbox" id="tagOptom"> Optom narxi bilan</label>
                 <div class="search-bar" style="margin:12px 0">
                     <span class="search-ic">🔍</span>
@@ -3512,6 +3524,7 @@
             $('tagOptom').checked = _tagOptom;
             $('tagOptom').addEventListener('change', e => { _tagOptom = e.target.checked; });
             _tagSizesRender();
+            _tagTargetsRender();
             _tagSelRender();
         };
 
@@ -3523,9 +3536,43 @@
                     <b>${escapeHtml(s.title)}</b><span>${escapeHtml(s.hint)}</span></button>`).join('');
         }
 
+        function _tagIsPaper() {
+            const s = _tagSizes.find(x => x.k === _tagSize);
+            return !!(s && s.paper);
+        }
+
+        function _tagTargetsRender() {
+            const box = $('tagTargets');
+            if (!box) return;
+            // A4 — oddiy qog'oz: yorliq printeriga yuborib bo'lmaydi
+            const paper = _tagIsPaper();
+            if (paper) _tagTarget = 'browser';
+            const rows = _tagAgents.map(a => {
+                const off = !a.online || paper;
+                const hint = paper ? 'A4 bu printerga chiqmaydi'
+                           : (a.online ? (a.printer || 'printerga to\'g\'ridan-to\'g\'ri')
+                                       : 'hozir ulanmagan');
+                return `<button class="sn-size${a.key === _tagTarget ? ' on' : ''}${off ? ' off' : ''}"
+                    ${off ? 'disabled' : ''} onclick="tagSetTarget('${a.key}')">
+                    <b>${a.online ? '🟢' : '⚪️'} ${escapeHtml(a.name)}</b>
+                    <span>${escapeHtml(hint)}${a.pending ? ' · navbatda ' + a.pending : ''}</span></button>`;
+            }).join('');
+            box.innerHTML = rows + `<button class="sn-size${_tagTarget === 'browser' ? ' on' : ''}"
+                onclick="tagSetTarget('browser')"><b>🖥 Brauzer orqali</b>
+                <span>Havola ochiladi, printer qo'lda tanlanadi</span></button>`;
+        }
+
+        window.tagSetTarget = function (k) {
+            _tagTarget = k;
+            _tagTargetsRender();
+            const out = $('tagOut');
+            if (out) out.innerHTML = '';
+        };
+
         window.tagSetSize = function (k) {
             _tagSize = k;
             _tagSizesRender();
+            _tagTargetsRender();
             const out = $('tagOut');
             if (out) out.innerHTML = '';      // eski havola boshqa o'lchamda edi
         };
@@ -3611,12 +3658,21 @@
             const { ok, status, data } = await apiFetch('/api/admin/pricetags', {
                 method: 'POST',
                 body: JSON.stringify({
-                    size: _tagSize, optom: _tagOptom,
+                    size: _tagSize, optom: _tagOptom, target: _tagTarget,
                     items: _tagSel.map(x => ({ id: x.id, copies: x.copies }))
                 })
             });
             _tagSelRender();
             if (!ok || !data.ok) { if (out) out.innerHTML = toolError(status, data); return; }
+            if (data.sent_to) {
+                // To'g'ridan-to'g'ri printerga ketdi — havola ham, oyna ham yo'q
+                if (out) out.innerHTML = `<div class="sn-out">
+                    <b>✅ ${data.count} ta sennik «${escapeHtml(data.sent_to)}» ga yuborildi</b>
+                    <div class="g-meta">Printerdan chiqmoqda. Chiqmasa — printer yoqilganini
+                        va qog'oz borligini tekshiring.</div></div>`;
+                toast('🖨 Printerga yuborildi');
+                return;
+            }
             const url = API_BASE_URL + data.url;
             if (out) out.innerHTML = `<div class="sn-out">
                 <b>✅ ${data.count} ta sennik tayyor</b>

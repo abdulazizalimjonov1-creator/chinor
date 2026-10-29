@@ -1,0 +1,45 @@
+# Sennik agenti (USB yorliq printeri uchun)
+
+XP-365B kompyuterga **USB** bilan ulangan — serverdan unga to'g'ridan-to'g'ri
+yozib bo'lmaydi, brauzerdan chop etish esa har safar oyna ochadi. Shuning
+uchun printer ulangan kompyuterda shu kichik dastur turadi: serverdan
+navbatni so'raydi va kelgan baytlarni printerga uzatadi.
+
+**Ekranda hech narsa ko'rinmaydi** — oyna ham, savol ham yo'q. Kompyuterda
+ishlayotgan odam faqat printerdan chiqqan sennikni ko'radi.
+
+## O'rnatish (bir marta, 2 daqiqa)
+
+1. Shu papkani kompyuterga ko'chiring, masalan `C:\ChinorSennik\`.
+2. O'sha papkada PowerShell oching (papkada **Shift + o'ng tugma** →
+   «Open PowerShell window here»).
+3. Buyruqni kiriting (kalitni Chinor administratoridan oling):
+
+```powershell
+.\install.ps1 -Server https://kassa.chinorpos.com -Token <KALIT> -Key qabul -Name "Qabul kompyuteri"
+```
+
+`-Key` — har kompyuterga o'ziniki: `qabul` (60×40 printer) va `server`
+(30×20 printer). Mini App'da shu nom ko'rinadi.
+
+Tayyor. Dastur darhol ishga tushadi va kompyuter har yoqilganda (kirishda)
+o'zi tiklanadi.
+
+## Tekshirish
+
+- Jurnal: `agent.log` — «Ishga tushdi», keyin har chop etilgan sennik.
+- Mini App → 🏷 Sennik chop etish → printer ro'yxatida kompyuter
+  «ulangan» bo'lib ko'rinishi kerak.
+
+## Savol-javob
+
+**Kompyuterga og'irlik qilmaydimi?** Yo'q: dastur deyarli doim serverdan
+javob kutib turadi, protsessorni ishlatmaydi (bo'sh turganda ~0%).
+
+**Printer o'chiq bo'lsa?** Sennik navbatda qoladi, xato `agent.log` ga
+yoziladi va Mini App'da ko'rinadi. Printer yoqilgach qayta yuboriladi.
+
+**O'chirish:** `schtasks /Delete /TN Chinor-sennik /F` va papkani o'chiring.
+
+**Printer nomi boshqacha bo'lsa:** `install.ps1` ga `-Printer "To'liq nomi"`
+qo'shing (nomlarni `Get-Printer` ko'rsatadi).

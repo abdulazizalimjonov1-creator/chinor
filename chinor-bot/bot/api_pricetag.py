@@ -45,13 +45,15 @@ MAX_JOBS = 50               # xotirada shundan ortig'i saqlanmaydi
 # uchun (har sennik alohida varaq), `cols/rows` — A4 varaqdagi to'r.
 SIZES = {
     "60x40": {"title": "60×40 mm", "page": "60mm 40mm", "w": "60mm", "h": "40mm",
-              "one_per_page": True,  "hint": "Rulon printer (ma'lumot qabul qiluvchi kompyuter)"},
+              "one_per_page": True,  "mm": (60, 40), "gap_mm": 2,
+              "hint": "Rulon printer (ma'lumot qabul qiluvchi kompyuter)"},
     "30x20": {"title": "30×20 mm", "page": "30mm 20mm", "w": "30mm", "h": "20mm",
-              "one_per_page": True,  "hint": "Rulon printer (server kompyuter)"},
+              "one_per_page": True,  "mm": (30, 20), "gap_mm": 2,
+              "hint": "Rulon printer (server kompyuter)"},
     "a4":    {"title": "A4 — 8 ta", "page": "A4", "w": "97mm", "h": "66mm",
-              "one_per_page": False, "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
+              "one_per_page": False, "paper": True, "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
     "a4big": {"title": "A4 — 1 ta katta", "page": "A4", "w": "194mm", "h": "271mm",
-              "one_per_page": True,  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
+              "one_per_page": True, "paper": True,  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
 }
 DEFAULT_SIZE = "60x40"
 
@@ -267,9 +269,13 @@ async def api_sizes(request: web.Request):
     auth, err = await _need_admin(request, _db, "products_view")
     if err is not None:
         return err
-    return web.json_response({"ok": True, "default": DEFAULT_SIZE, "max": MAX_LABELS,
-                              "sizes": [{"k": k, **{x: v[x] for x in ("title", "hint")}}
-                                        for k, v in SIZES.items()]})
+    from bot import print_agent
+    return web.json_response({
+        "ok": True, "default": DEFAULT_SIZE, "max": MAX_LABELS,
+        "sizes": [{"k": k, "title": v["title"], "hint": v["hint"],
+                   "paper": bool(v.get("paper"))} for k, v in SIZES.items()],
+        # Printer ulangan kompyuterlar (agent dasturi o'rnatilganlari)
+        "agents": print_agent.agents_list()})
 
 
 @TAG_ROUTES.post("/api/admin/pricetags")
@@ -321,6 +327,27 @@ async def api_make_job(request: web.Request):
         labels += [lb] * copies
     if not labels:
         return _err("Tovarlar topilmadi", 404)
+
+    # Printer ulangan kompyuterga TO'G'RIDAN-TO'G'RI yuborish. Brauzer
+    # oynasi ochilmaydi — kompyuterda ishlayotgan odamga xalaqit bermaydi.
+    target = str(b.get("target") or "").strip()
+    if target and target != "browser":
+        from bot import print_agent
+        if SIZES[size].get("paper"):
+            return _err("Bu o'lcham oddiy qog'oz uchun — yorliq printeriga yubora olmaymiz")
+        agent = {a["key"]: a for a in print_agent.agents_list()}.get(target)
+        if not agent:
+            return _err("Bunday kompyuter ro'yxatda yo'q", 404)
+        if not agent["online"]:
+            return _err(f"«{agent['name']}» hozir ulanmagan — kompyuter yoqilganini tekshiring", 409)
+        try:
+            n = await _db._in_thread(lambda: print_agent.enqueue(target, labels, size))
+        except ValueError as e:
+            return _err(str(e), 409)
+        logger.info(f"🏷 Sennik: {n} ta ({size}) → «{agent['name']}» "
+                    f"— admin {auth.get('tg_id')}")
+        return web.json_response({"ok": True, "count": n, "sent_to": agent["name"],
+                                  "missing": missing})
 
     _clean_jobs()
     token = secrets.token_hex(16)

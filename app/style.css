@@ -1594,3 +1594,6 @@
     .sn-size.on span { color: var(--text); }
     .sn-out       { background: rgba(82,183,136,0.18); color: var(--text); }
 }
+
+/* O'chiq (ulanmagan) kompyuter / mos kelmaydigan o'lcham */
+.sn-size.off { opacity: .45; cursor: default; }

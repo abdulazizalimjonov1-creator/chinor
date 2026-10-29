@@ -4625,6 +4625,9 @@ def create_app() -> web.Application:
     # Sennik (narx yorlig'i) chop etish — Mini App buyuradi, brauzer chop etadi
     from bot import api_pricetag
     api_pricetag.setup(app)
+    # Sennikni USB printerga to'g'ridan-to'g'ri yuborish (kompyuterdagi agent)
+    from bot import print_agent
+    print_agent.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
