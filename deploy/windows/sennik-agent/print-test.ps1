@@ -4,13 +4,20 @@
 #
 #   powershell -ExecutionPolicy Bypass -File print-test.ps1 [-File test_30x20.bin]
 
-param([string]$File = "test_30x20.bin", [string]$Printer = "")
+param([string]$File = "", [string]$Printer = "")
 
 $ErrorActionPreference = 'Stop'
 $base = Split-Path -Parent $MyInvocation.MyCommand.Definition
 if (-not $Printer) {
     $cfg = Get-Content (Join-Path $base 'config.json') -Raw | ConvertFrom-Json
     $Printer = $cfg.printer
+}
+if (-not $File) {
+    # Papkadagi birinchi tayyor sennik fayli (30x20 yoki 60x40 — qaysi
+    # kompyuterda qaysi lenta bo'lsa, o'shanisi qo'yilgan bo'ladi)
+    $first = Get-ChildItem (Join-Path $base '*.bin') | Select-Object -First 1
+    if (-not $first) { throw "Papkada .bin sinov fayli yo'q" }
+    $File = $first.FullName
 }
 $path = if (Test-Path $File) { $File } else { Join-Path $base $File }
 $bytes = [IO.File]::ReadAllBytes($path)

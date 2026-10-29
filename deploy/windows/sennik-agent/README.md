@@ -8,7 +8,24 @@ navbatni so'raydi va kelgan baytlarni printerga uzatadi.
 **Ekranda hech narsa ko'rinmaydi** — oyna ham, savol ham yo'q. Kompyuterda
 ishlayotgan odam faqat printerdan chiqqan sennikni ko'radi.
 
-## O'rnatish (bir marta, 2 daqiqa)
+## Eng tez yo'l: bitta buyruq
+
+Printer ulangan kompyuterda PowerShell ochib (Boshlash → `powershell`),
+shuni to'liq nusxalab qo'ying — papkani ko'chirish shart emas, agent
+serverdan yuklab olinadi:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol='Tls12'; $d='C:\ChinorSennik'; md $d -Force|Out-Null; iwr https://kassa.chinorpos.com/updates/sennik-agent.zip -OutFile "$env:TEMP\sa.zip" -UseBasicParsing; Expand-Archive "$env:TEMP\sa.zip" $d -Force; cd $d; .\install.ps1 -Server https://kassa.chinorpos.com -Token <KALIT> -Key qabul -Name "Qabul kompyuteri"
+```
+
+`<KALIT>` ni administratordan oling (`deploy/sennik-deploy.sh` oxirida
+chiqadi). Boshqa kompyuterda `-Key` va `-Name` ni almashtiring.
+
+Zip serverda `chinor-bot/updates/sennik-agent.zip` da turadi — yangilansa,
+shu buyruqning o'zi yetarli (ichida maxfiy ma'lumot yo'q, kalit alohida
+beriladi).
+
+## Qo'lda o'rnatish
 
 1. Shu papkani kompyuterga ko'chiring, masalan `C:\ChinorSennik\`.
 2. O'sha papkada PowerShell oching (papkada **Shift + o'ng tugma** →

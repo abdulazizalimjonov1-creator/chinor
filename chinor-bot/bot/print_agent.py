@@ -329,6 +329,11 @@ async def api_poll(request: web.Request):
     key = str(b.get("key") or "").strip()[:40]
     if not key:
         return _err("key kerak")
+    if key not in _agents:
+        # Yangi kompyuter ulandi — o'rnatish to'g'ri bo'lganini shu satrdan
+        # bilsa bo'ladi (aks holda faqat Mini App'dan ko'rinadi).
+        logger.info(f"🖨 Printer kompyuteri ulandi: «{b.get('name') or key}» "
+                    f"({b.get('printer') or 'printer ko''rsatilmagan'})")
     _agents[key] = {
         "name": str(b.get("name") or key)[:60],
         "printer": str(b.get("printer") or "")[:120],
