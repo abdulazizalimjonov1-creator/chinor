@@ -159,11 +159,36 @@
         const clientName   = $('clientName');
 
         // ===== Screen switcher (barcha .screen larni boshqaradi) =====
-        function showScreen(id) {
-            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        // Ekran qaysi tomondan kirishini belgilaydi: ichkariga o'tilsa
+        // o'ngdan, orqaga qaytilsa chapdan. `navBack` shu bayroqni
+        // ko'taradi — oradagi funksiya zanjiri uzun bo'lgani uchun
+        // yo'nalishni argument qilib uzatib bo'lmaydi.
+        let _ortgaQadam = false;
+
+        function showScreen(id, ortga) {
+            document.querySelectorAll('.screen').forEach(s => {
+                s.classList.remove('active', 'ortga');
+                s.style.transform = ''; s.style.opacity = '';
+            });
             const el = (typeof id === 'string') ? $(id) : id;
-            if (el) el.classList.add('active');
+            if (el) {
+                if (ortga || _ortgaQadam) el.classList.add('ortga');
+                el.classList.add('active');
+                // Yangi bo'lim tepasidan boshlansin: aks holda oldingi
+                // ro'yxatning o'rtasida ochilib qoladi.
+                try { window.scrollTo(0, 0); } catch (_) {}
+            }
+            _ortgaQadam = false;
             _navTelegramTugma(typeof id === 'string' ? id : (el && el.id) || '');
+        }
+
+        // Bitta ekranga chiziladigan bo'limlar (#screenTool) uchun:
+        // ekran almashmaydi, shuning uchun mazmunning o'zini suramiz.
+        function animKirish(el) {
+            if (!el) return;
+            el.classList.remove('kirish');
+            void el.offsetWidth;          // animatsiya qaytadan boshlansin
+            el.classList.add('kirish');
         }
 
         // ===== ORQAGA QAYTISH ZANJIRI =====
@@ -205,6 +230,10 @@
         }
 
         window.navBack = function (zaxira) {
+            _ortgaQadam = true;
+            // Zanjirdagi funksiya ma'lumot kutib turishi mumkin — bayroq
+            // bir necha soniya kutadi, keyin o'zi so'nadi.
+            setTimeout(() => { _ortgaQadam = false; }, 2000);
             const oldin = _navZanjir.pop();
             if (oldin) {
                 _navJoy = oldin;
@@ -237,6 +266,76 @@
                 });
             }
         } catch (_) {}
+
+        // «← Orqaga» bosilganda ham ekran ORQAGA yo'nalishda kirsin.
+        // Tugmalarning bir qismi `navBack` emas, to'g'ridan-to'g'ri
+        // `showScreen` chaqiradi — bayroqni shu yerda, bosilish
+        // handler'idan oldin (capture bosqichida) ko'taramiz.
+        document.addEventListener('click', (e) => {
+            const t = e.target;
+            if (t && t.closest && t.closest('.list-back')) _ortgaQadam = true;
+        }, true);
+
+        // ===== CHETDAN SURIB ORQAGA QAYTISH =====
+        // iPhone'dagi odat: chap chetdan o'ngga tortilsa — orqaga. Mini
+        // App'da buni brauzer bermaydi, shuning uchun o'zimiz qilamiz.
+        // Barmoq harakatiga ekranning o'zi ergashadi, qo'l uzilganda esa
+        // yo orqaga o'tadi, yo joyiga qaytadi — shunda ishora «ushlanmay
+        // qolgan»dek tuyulmaydi.
+        (function () {
+            const CHET = 30;              // chap chetdan shuncha piksel
+            let x0 = 0, y0 = 0, dx = 0, faol = null;
+
+            function bekor() {
+                if (faol) {
+                    faol.classList.remove('sudralmoqda');
+                    faol.style.transform = '';
+                    faol.style.opacity = '';
+                }
+                faol = null; dx = 0;
+            }
+
+            function ortga() {
+                // Har bo'limning o'z «← Orqaga» tugmasi bor va qayerga
+                // qaytishni aynan o'sha biladi — zanjirni bu yerda
+                // qaytadan yozgandan ko'ra tugmani bosgan ma'qul.
+                const sc = document.querySelector('.screen.active');
+                const tugma = sc && [...sc.querySelectorAll('.list-back')]
+                    .find(b => b.offsetParent !== null);
+                if (tugma) { tugma.click(); return; }
+                if (_navZaxira) navBack(_navZaxira);
+            }
+
+            document.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                const ov = $('camOverlay');
+                if (ov && ov.style.display === 'flex') return;   // kamera to'liq ekranda
+                const t = e.touches[0];
+                if (t.clientX > CHET) return;
+                x0 = t.clientX; y0 = t.clientY; dx = 0;
+                faol = document.querySelector('.screen.active');
+            }, { passive: true });
+
+            document.addEventListener('touchmove', (e) => {
+                if (!faol) return;
+                const t = e.touches[0];
+                const ddx = t.clientX - x0;
+                if (ddx < 0 || Math.abs(t.clientY - y0) > 60) { bekor(); return; }
+                dx = ddx;
+                faol.classList.add('sudralmoqda');
+                faol.style.transform = 'translateX(' + dx + 'px)';
+                faol.style.opacity = String(Math.max(0.35, 1 - dx / 420));
+            }, { passive: true });
+
+            document.addEventListener('touchend', () => {
+                if (!faol) return;
+                const yetarli = dx > Math.min(110, window.innerWidth * 0.28);
+                bekor();
+                if (yetarli) ortga();
+            }, { passive: true });
+
+            document.addEventListener('touchcancel', bekor, { passive: true });
+        })();
 
         // ===== Error helpers =====
         function showError(el, msg) {
@@ -3475,7 +3574,10 @@
             navYangiEkran(title);
             const t = $('toolTitle'), b = $('toolBody');
             if (t) t.textContent = title;
-            if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+            if (b) {
+                b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+                animKirish(b);
+            }
             showScreen('screenTool');
         }
 

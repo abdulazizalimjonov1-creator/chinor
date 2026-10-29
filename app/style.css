@@ -887,6 +887,11 @@
             .form-card input, .form-card select, .form-card textarea { background: #0f2d1a; color:#e8f5e9; border-color: #2d5a3c; }
             .search-bar { background: #0f2d1a; border-color: #2d5a3c; }
             .search-bar input { color: #e8f5e9; }
+            /* Fokusdagi holat ham: umumiy qoidada `background:#fff` turadi,
+               qora mavzuda esa oq maydonga oq yozuv tushib, yozilayotgan
+               matn ko'rinmay qolardi. */
+            .search-bar:focus-within { background: #0a1f12; border-color: var(--primary-mid); }
+            .search-bar input::placeholder { color: #6f8f78; }
             .cart-line  { background: rgba(15,32,20,0.90); }
             .list-back  { background: #1b3a2a; }
             .more-btn   { background: #1b3a2a; }
@@ -1705,4 +1710,51 @@
     input, textarea, select {
         font-size: 16px !important;
     }
+}
+
+/* ───────── Sarlavha tepada yopishib tursin ─────────
+   Ro'yxatni pastga surganda «← Orqaga» tugmasi va bo'lim nomi tepada
+   qolib ketardi: qaysi bo'limdaligini bilish uchun ham, chiqish uchun
+   ham ro'yxatni qaytadan tepaga surish kerak edi. Endi ular ekran
+   tepasiga yopishadi; ostidan o'tayotgan kontent xiralashib ko'rinadi
+   (shaffof fon + blur), shuning uchun sahifa «kesilgan»dek tuyulmaydi. */
+.list-header, .cl-header {
+    position: sticky; top: 0; z-index: 40;
+    margin: 0 -10px 12px; padding: 10px;
+    background: var(--sticky-bg);
+    -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    backdrop-filter: blur(16px) saturate(1.3);
+    border-radius: 0 0 16px 16px;
+}
+/* Qidiruv satri sarlavha ostida turadi — uzun ro'yxatda ham qo'l ostida. */
+.search-bar {
+    position: sticky; top: 54px; z-index: 35;
+}
+:root        { --sticky-bg: rgba(238,247,240,0.82); }
+@media (prefers-color-scheme: dark) {
+    :root    { --sticky-bg: rgba(10,31,18,0.86); }
+}
+
+/* ───────── Bo'limlar «eshikdan kirgandek» ochilsin ─────────
+   Ilgari ekran shunchaki paydo bo'lardi — qayerga o'tganini ko'z
+   ilg'amasdi. Endi ichkariga kirilganda o'ngdan, orqaga qaytilganda
+   chapdan suriladi: harakat yo'nalishning o'zini aytib turadi. */
+.screen.active           { animation: ekranKirish .26s cubic-bezier(.22,.61,.36,1) both; }
+.screen.active.ortga     { animation-name: ekranOrtga; }
+@keyframes ekranKirish { from { opacity: 0; transform: translateX(26px); }
+                           to { opacity: 1; transform: none; } }
+@keyframes ekranOrtga  { from { opacity: 0; transform: translateX(-26px); }
+                           to { opacity: 1; transform: none; } }
+
+/* Bo'limlarning ko'pi bitta ekranga (#screenTool) chiziladi — u yerda
+   ekran almashmaydi, shuning uchun mazmunning o'zi suriladi. */
+#toolBody.kirish, #myBody.kirish, #statsBody.kirish {
+    animation: ekranKirish .24s cubic-bezier(.22,.61,.36,1) both;
+}
+
+/* Chetdan surib orqaga qaytish — barmoq ergashadigan harakat. */
+.screen.sudralmoqda { animation: none; will-change: transform; }
+
+@media (prefers-reduced-motion: reduce) {
+    .screen.active, #toolBody.kirish, #myBody.kirish, #statsBody.kirish { animation: none; }
 }
