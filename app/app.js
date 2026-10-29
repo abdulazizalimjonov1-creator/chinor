@@ -142,7 +142,80 @@
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             const el = (typeof id === 'string') ? $(id) : id;
             if (el) el.classList.add('active');
+            _navTelegramTugma(typeof id === 'string' ? id : (el && el.id) || '');
         }
+
+        // ===== ORQAGA QAYTISH ZANJIRI =====
+        // MUAMMO EDI: bo'limlar bitta umumiy ekranga (#screenTool, #screenMy)
+        // chiziladi, sarlavhadagi «← Orqaga» esa HAR DOIM bosh menyuga
+        // qaytarardi. Cheklarni varoqlab turib orqaga bosilsa — mijoz ham,
+        // sahifa ham, tanlangan cheklar ham yo'qolardi.
+        // ENDI: ochilgan har bir bo'lim o'zini zanjirga yozadi, «← Orqaga»
+        // esa BIR QADAM ortga qaytaradi (va Telegramning o'z orqaga
+        // tugmasi ham shu zanjirga ulangan).
+        let _navZanjir = [];       // ortga qaytish yo'li
+        let _navJoy = null;        // hozir qayerda turibmiz
+        let _navSarlavha = '';     // oxirgi chizilgan sarlavha
+        let _navYozilgan = false;  // shu bo'lim zanjirga yozildimi?
+
+        // Bo'lim boshi — zanjir shu yerdan boshlanadi, yuqoriga chiqmaydi.
+        const NAV_ROOTS = ['openDebtors', 'openMyReceipts'];
+
+        function navMark(name, ...args) {
+            _navYozilgan = true;
+            if (NAV_ROOTS.indexOf(name) >= 0) {
+                _navZanjir = [];
+            } else if (_navJoy && _navJoy.name !== name) {
+                _navZanjir.push(_navJoy);
+            }
+            // Bir xil bo'lim (sahifa almashdi) — zanjirga qo'shilmaydi,
+            // shunchaki joriy holat yangilanadi.
+            _navJoy = { name, args };
+        }
+
+        // Zanjirga yozilmagan bo'lim ochilsa, eski yo'lni tashlaymiz —
+        // aks holda «orqaga» aloqasi yo'q ekranga olib borardi.
+        function navYangiEkran(title) {
+            if (title && title !== _navSarlavha) {
+                if (!_navYozilgan) { _navZanjir = []; _navJoy = null; }
+                _navSarlavha = title;
+            }
+            _navYozilgan = false;
+        }
+
+        window.navBack = function (zaxira) {
+            const oldin = _navZanjir.pop();
+            if (oldin) {
+                _navJoy = oldin;
+                _navYozilgan = true;
+                _navSarlavha = '';
+                const fn = window[oldin.name];
+                if (typeof fn === 'function') return fn.apply(null, oldin.args);
+            }
+            _navZanjir = []; _navJoy = null; _navSarlavha = '';
+            if (typeof window[zaxira] === 'function') return window[zaxira]();
+            return showScreen(zaxira || 'screenAdmin');
+        };
+
+        // Telegramning o'z «‹» tugmasi — telefonda odam aynan shuni bosadi.
+        const _NAV_ZAXIRA = { screenTool: 'screenAdmin', screenMy: 'openAccount' };
+        let _navZaxira = '';
+
+        function _navTelegramTugma(screenId) {
+            _navZaxira = _NAV_ZAXIRA[screenId] || '';
+            try {
+                if (!tg || !tg.BackButton) return;
+                if (_navZaxira) tg.BackButton.show(); else tg.BackButton.hide();
+            } catch (_) {}
+        }
+
+        try {
+            if (tg && tg.onEvent) {
+                tg.onEvent('backButtonClicked', () => {
+                    if (_navZaxira) navBack(_navZaxira);
+                });
+            }
+        } catch (_) {}
 
         // ===== Error helpers =====
         function showError(el, msg) {
@@ -3112,6 +3185,7 @@
         // adashtirardi.
 
         function openMy(title, html) {
+            navYangiEkran(title);
             const t = $('myTitle'), b = $('myBody');
             if (t) t.textContent = title;
             if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
@@ -3141,25 +3215,46 @@
                         onclick="openMyReceipts(0)">📋 Xaridlarim</button>
                 <button class="more-btn" style="width:100%;margin-top:6px"
                         onclick="openMyLedger()">💰 Hisob-kitob daftari</button>
-                <button class="more-btn" style="width:100%;margin-top:6px"
-                        onclick="downloadMy('receipts')">📥 Excel yuklab olish</button>
-                <button class="more-btn" style="width:100%;margin-top:6px"
-                        onclick="downloadMy('png')">🖼 Hisob-kitob rasmi</button>
                 <div class="list-status" style="text-align:left;margin-top:8px">
-                    🧾 Cheklarni rasm qilib olish (tovarlari bilan):
+                    💰 Hisob-kitob daftarini olish — fayl <b>Telegramga</b>
+                    keladi, brauzer ochilmaydi:
                 </div>
                 <div style="display:flex;gap:6px;margin-top:4px">
                     <button class="more-btn" style="flex:1"
-                            onclick="downloadMy('cheklar_png', 3)">3 ta</button>
+                            onclick="deliverMy('ledger','pdf')">📄 PDF</button>
                     <button class="more-btn" style="flex:1"
-                            onclick="downloadMy('cheklar_png', 10)">10 ta</button>
+                            onclick="deliverMy('ledger','png')">🖼 Rasm</button>
                     <button class="more-btn" style="flex:1"
-                            onclick="downloadMy('cheklar_png', 30)">30 ta</button>
-                </div>`;
+                            onclick="deliverMy('ledger','xlsx')">📥 Excel</button>
+                </div>
+                <div class="list-status" style="text-align:left;margin-top:8px">
+                    🧾 Oxirgi cheklar (tovarlari bilan) — PDF:
+                </div>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','pdf',3)">3 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','pdf',10)">10 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','pdf',30)">30 ta</button>
+                </div>
+                <div class="list-status" style="text-align:left;margin-top:8px">
+                    🖼 Shu cheklar rasm shaklida:
+                </div>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','png',3)">3 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','png',10)">10 ta</button>
+                    <button class="more-btn" style="flex:1"
+                            onclick="deliverMy('receipts','png',30)">30 ta</button>
+                </div>
+                <div id="myFileMsg" class="list-status"></div>`;
         }
 
         window.openMyReceipts = async function (page) {
             page = page || 0;
+            navMark('openMyReceipts', page);
             openMy('📋 Xaridlarim');
             const { ok, status, data } = await apiFetch('/api/my/receipts?per=20&page=' + page);
             if (!ok || !data.ok) return openMy('📋 Xaridlarim', toolError(status, data));
@@ -3196,6 +3291,7 @@
         };
 
         window.openMyReceipt = async function (id) {
+            navMark('openMyReceipt', id);
             openMy('🧾 Chek');
             const { ok, status, data } = await apiFetch('/api/my/receipt?id=' + id);
             if (!ok || !data.ok) return openMy('🧾 Chek', toolError(status, data));
@@ -3232,11 +3328,12 @@
                         ? `<div class="toprow"><span>Chekdagi qarz qoldig'i</span>
                              <span class="val val-red">${_rmoney(r.client_debt)}</span></div>` : ''}
                     <button class="more-btn" style="width:100%;margin-top:8px"
-                            onclick="openMyReceipts(0)">← Xaridlarim</button>
+                            onclick="navBack('openAccount')">← Xaridlarim</button>
                 </div>`);
         };
 
         window.openMyLedger = async function () {
+            navMark('openMyLedger');
             openMy('💰 Hisob-kitob');
             const { ok, status, data } = await apiFetch('/api/my/ledger?limit=200');
             if (!ok || !data.ok) return openMy('💰 Hisob-kitob', toolError(status, data));
@@ -3246,10 +3343,16 @@
             }
             openMy('💰 Hisob-kitob', _ledgerHtml(data.rows, data.debt) + `
                 <div class="stat-block">
-                    <button class="more-btn" style="width:100%"
-                            onclick="downloadMy('ledger')">📥 Excel yuklab olish</button>
-                    <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="downloadMy('png')">🖼 Rasm qilib olish</button>
+                    <div class="lbl">Faylni Telegramga olish</div>
+                    <div style="display:flex;gap:6px;margin-top:4px">
+                        <button class="more-btn" style="flex:1"
+                                onclick="deliverMy('ledger','pdf')">📄 PDF</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="deliverMy('ledger','png')">🖼 Rasm</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="deliverMy('ledger','xlsx')">📥 Excel</button>
+                    </div>
+                    <div id="myFileMsg" class="list-status"></div>
                 </div>`);
         };
 
@@ -3317,15 +3420,28 @@
             return head + _ledgerRows(rows);
         }
 
-        window.downloadMy = function (type, count) {
-            const n = count ? `&count=${encodeURIComponent(count)}` : '';
-            const url = `${API_BASE_URL}/api/my/excel?type=${encodeURIComponent(type)}${n}` +
-                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
-            try {
-                if (tg && tg.openLink) tg.openLink(url);
-                else window.open(url, '_blank');
-            } catch (e) { alert('Ochilmadi'); }
+        // Mijozning fayli ham TELEGRAMGA keladi: Android'da brauzerdan
+        // tushgan .xlsx ko'pincha ochilmaydi, PDF va rasm esa suhbatning
+        // o'zida darrov ko'rinadi va boshqaga yuborish ham oson.
+        window.deliverMy = async function (kind, fmt, count) {
+            const el = $('myFileMsg');
+            if (el) el.textContent = 'Tayyorlanmoqda…';
+            const { ok, data } = await apiFetch('/api/my/deliver', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind, fmt, count: count || 0 }),
+            });
+            if (!el) return;
+            el.innerHTML = (ok && data.ok)
+                ? '<span class="val-green">✅ Telegramga yuborildi — suhbatni '
+                  + 'ochib ko\'ring</span>'
+                : '<span class="val-red">' + escapeHtml((data && data.error)
+                  || 'Yuborilmadi') + '</span>';
         };
+
+        // Fayl brauzerda ochiladigan eski yo'l. Endi ishlatilmaydi —
+        // hammasi `deliverMy()` orqali Telegramga ketadi. Server tomondagi
+        // `/api/my/excel` esa joyida qoldi: eski havolalar ishlayversin.
 
         // ================================================================
         // BOT MENYUSIDAN KO'CHIRILGAN 5 TA BO'LIM
@@ -3335,6 +3451,7 @@
         // ekranga (#screenTool) chiziladi — har biriga alohida ekran
         // yasamaymiz, chunki tuzilishi bir xil: sarlavha + ro'yxat.
         function openTool(title, html) {
+            navYangiEkran(title);
             const t = $('toolTitle'), b = $('toolBody');
             if (t) t.textContent = title;
             if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
@@ -3914,9 +4031,11 @@
         let _debtList = [];          // oxirgi yuklangan qarzdorlar
         let _debtName = '';          // ochilgan mijoz
         let _debtPicked = [];        // tanlangan chek id lari
+        let _debtPageIds = [];       // shu sahifada ko'rinayotgan cheklar
         let _debtPage = 0;
 
         window.openDebtors = async function () {
+            navMark('openDebtors');
             openTool('📕 Qarzdorlar');
             const { ok, status, data } = await apiFetch('/api/debt/clients');
             if (!ok || !data.ok) return openTool('📕 Qarzdorlar', toolError(status, data));
@@ -3954,9 +4073,12 @@
         };
 
         window.openDebtClient = async function (name) {
+            navMark('openDebtClient', name);
+            // Tanlov faqat BOSHQA mijozga o'tilganda tozalanadi: cheklar
+            // ekranidan orqaga qaytib yana kirgan odam belgilaganini
+            // yo'qotmasin.
+            if (_debtName !== name) { _debtPicked = []; _debtPage = 0; }
             _debtName = name;
-            _debtPicked = [];
-            _debtPage = 0;
             openTool('👤 ' + name);
             const { ok, status, data } = await apiFetch(
                 '/api/debt/client?name=' + encodeURIComponent(name) + '&limit=60');
@@ -3983,9 +4105,19 @@
                 </div>
                 <div class="stat-block">
                     <button class="more-btn" style="width:100%"
-                            onclick="openDebtReceipts(0)">📎 Cheklarni tanlash / yuborish</button>
+                            onclick="openDebtReceipts(0)">📎 Cheklarni tanlash / yuborish${
+                        _debtPicked.length ? ' (' + _debtPicked.length + ')' : ''}</button>
+                    <div class="lbl" style="margin-top:10px">Hisob-kitob daftari — Telegramga</div>
+                    <div style="display:flex;gap:6px;margin-top:4px">
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('pdf','me','ledger')">📄 PDF</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('png','me','ledger')">🖼 Rasm</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('xlsx','me','ledger')">📥 Excel</button>
+                    </div>
                     <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtDownload('ledger')">📥 Hisob-kitob (Excel)</button>
+                            onclick="debtDeliver('pdf','client','ledger')">📄 Daftarni mijozga (PDF)</button>
                     <button class="more-btn" style="width:100%;margin-top:6px"
                             onclick="debtRemind('auto')">📨 Qarz eslatmasini yuborish</button>
                     ${c.chat_id ? '' : `<button class="more-btn" style="width:100%;margin-top:6px"
@@ -4000,6 +4132,7 @@
         };
 
         window.openDebtReceipts = async function (page) {
+            navMark('openDebtReceipts', page || 0);
             _debtPage = page || 0;
             openTool('📎 ' + _debtName);
             const { ok, status, data } = await apiFetch(
@@ -4008,13 +4141,15 @@
             if (!ok || !data.ok) return openTool('📎 ' + _debtName, toolError(status, data));
 
             let rows = '';
+            _debtPageIds = (data.items || []).map(r => r.id);
             (data.items || []).forEach(r => {
                 const on = _debtPicked.indexOf(r.id) >= 0;
                 const mark = r.kind === 'qaytarish' ? '↩️'
                            : r.kind === 'nasiya' ? '🤝' : '🧾';
                 rows += `<div class="toprow" style="cursor:pointer;align-items:flex-start"
                               onclick="debtPick(${r.id})">
-                    <span>${on ? '☑️' : '⬜️'} ${mark} №${escapeHtml(r.doc_no)}
+                    <span><span class="dpk" id="dpk${r.id}">${on ? '☑️' : '⬜️'}</span>
+                      ${mark} №${escapeHtml(r.doc_no)}
                       <small style="opacity:.7">${escapeHtml(r.at.slice(0, 16))}</small><br>
                       <small style="opacity:.7">${r.lines} tovar</small></span>
                     <span class="val">${_rmoney(r.payable)}</span></div>`;
@@ -4035,21 +4170,42 @@
             openTool('📎 ' + _debtName, `
                 <div class="stat-block">
                     <div class="list-status" style="text-align:left">
-                        Cheklarni belgilang — ularni bitta Excel qilib yoki
-                        mijozning Telegramiga yuborsa bo'ladi.
+                        Cheklarni belgilang — PDF, rasm yoki Excel qilib
+                        <b>to'g'ridan-to'g'ri Telegramga</b> yuboriladi
+                        (brauzerga chiqish shart emas).
                     </div>
                     <div><b id="debtPickN">${_debtPicked.length}</b> ta tanlandi</div>
-                    <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtDownload('receipts')">📥 Excel (tanlanganlar)</button>
-                    <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtDownload('receipts_png')">🖼 Rasm (tanlanganlar)</button>
-                    <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtSend()">📨 Mijozga yuborish</button>
-                    <button class="more-btn" style="width:100%;margin-top:6px"
-                            onclick="debtPickClear()">🗑 Tanlovni tozalash</button>
+                    <div style="display:flex;gap:6px;margin-top:6px">
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtPickAll()">✅ Sahifani belgilash</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtPickClear()">🗑 Tozalash</button>
+                    </div>
+                    <div class="lbl" style="margin-top:10px">Mijozga yuborish</div>
+                    <div style="display:flex;gap:6px;margin-top:4px">
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('pdf','client')">📄 PDF</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('png','client')">🖼 Rasm</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtSend()">🧾 Matn</button>
+                    </div>
+                    <div class="lbl" style="margin-top:10px">O'zimga (Telegramga)</div>
+                    <div style="display:flex;gap:6px;margin-top:4px">
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('pdf','me')">📄 PDF</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('png','me')">🖼 Rasm</button>
+                        <button class="more-btn" style="flex:1"
+                                onclick="debtDeliver('xlsx','me')">📥 Excel</button>
+                    </div>
                     <div id="debtMsg" class="list-status"></div>
                 </div>
-                <div class="stat-block">${rows}${nav}</div>`);
+                <div class="stat-block">${rows}${nav}</div>
+                <div class="stat-block">
+                    <button class="more-btn" style="width:100%"
+                            onclick="navBack('screenAdmin')">← Mijoz</button>
+                </div>`);
         };
 
         window.openDebtClientAt = function (i) {
@@ -4058,30 +4214,71 @@
         };
         window.openDebtBack = function () { openDebtClient(_debtName); };
 
+        // PTICHKA. Ilgari har belgilashdan keyin `openDebtReceipts()`
+        // chaqirilardi: ro'yxat serverdan qaytadan o'qilib, butun ekran
+        // qayta chizilardi — Mini App «yangilanib ketdi» deb ko'rinardi,
+        // ro'yxat tepaga sakrardi. Endi faqat shu qatorning belgisi va
+        // hisoblagich o'zgaradi: hech narsa qayta yuklanmaydi.
+        function _debtPickBelgi(id) {
+            const el = $('dpk' + id);
+            if (el) el.textContent = _debtPicked.indexOf(id) >= 0 ? '☑️' : '⬜️';
+        }
+        function _debtPickSon() {
+            const n = $('debtPickN');
+            if (n) n.textContent = _debtPicked.length;
+        }
+
         window.debtPick = function (id) {
             const i = _debtPicked.indexOf(id);
             if (i >= 0) _debtPicked.splice(i, 1); else _debtPicked.push(id);
-            openDebtReceipts(_debtPage);
+            _debtPickBelgi(id);
+            _debtPickSon();
         };
-        window.debtPickClear = function () { _debtPicked = []; openDebtReceipts(_debtPage); };
+
+        window.debtPickAll = function () {
+            _debtPageIds.forEach(id => {
+                if (_debtPicked.indexOf(id) < 0) _debtPicked.push(id);
+                _debtPickBelgi(id);
+            });
+            _debtPickSon();
+        };
+
+        window.debtPickClear = function () {
+            const eski = _debtPicked.slice();
+            _debtPicked = [];
+            eski.forEach(_debtPickBelgi);
+            _debtPickSon();
+        };
 
         function _debtMsg(html) {
             const el = $('debtMsg');
             if (el) el.innerHTML = html;
         }
 
-        window.debtDownload = function (type) {
-            const ids = (_debtPicked.length
-                         && (type === 'receipts' || type === 'receipts_png'))
-                ? '&ids=' + _debtPicked.join(',') : '';
-            const url = `${API_BASE_URL}/api/debt/excel?name=${encodeURIComponent(_debtName)}` +
-                        `&type=${encodeURIComponent(type)}${ids}` +
-                        `&initData=${encodeURIComponent((tg && tg.initData) || '')}`;
-            try {
-                if (tg && tg.openLink) tg.openLink(url);
-                else window.open(url, '_blank');
-                _debtMsg('<span class="val-green">✅ Yuklanmoqda…</span>');
-            } catch (e) { _debtMsg('<span class="val-red">Ochilmadi</span>'); }
+        // Eski «brauzerda yuklab olish» yo'li olib tashlandi: fayl endi
+        // `debtDeliver()` orqali to'g'ridan-to'g'ri Telegramga boradi.
+        // `/api/debt/excel` serverda qoldi (eski havolalar uchun).
+
+        // Fayl TELEGRAMGA ketadi, brauzerga emas. Ilgari «Excel»/«Rasm»
+        // tugmasi havolani brauzerda ochardi: Telegramdan chiqib ketiladi,
+        // fayl «Yuklanmalar»ga tushadi va uni mijozga yuborish uchun yana
+        // qidirish kerak bo'lardi.
+        window.debtDeliver = async function (fmt, to, kind) {
+            kind = kind || 'receipts';
+            if (kind === 'receipts' && !_debtPicked.length) {
+                return _debtMsg('<span class="val-red">Avval chek belgilang</span>');
+            }
+            _debtMsg('Tayyorlanmoqda…');
+            const { ok, data } = await apiFetch('/api/debt/deliver', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: _debtName, ids: _debtPicked,
+                                       kind, fmt, to }),
+            });
+            if (!ok || !data.ok) return _debtMsg(
+                '<span class="val-red">' + escapeHtml(data.error || 'Yuborilmadi') + '</span>');
+            _debtMsg('<span class="val-green">✅ Telegramga yuborildi — '
+                     + (to === 'client' ? 'mijozga' : 'sizga') + '</span>');
         };
 
         window.debtSend = async function () {
@@ -4123,6 +4320,7 @@
         // NAVBATI orqali — shaxsiy akkauntdan ketma-ket yozish Telegram
         // spam-qo'riqchisini uyg'otadi va akkaunt cheklanishi mumkin.
         window.openDebtNotify = async function () {
+            navMark('openDebtNotify');
             openTool('📨 Eslatma yuborish');
             const { ok, status, data } = await apiFetch('/api/debt/notify/status');
             if (!ok || !data.ok) return openTool('📨 Eslatma yuborish', toolError(status, data));
@@ -4198,6 +4396,7 @@
         };
 
         window.openDebtEdit = async function () {
+            navMark('openDebtEdit');
             openTool('⚙️ ' + _debtName);
             const { ok, status, data } = await apiFetch(
                 '/api/debt/client?name=' + encodeURIComponent(_debtName) + '&limit=0');

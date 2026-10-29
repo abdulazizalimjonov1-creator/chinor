@@ -849,13 +849,19 @@ async def api_products(request: web.Request):
         if role == "client":
             prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
 
-    # Kategoriya bo'yicha saralash (qidiruvga ham qo'llanadi)
-    try:
-        cat_id = int(request.query.get("category", "") or 0)
-    except ValueError:
-        cat_id = 0
-    if cat_id:
-        prods = [p for p in prods if int(p.get("category_id") or 0) == cat_id]
+    # Kategoriya bo'yicha saralash (qidiruvga ham qo'llanadi).
+    # `category=none` — bo'limi BIRIKTIRILMAGAN tovarlar (0 ni filtr deb
+    # qabul qilib bo'lmaydi: 0 «filtr yo'q» degani).
+    cat_raw = (request.query.get("category", "") or "").strip().lower()
+    if cat_raw in ("none", "0-none", "uncat"):
+        prods = [p for p in prods if not int(p.get("category_id") or 0)]
+    else:
+        try:
+            cat_id = int(cat_raw or 0)
+        except ValueError:
+            cat_id = 0
+        if cat_id:
+            prods = [p for p in prods if int(p.get("category_id") or 0) == cat_id]
 
     # Mahsulotlar SKU (id) raqami bo'yicha o'sish tartibida: 10000, 10001, ...
     prods.sort(key=lambda p: (p.get("id") or 0))
@@ -1086,17 +1092,29 @@ async def api_product_save(request: web.Request):
         if ex and ex.get("id") != pid:
             return _err(f"«{c}» shtrix-kod «{ex['name']}» da bor", 409)
 
+    # Bo'lim va yetkazib beruvchi: kalit KELMASA tegilmaydi. Ilgari har
+    # qanday holatda 0 yozilardi — Mini App tahrir formasi bu maydonlarni
+    # yubormaydi, shuning uchun tovarni tahrirlash uning bo'limini ham,
+    # yetkazib beruvchisini ham O'CHIRIB tashlardi (kategoriyalar shuning
+    # uchun bo'shab qolardi).
+    has_cat = "category_id" in body
+    has_sup = "supplier_id" in body
+
     if pid:
         p = await _db.get_product_any(pid)
         if not p:
             return _err("Mahsulot topilmadi", 404)
-        await _db.update_product(
-            pid, name=name, display_name=display_name, description=desc,
+        upd = dict(
+            name=name, display_name=display_name, description=desc,
             sell_price=sell_sum, cost_price=cost_sum,
             wholesale_price=whs_sum,
             qty=qty, unit=unit,
-            category_id=cat_id, supplier_id=sup_id,
         )
+        if has_cat:
+            upd["category_id"] = cat_id
+        if has_sup:
+            upd["supplier_id"] = sup_id
+        await _db.update_product(pid, **upd)
         if replace_codes:
             ok, bc_err = await _db.set_product_barcodes(pid, codes)
             if not ok:
@@ -2731,22 +2749,35 @@ async def api_categories_list(request: web.Request):
     rows = await _db.get_all_categories()
     prods = await _db.get_all_products(active_only=True)
     counts = {}
+    uncat = 0          # bo'limi belgilanmagan tovarlar (adminga kerak)
+    in_stock = {}      # qoldig'i bor tovarlar soni — adminga ham foydali
     for p in prods:
         if is_client and (p.get("qty", 0) or 0) <= 0:
             continue
         cid = int(p.get("category_id") or 0)
         if cid:
             counts[cid] = counts.get(cid, 0) + 1
+            if (p.get("qty", 0) or 0) > 0:
+                in_stock[cid] = in_stock.get(cid, 0) + 1
+        else:
+            uncat += 1
 
     out = []
     for r in rows:
         d = dict(r)
         d["count"] = counts.get(int(d["id"]), 0)
+        d["in_stock"] = in_stock.get(int(d["id"]), 0)
         if is_client and d["count"] == 0:
             continue
         out.append(d)
     out.sort(key=lambda x: -x["count"])
-    return web.json_response({"ok": True, "categories": out})
+    resp = {"ok": True, "categories": out}
+    if not is_client:
+        # Admin «qancha tovar qaysi bo'limda, qanchasi hali biriktirilmagan»
+        # degan savolga bitta so'rovda javob olishi uchun.
+        resp["uncategorized"] = uncat
+        resp["total_products"] = len(prods)
+    return web.json_response(resp)
 
 
 @ROUTES.post("/api/category/save")
@@ -3771,7 +3802,7 @@ async def api_barcode_attach(request: web.Request):
     """
     from database.channel_db import db as _db
 
-    auth, err = await _need_admin(request, _db, "products")
+    auth, err = await _need_admin(request, _db, "products_edit")
     if err is not None:
         return err
 
