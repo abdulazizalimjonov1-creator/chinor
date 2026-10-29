@@ -45,15 +45,15 @@ MAX_JOBS = 50               # xotirada shundan ortig'i saqlanmaydi
 # uchun (har sennik alohida varaq), `cols/rows` — A4 varaqdagi to'r.
 SIZES = {
     "60x40": {"title": "60×40 mm", "page": "60mm 40mm", "w": "60mm", "h": "40mm",
-              "one_per_page": True,  "mm": (60, 40), "gap_mm": 2, "bc": (34, 7.5),
+              "one_per_page": True,  "mm": (60, 40), "gap_mm": 2, "bc": (34, 5.5),
               "hint": "Rulon printer (ma'lumot qabul qiluvchi kompyuter)"},
     "30x20": {"title": "30×20 mm", "page": "30mm 20mm", "w": "30mm", "h": "20mm",
-              "one_per_page": True,  "mm": (30, 20), "gap_mm": 2, "bc": (23, 4.5),
+              "one_per_page": True,  "mm": (30, 20), "gap_mm": 2, "bc": (23, 3.6),
               "hint": "Rulon printer (server kompyuter)"},
     "a4":    {"title": "A4 — 8 ta", "page": "A4", "w": "97mm", "h": "66mm",
-              "one_per_page": False, "paper": True, "bc": (46, 10), "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
+              "one_per_page": False, "paper": True, "bc": (46, 7.5), "hint": "Katta qog'ozda 8 ta sennik (qirqib olinadi)"},
     "a4big": {"title": "A4 — 1 ta katta", "page": "A4", "w": "194mm", "h": "271mm",
-              "one_per_page": True, "paper": True, "bc": (120, 28),  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
+              "one_per_page": True, "paper": True, "bc": (120, 20),  "hint": "Bitta katta sennik (javon / aksiya uchun)"},
 }
 DEFAULT_SIZE = "60x40"
 
@@ -135,9 +135,12 @@ html,body{background:#f1f3f5;font-family:Arial,Helvetica,"Segoe UI",sans-serif;c
      padding-bottom:.8mm}
 .tag .top img{display:block}
 .tag .shop{font-weight:700;color:#15803d;letter-spacing:.02em;line-height:1}
-.tag .nm{font-weight:700;line-height:1.15;overflow:hidden;flex:1;
-     display:flex;align-items:center}
-.tag .pr{font-weight:700;line-height:1;white-space:nowrap;text-align:right;overflow:hidden}
+/* Nom ko'pi bilan ikki qator: uzun nom narxni siqib qo'ymasin
+   (bir javondagi senniklarning narxi bir xil yirik ko'rinishi kerak). */
+.tag .nm{font-weight:700;line-height:1.15;overflow:hidden;flex:1 1 auto;min-height:0;
+     max-height:2.3em;display:flex;align-items:center}
+.tag .pr{font-weight:700;line-height:1;white-space:nowrap;text-align:right;
+     overflow:hidden;flex:0 0 auto}
 .tag .pr i{font-style:normal;font-weight:400}
 .tag .bot{display:flex;justify-content:space-between;align-items:flex-end;
      border-top:.3mm solid #d1d5db;padding-top:.6mm;color:#374151}
@@ -172,16 +175,16 @@ def _tag_html(lb: dict, size: str) -> str:
     # yuboradi va nom o'qib bo'lmas holga keladi.
     if small:                                  # 30×20 mm — faqat eng zaruri
         s = {"pad": "1.5mm", "logo": "2.6mm", "shop": "1.9mm", "nm": "2mm",
-             "pr": "4mm", "cur": "0.4em", "bot": "1.7mm", "gap": ".5mm"}
+             "pr": "4.4mm", "cur": "0.4em", "bot": "1.7mm", "gap": ".5mm"}
     elif big:                                  # A4 ga bitta katta
         s = {"pad": "14mm", "logo": "26mm", "shop": "16mm", "nm": "15mm",
              "pr": "46mm", "cur": "0.3em", "bot": "8mm", "gap": "8mm"}
     elif size == "a4":                         # A4 varaqdagi kartochka
         s = {"pad": "4mm", "logo": "8mm", "shop": "5mm", "nm": "5mm",
-             "pr": "12mm", "cur": "0.35em", "bot": "3.6mm", "gap": "2mm"}
+             "pr": "14mm", "cur": "0.35em", "bot": "3.6mm", "gap": "2mm"}
     else:                                      # 60×40 mm
         s = {"pad": "3mm", "logo": "5.5mm", "shop": "3mm", "nm": "3.4mm",
-             "pr": "8mm", "cur": "0.33em", "bot": "2.2mm", "gap": "1mm"}
+             "pr": "9mm", "cur": "0.33em", "bot": "2.2mm", "gap": "1mm"}
 
     img = (f'<img src="{LOGO_PATH}" alt="" style="height:{s["logo"]};width:{s["logo"]}">'
            if _logo_bytes() else "")
