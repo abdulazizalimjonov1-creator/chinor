@@ -25,8 +25,11 @@ npx electron-builder --mac --publish never
 # Imzo muhri (_CodeSignature) yo'q/buzuq bo'lsa Apple Silicon'da macOS ilovani
 # ishga tushishi bilanoq o'ldiradi (SIGKILL) — "ochilmayapti" shundan.
 # Elektron build imzosiz chiqishi mumkin, shuning uchun o'zimiz imzolaymiz.
-# Updater sha512 ni tekshirmaydi (faqat version+url o'qiydi), shuning uchun
-# zipni qayta yasash latest-mac.yml ni buzmaydi.
+# DIQQAT: zipni qayta yasagach latest-mac.yml dagi sha512/size ESKI zipniki
+# bo'lib qoladi. electron-updater esa macOS'da yuklab olgan faylni AYNAN shu
+# sha512 bilan solishtiradi — mos kelmasa yangilanishni rad etadi va ilova
+# "yuklab olish ishlamayapti" holatida qoladi (31.10.2026 da aynan shu bo'ldi).
+# Shuning uchun imzolangan zipning yangi sha512/size si yml ga yoziladi.
 MACAPP=$(find dist -maxdepth 2 -name "Chinor.app" -type d | head -1)
 if [ -n "$MACAPP" ]; then
   echo "▶ macOS ilovasi imzolanmoqda: $MACAPP"
@@ -41,6 +44,21 @@ if [ -n "$MACAPP" ]; then
   rm -f "dist/Chinor-mac-$VER.zip"
   ( cd "$(dirname "$MACAPP")" && ditto -c -k --sequesterRsrc --keepParent \
       "$(basename "$MACAPP")" "$OLDPWD/dist/Chinor-mac-$VER.zip" )
+
+  echo "▶ latest-mac.yml ga yangi sha512/size yozilmoqda..."
+  ZIP="dist/Chinor-mac-$VER.zip"
+  NEWSHA="$(openssl dgst -sha512 -binary "$ZIP" | openssl base64 -A)"
+  NEWSIZE="$(stat -f%z "$ZIP")"
+  python3 - "$NEWSHA" "$NEWSIZE" <<'PYEOF'
+import re, sys
+sha, size = sys.argv[1], sys.argv[2]
+p = "dist/latest-mac.yml"
+s = open(p).read()
+s = re.sub(r"sha512: .*", "sha512: " + sha, s)
+s = re.sub(r"size: \d+", "size: " + size, s)
+open(p, "w").write(s)
+print("   ✓ sha512 va size yangilandi")
+PYEOF
 else
   echo "⚠ dist ichida Chinor.app topilmadi — imzolash o'tkazib yuborildi!"
 fi
