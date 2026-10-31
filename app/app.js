@@ -182,6 +182,38 @@
             _navTelegramTugma(typeof id === 'string' ? id : (el && el.id) || '');
         }
 
+        // ── Cheksiz ro'yxat: pastga yetganda keyingisi O'ZI yuklanadi ───
+        // Ilgari har 20 tadan keyin «Yana yuklash» tugmasini bosish kerak
+        // edi — 7000 tovarli katalogda bu charchatadi. Endi ro'yxat oxiriga
+        // yaqinlashganda keyingi sahifa o'zi so'raladi; tugma esa joyida
+        // qoladi (internet sekin bo'lsa yoki surish ishlamasa — zaxira).
+        const _cheksiz = [];
+        let _cheksizT = null;
+
+        function cheksizRoyxat(el, yukla) {
+            if (!el || el.dataset.cheksiz === '1') return;
+            el.dataset.cheksiz = '1';
+            _cheksiz.push({ el, yukla });
+        }
+
+        function cheksizTekshir() {
+            // Ekrandan ketgan (qayta chizilgan) tugmalarni ro'yxatdan chiqaramiz
+            for (let i = _cheksiz.length - 1; i >= 0; i--) {
+                const x = _cheksiz[i];
+                if (!x.el.isConnected) { _cheksiz.splice(i, 1); continue; }
+                if (x.el.style.display === 'none' || !x.el.offsetParent) continue;
+                // Tugma ekranning tagiga 500px qolganda — oldindan yuklaymiz
+                if (x.el.getBoundingClientRect().top < window.innerHeight + 500) {
+                    try { x.yukla(); } catch (_) {}
+                }
+            }
+        }
+
+        window.addEventListener('scroll', () => {
+            clearTimeout(_cheksizT);
+            _cheksizT = setTimeout(cheksizTekshir, 80);
+        }, { passive: true });
+
         // Bitta ekranga chiziladigan bo'limlar (#screenTool) uchun:
         // ekran almashmaydi, shuning uchun mazmunning o'zini suramiz.
         function animKirish(el) {
@@ -879,6 +911,27 @@
         const productSearch  = $('productSearch');
         const productSearchClear = $('productSearchClear');
 
+        // Ro'yxat oxiriga yetganda keyingi 20 ta o'zi yuklanadi
+        cheksizRoyxat(productsMore, () => loadMoreProducts());
+
+        // Tovarni ochib qaytganda ro'yxat O'SHA JOYIDAN davom etsin:
+        // ilgari har safar boshiga qaytib, pastdagi tovarga yana surib
+        // tushishga to'g'ri kelardi.
+        let _prodScroll = 0;
+
+        function prodScrollTikla() {
+            const y = _prodScroll;
+            if (!y) return;
+            // showScreen har doim tepaga olib chiqadi — chizilgandan keyin qaytaramiz
+            requestAnimationFrame(() => { try { window.scrollTo(0, y); } catch (_) {} });
+        }
+
+        window.prodRoyxatga = function (qaytaYukla) {
+            showScreen('screenProducts');
+            if (qaytaYukla) loadProducts('qayta');      // o'zgargan tovar yangilansin
+            else prodScrollTikla();
+        };
+
         window.openProducts = function (role) {
             _prodRole = role || 'client';
             _prevScreen = (role === 'admin') ? 'screenAdmin' : 'screenClient';
@@ -916,17 +969,23 @@
         async function loadProducts(reset) {
             if (_prodLoading) return;
             _prodLoading = true;
+            // 'qayta' — tovarni tahrirlab qaytdik: sahifa raqami saqlanadi va
+            // shu paytgacha ochilgan hamma tovar BITTA so'rovda qayta olinadi
+            // (20 talab ketma-ket so'rash sekin bo'lardi).
+            const qayta = (reset === 'qayta');
             if (reset) {
-                _prodPage = 0;
+                if (!qayta) _prodPage = 0;
                 productsList.innerHTML = '';
                 productsMore.style.display = 'none';
             }
             productsStatus.textContent = 'Yuklanmoqda...';
             try {
-                const qs = new URLSearchParams({
-                    page: String(_prodPage),
-                    q: _prodQuery
-                }).toString();
+                const par = { page: qayta ? '0' : String(_prodPage), q: _prodQuery };
+                // Server limitni 500 tagacha beradi — undan nariga o'tsak
+                // qolgani odatdagidek surish bilan yuklanadi.
+                if (qayta && _prodPage > 0)
+                    par.limit = String(Math.min(500, (_prodPage + 1) * 20));
+                const qs = new URLSearchParams(par).toString();
                 const { ok, status, data } = await apiFetch('/api/products?' + qs);
                 if (!ok || !data.ok) {
                     productsStatus.textContent =
@@ -952,14 +1011,18 @@
                         `Jami: ${data.total} ta` + (_prodQuery ? ` («${_prodQuery}»)` : '');
                 }
                 productsMore.style.display = data.has_more ? 'block' : 'none';
+                if (qayta) prodScrollTikla();
             } catch (err) {
                 productsStatus.textContent =
                     'Tarmoq xatosi. API: ' + API_BASE_URL + ' — ' + (err.message || err);
             }
             _prodLoading = false;
+            // Ekran hali to'lmagan bo'lsa (uzun telefon) — davomini ham olamiz
+            setTimeout(cheksizTekshir, 60);
         }
 
         window.loadMoreProducts = function () {
+            if (_prodLoading) return;       // surish paytida sahifa sakrab ketmasin
             _prodPage += 1;
             loadProducts(false);
         };
@@ -1012,6 +1075,7 @@
         }
 
         function showProductDetail(p) {
+            _prodScroll = window.scrollY || 0;      // qaytganda shu joyga tushamiz
             _curProduct = p;
             const isAdmin = (_prodRole === 'admin');
             const low = p.qty <= 0;
@@ -1240,93 +1304,195 @@
         // Endi mijozga faqat O'ZIMIZ suratga olgan tovarlar chiqadi, bu
         // ro'yxat esa "navbat" bo'lib turadi: eng ko'p sotiladigan rasmsiz
         // tovar tepada — suratga olib borilsa ro'yxat qisqarib boradi.
-        let _npPage = 0, _npQ = '', _npStock = true, _npTotal = 0;
+        //
+        // Ro'yxat JAMLANIB boradi (sahifalar bir-birining ustiga qo'shiladi)
+        // va xotirada saqlanadi: tovarga surat qo'yib qaytganda o'sha joyidan
+        // davom etadi, boshiga qaytib ketmaydi.
+        let _npQ = '', _npStock = true, _npTotal = 0;
+        let _npPage = 0, _npItems = [], _npMore = false, _npYuk = false;
+        let _npXul = null;          // suratlar xulosasi (raqamlar)
+        let _npScroll = 0, _npOchilgan = 0;
 
-        window.openNoPhoto = async function (page) {
+        window.openNoPhoto = async function (yangidan) {
             navMark('openNoPhoto');
-            _npPage = page || 0;
-            openTool('🖼 Rasmsiz tovarlar');
-            const [xul, ro] = await Promise.all([
-                apiFetch('/api/photos/summary'),
-                apiFetch('/api/products/no-photo?page=' + _npPage +
-                         '&stock=' + (_npStock ? 1 : 0) +
-                         '&q=' + encodeURIComponent(_npQ))
-            ]);
-            if (!ro.ok || !ro.data.ok)
-                return openTool('🖼 Rasmsiz tovarlar', toolError(ro.status, ro.data));
-            const d = ro.data, x = (xul.ok && xul.data.ok) ? xul.data : {};
-            _npTotal = d.total || 0;
-
-            let html = '';
-            if (x.total) {
-                html += '<div class="np-xul">' +
-                    '<div><b>' + x.own + '</b><span>o\'z surati bor</span></div>' +
-                    '<div><b>' + x.generic + '</b><span>umumiy rasm</span></div>' +
-                    '<div><b>' + x.missing + '</b><span>rasmsiz</span></div>' +
-                    '</div>';
-                html += '<label class="np-switch"><input type="checkbox" ' +
-                    (x.client_photo_only ? 'checked' : '') +
-                    ' onchange="npMode(this.checked)">' +
-                    '<span>Mijozga va saytga faqat <b>o\'z suratli</b> tovarlar ko\'rinsin</span></label>';
-                if (x.generic) {
-                    html += '<button class="cam-btn wide" onclick="npClean()">🧹 Umumiy rasmlarni tozalash (' +
-                        x.generic + ' ta)</button>' +
-                        '<div class="np-hint">Takrorlanadigan va internetdan olingan rasmlar ' +
-                        'tovarlardan uziladi, fayllari diskdan o\'chadi. Tovarning o\'zi, narxi va ' +
-                        'qoldig\'i tegilmaydi.</div>';
-                }
-                html += '<div id="npMsg" class="list-status"></div>';
+            if (yangidan !== false) {
+                _npPage = 0; _npItems = []; _npMore = false;
+                _npScroll = 0; _npOchilgan = 0; _npXul = null;
             }
+            npChiz();
+            if (yangidan !== false) await npYukla(true);
+        };
 
-            html += '<div class="search-bar" style="margin:12px 0">' +
+        // Ekran qobig'i — ro'yxat ichidagi #npList ga qo'shib boriladi.
+        function npChiz() {
+            const x = _npXul || {};
+            let html = '';
+            if (x.total) html += npXulosaHtml(x);
+            html += '<div id="npMsg" class="list-status"></div>' +
+                '<div class="search-bar" style="margin:12px 0">' +
                 '<span class="search-ic">🔍</span>' +
                 '<input type="text" id="npSearch" placeholder="Tovar nomi..." autocomplete="off" ' +
                 'value="' + escapeHtml(_npQ) + '">' +
                 '</div>' +
                 '<label class="np-switch"><input type="checkbox" ' + (_npStock ? 'checked' : '') +
-                ' onchange="npStock(this.checked)"><span>Faqat qoldig\'i borlari</span></label>';
+                ' onchange="npStock(this.checked)"><span>Faqat qoldig\'i borlari</span></label>' +
+                '<div class="list-status" id="npJami"></div>' +
+                '<div id="npList"></div>' +
+                '<div class="list-status" id="npHolat"></div>' +
+                '<button class="more-btn" id="npMoreBtn" style="display:none" ' +
+                'onclick="npYanaBos()">Yana ko\'rsatish ↓</button>';
+            openTool('🖼 Rasmsiz tovarlar', html);
+            npQatorlar(_npItems);
+            npJamiYoz();
+            npTugma();
+            const inp = $('npSearch');
+            if (inp) {
+                let t;
+                inp.addEventListener('input', e => {
+                    clearTimeout(t);
+                    t = setTimeout(() => { _npQ = e.target.value.trim(); npYukla(true); }, 400);
+                });
+            }
+            // Pastga yetganda keyingi sahifa o'zi yuklansin
+            cheksizRoyxat($('npMoreBtn'), () => npYanaBos());
+        }
 
-            html += '<div class="list-status">' + _npTotal + ' ta tovarda o\'z surati yo\'q' +
-                (_npTotal ? ' — ustidan bosib surat qo\'ying' : '') + '</div>';
+        function npXulosaHtml(x) {
+            return '<div class="np-xul">' +
+                '<div><b id="npOwn">' + x.own + '</b><span>o\'z surati bor</span></div>' +
+                '<div><b id="npGen">' + x.generic + '</b><span>umumiy rasm</span></div>' +
+                '<div><b id="npMiss">' + x.missing + '</b><span>rasmsiz</span></div>' +
+                '</div>' +
+                '<label class="np-switch"><input type="checkbox" ' +
+                (x.client_photo_only ? 'checked' : '') +
+                ' onchange="npMode(this.checked)">' +
+                '<span>Mijozga va saytga faqat <b>o\'z suratli</b> tovarlar ko\'rinsin</span></label>' +
+                (x.generic ? '<button class="cam-btn wide" onclick="npClean()">🧹 Umumiy rasmlarni tozalash (' +
+                    x.generic + ' ta)</button>' +
+                    '<div class="np-hint">Takrorlanadigan va internetdan olingan rasmlar ' +
+                    'tovarlardan uziladi, fayllari diskdan o\'chadi. Tovarning o\'zi, narxi va ' +
+                    'qoldig\'i tegilmaydi.</div>' : '');
+        }
 
-            html += (d.items || []).map(p => {
+        function npJamiYoz() {
+            const el = $('npJami');
+            if (!el) return;
+            if (_npTotal) {
+                el.textContent = _npTotal +
+                    ' ta tovarda o\'z surati yo\'q — ustidan bosib surat qo\'ying';
+            } else {
+                el.innerHTML = _npYuk ? '' : '✅ Ro\'yxat bo\'sh';
+            }
+        }
+
+        function npTugma() {
+            const b = $('npMoreBtn');
+            if (b) b.style.display = _npMore ? 'block' : 'none';
+        }
+
+        // Tovar qatorlarini #npList ga QO'SHADI (qayta chizmaydi — surilgan
+        // joy saqlanib qolsin).
+        function npQatorlar(items) {
+            const box = $('npList');
+            if (!box || !items.length) return;
+            box.insertAdjacentHTML('beforeend', items.map(p => {
                 const rasm = p.generic_image
                     ? '<img class="np-img" src="' + escapeHtml(fullImg(p.generic_image)) +
-                      '" alt="" onerror="this.style.visibility=\'hidden\'">'
+                      '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
                     : '<span class="np-img yoq">📷</span>';
                 const sotuv = p.sold > 0
                     ? '<span style="color:var(--ok-text)">🔥 ' + p.sold + ' ta sotilgan</span>'
                     : '<span>sotuv yo\'q</span>';
-                return '<div class="g-row" onclick="npOpen(' + p.id + ')">' + rasm +
+                return '<div class="g-row" id="npR' + p.id + '" onclick="npOpen(' + p.id + ')">' + rasm +
                     '<div><b>' + escapeHtml(p.name) + '</b>' +
                     '<div class="g-meta">' + fmtSum(p.price_sum) + ' so\'m · qoldiq ' + p.qty +
                     ' ' + escapeHtml(p.unit) + '</div>' +
                     '<div class="g-meta">' + sotuv +
                     (p.generic_image ? ' · <span style="color:var(--err-text)">umumiy rasm</span>' : '') +
                     '</div></div><span>›</span></div>';
-            }).join('') || '<div class="list-status">✅ Ro\'yxat bo\'sh</div>';
+            }).join(''));
+        }
 
-            if (d.has_more)
-                html += '<button class="more-btn" onclick="openNoPhoto(' + (_npPage + 1) +
-                        ')">Yana ko\'rsatish ›</button>';
-            if (_npPage)
-                html += '<button class="more-btn" onclick="openNoPhoto(' + (_npPage - 1) +
-                        ')">‹ Oldingi</button>';
-
-            openTool('🖼 Rasmsiz tovarlar', html);
-            const inp = $('npSearch');
-            if (inp) {
-                let t;
-                inp.addEventListener('input', e => {
-                    clearTimeout(t);
-                    t = setTimeout(() => { _npQ = e.target.value.trim(); openNoPhoto(0); }, 400);
-                });
+        async function npYukla(reset) {
+            if (_npYuk) return;
+            _npYuk = true;
+            if (reset) {
+                _npPage = 0; _npItems = [];
+                const l = $('npList'); if (l) l.innerHTML = '';
             }
+            const h = $('npHolat'); if (h) h.textContent = 'Yuklanmoqda…';
+            const yol = '/api/products/no-photo?page=' + _npPage +
+                         '&stock=' + (_npStock ? 1 : 0) +
+                         '&q=' + encodeURIComponent(_npQ);
+            const [ro, xul] = await Promise.all([
+                apiFetch(yol),
+                (reset || !_npXul) ? apiFetch('/api/photos/summary') : Promise.resolve(null)
+            ]);
+            if (h) h.textContent = '';
+            if (!ro.ok || !ro.data.ok) {
+                if (h) h.innerHTML = toolError(ro.status, ro.data);
+                _npYuk = false;
+                return;
+            }
+            if (xul && xul.ok && xul.data.ok) {
+                const eski = !_npXul;
+                _npXul = xul.data;
+                if (eski) { npChiz(); }        // raqamlar birinchi marta keldi
+            }
+            const d = ro.data;
+            _npTotal = d.total || 0;
+            _npMore = !!d.has_more;
+            _npItems = _npItems.concat(d.items || []);
+            npQatorlar(d.items || []);
+            npJamiYoz();
+            npTugma();
+            _npYuk = false;
+            setTimeout(cheksizTekshir, 60);    // ekran to'lmagan bo'lsa davomi
+        }
+
+        window.npYanaBos = function () {
+            if (_npYuk || !_npMore) return;
+            _npPage += 1;
+            npYukla(false);
         };
 
-        window.npOpen = function (id) { _qeArm = true; _qeQayer = 'nophoto'; openProductForm(id); };
+        window.npOpen = function (id) {
+            _npScroll = window.scrollY || 0;   // qaytganda shu joyga tushamiz
+            _npOchilgan = id;
+            _qeArm = true; _qeQayer = 'nophoto';
+            openProductForm(id);
+        };
 
-        window.npStock = function (on) { _npStock = !!on; openNoPhoto(0); };
+        // Tovardan qaytish: ro'yxat QAYTA so'ralmaydi — xotiradagi holat
+        // chiziladi va o'sha joyga tushamiz. Suratini qo'ygan bo'lsak,
+        // tovar ro'yxatdan olinadi (endi u "rasmsiz" emas).
+        async function npQayt(id) {
+            npChiz();
+            const y = _npScroll;
+            requestAnimationFrame(() => { try { window.scrollTo(0, y); } catch (_) {} });
+            if (!id) return;
+            // Surat qo'yildimi — tovarning o'zidan so'raymiz (bitta so'rov).
+            const { ok, data } = await apiFetch('/api/product/' + id);
+            if (!(ok && data.ok && data.product && data.product.own_photo)) return;
+            _npItems = _npItems.filter(p => p.id !== id);
+            _npTotal = Math.max(0, _npTotal - 1);
+            const row = $('npR' + id);
+            if (row) row.remove();          // faqat shu qator ketadi — ro'yxat sakramaydi
+            npJamiYoz();
+            const m = $('npMsg');
+            if (m) m.innerHTML = '<span class="val-green">✅ Surat qo\'yildi — ro\'yxatdan olindi</span>';
+            // Tepadagi raqamlar ham jonli bo'lsin
+            const sum = await apiFetch('/api/photos/summary');
+            if (sum.ok && sum.data.ok) {
+                _npXul = sum.data;
+                const o = $('npOwn'), g = $('npGen'), ms = $('npMiss');
+                if (o) o.textContent = sum.data.own;
+                if (g) g.textContent = sum.data.generic;
+                if (ms) ms.textContent = sum.data.missing;
+            }
+        }
+
+        window.npStock = function (on) { _npStock = !!on; npYukla(true); };
 
         window.npMode = async function (on) {
             const { ok, data } = await apiFetch('/api/photos/mode', {
@@ -1355,7 +1521,7 @@
             }
             if (m) m.innerHTML = '<span class="val-green">✅ ' + data.products +
                 ' ta tovardan rasm uzildi, ' + data.files + ' ta fayl o\'chirildi</span>';
-            setTimeout(() => openNoPhoto(0), 900);
+            setTimeout(() => openNoPhoto(), 900);
         };
 
         // ── Noma'lum shtrix-kodni tovarga biriktirish ────────────────────
@@ -1437,7 +1603,7 @@
         // Tovar formasidan qaysi ro'yxatga qaytamiz
         let _qeQayer = 'quick';
         function qeQaytish() {
-            if (_qeQayer === 'nophoto') { openNoPhoto(_npPage); return; }
+            if (_qeQayer === 'nophoto') { npQayt(_npOchilgan); return; }
             openQuickEdit();
         }
 
@@ -1510,8 +1676,7 @@
                 setTimeout(() => {
                     _editingId = 0;
                     if (_qeReturn) { _qeReturn = false; qeQaytish(); return; }
-                    showScreen('screenProducts');
-                    loadProducts(true);
+                    prodRoyxatga(true);
                 }, 800);
             } catch (err) {
                 $('pfStatus').textContent = 'Tarmoq xatosi: ' + (err.message||err);
@@ -1793,8 +1958,7 @@
                 });
                 if (ok && data.ok) {
                     toast('🗑 O\'chirildi');
-                    showScreen('screenProducts');
-                    loadProducts(true);
+                    prodRoyxatga(true);
                 } else {
                     toast('❌ ' + (data.error || 'Xato'));
                 }
@@ -5181,8 +5345,13 @@
                 posStatus.textContent = 'Tarmoq xatosi: ' + (err.message||err);
             }
             _posLoading = false;
+            setTimeout(cheksizTekshir, 60);
         }
-        window.loadMorePOS = function () { _posPage += 1; loadPOS(false); };
+        window.loadMorePOS = function () {
+            if (_posLoading) return;
+            _posPage += 1; loadPOS(false);
+        };
+        cheksizRoyxat(posMore, () => loadMorePOS());
 
         function renderPOS(items) {
             const frag = document.createDocumentFragment();
