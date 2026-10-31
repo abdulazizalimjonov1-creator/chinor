@@ -59,19 +59,22 @@ cp -f dist/Chinor-Setup-"$VER".exe.blockmap "$UP"/ 2>/dev/null || true
 cp -f dist/latest-mac.yml "$UP"/
 cp -f dist/Chinor-mac-"$VER".zip "$UP"/
 
-# VPS'dagi bot shu papkani tarqatadi — fayllarni serverga yuklaymiz.
-HOST="${CHINOR_SSH:-root@46.101.111.198}"
-KEY="${CHINOR_SSH_KEY:-$HOME/.ssh/chinor_vps}"
-REMOTE="/opt/chinor/chinor-bot/updates/admin"
-echo "▶ VPS'ga yuklanmoqda ($HOST:$REMOTE)..."
-if rsync -avz -e "ssh -i $KEY -o ConnectTimeout=10" \
-    "$UP"/latest.yml "$UP"/latest-mac.yml \
-    "$UP"/Chinor-Setup-"$VER".exe "$UP"/Chinor-mac-"$VER".zip \
-    "$HOST:$REMOTE/" 2>/dev/null; then
-  echo "✅ VPS feed yangilandi."
+# Feed'ni BOT tarqatadi (/updates/admin/). Bot 2026-10-22 dan beri
+# ofisdagi WINDOWS serverda ishlaydi (Tailscale orqali) — ilgari bu yerda
+# eski DigitalOcean VPS manzili turardi va yangi versiya feed'ga
+# umuman yetib bormasdi.
+HOST="${CHINOR_SSH:-chino@100.124.35.18}"
+REMOTE="C:/chinor/chinor-bot/updates/admin"
+echo "▶ Serverga yuklanmoqda ($HOST:$REMOTE)..."
+if scp -q "$UP"/latest.yml "$UP"/latest-mac.yml \
+       "$UP"/Chinor-Setup-"$VER".exe "$UP"/Chinor-mac-"$VER".zip \
+       "$HOST:$REMOTE/"; then
+  echo "✅ Feed yangilandi."
+  echo -n "   serverdagi versiya: "
+  curl -s "${CHINOR_API:-https://kassa.chinorpos.com}/updates/admin/latest-mac.yml" | head -1
 else
-  echo "⚠ VPS'ga yuklab bo'lmadi — keyin qo'lda yuklang:"
-  echo "  rsync -avz -e 'ssh -i $KEY' $UP/ $HOST:$REMOTE/"
+  echo "⚠ Serverga yuklab bo'lmadi — keyin qo'lda yuklang:"
+  echo "  scp $UP/* $HOST:$REMOTE/"
 fi
 
 echo ""

@@ -433,3 +433,82 @@ table.tbl tr:hover td { background: #f7faf6; }
 .kpi-row { cursor: pointer; }
 .kpi-row:hover td { background: #f4f8f4; }
 .kpi-row.active td { background: #eaf4ec; }
+
+/* ═══════ Rasmsiz tovarlar ═══════ */
+.np-head { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.np-check { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.np-check input { width: 18px; height: 18px; accent-color: var(--brand); }
+.np-hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.np-tip { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+.np-th {
+  width: 44px; height: 44px; border-radius: 9px; object-fit: cover;
+  border: 1px solid var(--line); background: #f5f8f4; display: block;
+}
+.np-th.np-no {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; color: var(--muted);
+}
+.np-tag {
+  font-size: 11px; color: var(--red); background: #fdeceb;
+  border-radius: 6px; padding: 2px 6px; margin-left: 6px; white-space: nowrap;
+}
+#npBody tr.np-drop td { background: #e8f5ea; box-shadow: inset 0 0 0 2px var(--brand); }
+.np-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; margin-top: 14px; font-size: 13.5px; color: var(--muted);
+}
+
+/* ═══════ Kameralar ═══════ */
+.cam-count { font-size: 15px; font-weight: 700; color: var(--text); padding: 6px 0; }
+.cam-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.cam-card {
+  background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: hidden; cursor: pointer; transition: transform .12s;
+}
+.cam-card:hover { transform: translateY(-2px); }
+.cam-shot { position: relative; aspect-ratio: 16/9; background: #0d1410; }
+.cam-shot img {
+  width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s;
+}
+.cam-shot img.on { opacity: 1; }
+.cam-state {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: #8ca394; font-size: 13px;
+}
+.cam-name { padding: 10px 12px; font-size: 14px; font-weight: 600; }
+
+/* To'liq ekran */
+.cam-ov { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; }
+.cam-ov-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; color: #fff; font-size: 15px;
+}
+.cam-ov-acts { display: flex; align-items: center; gap: 8px; }
+.cam-ov-acts button {
+  background: rgba(255,255,255,.14); color: #fff; border: 0; cursor: pointer;
+  width: 34px; height: 34px; border-radius: 50%; font-size: 15px;
+}
+.cam-ov-acts button:hover { background: rgba(255,255,255,.26); }
+.cam-ov-acts button.on { background: var(--brand); }
+.cam-ov-zk { min-width: 46px; text-align: center; font-size: 12px; color: #9aa7b2; }
+.cam-ov-num { font-weight: 600; font-size: 13px; color: #9aa7b2; margin-left: 6px; }
+.cam-ov-body {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+.cam-ov-body img { max-width: 100%; max-height: 100%; transform-origin: center center; }
+.cam-ov-body.kattalashgan img { cursor: grab; }
+.cam-ov-body.kattalashgan .cam-ov-nav { opacity: .25; }
+.cam-ov-wait { position: absolute; color: #9aa7b2; font-size: 14px; }
+.cam-ov-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 46px; height: 72px; border: 0; cursor: pointer; z-index: 2;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 28px; border-radius: 12px;
+}
+.cam-ov-nav:hover { background: rgba(255,255,255,.24); }
+.cam-ov-nav.chap { left: 10px; }
+.cam-ov-nav.ong { right: 10px; }
+.cam-ov-foot { padding: 10px 14px 16px; color: #6f7b85; font-size: 12.5px; text-align: center; }

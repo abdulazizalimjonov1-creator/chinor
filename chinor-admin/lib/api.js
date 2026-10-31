@@ -135,6 +135,54 @@ module.exports = {
     req(base, `/api/client/detail?client_id=${Number(client_id) || 0}`, { token, timeout: 20000 }),
   clientsTop: (base, token, days = 30) =>
     req(base, `/api/clients/top?days=${Number(days) || 0}`, { token, timeout: 20000 }),
+  // ── Tovar suratlari ─────────────────────────────────────────────────────────
+  // Mini App'dagi «Rasmsiz tovarlar» bo'limi bilan BIR XIL endpointlar:
+  // qoida serverda (bot/api_photos.py), shuning uchun telefon va kompyuter
+  // bir narsani ko'rsatadi.
+  photosSummary: (base, token) =>
+    req(base, '/api/photos/summary', { token, timeout: 30000 }),
+  noPhoto: (base, token, page = 0, q = '', stock = true, limit = 100) =>
+    req(base, `/api/products/no-photo?page=${page}&stock=${stock ? 1 : 0}` +
+              `&q=${encodeURIComponent(q)}&limit=${limit}`, { token, timeout: 30000 }),
+  // Tozalash minglab qatorni yangilaydi va fayllarni o'chiradi — sekin.
+  photosClean: (base, token) =>
+    req(base, '/api/photos/clean', { method: 'POST', token,
+        body: { delete_files: true }, timeout: 180000 }),
+  photosMode: (base, token, on) =>
+    req(base, '/api/photos/mode', { method: 'POST', token, body: { on: !!on }, timeout: 15000 }),
+  // Tovarga surat yuklash (multipart). Server fonni kesib brendlaydi —
+  // bu 10-60 soniya olishi mumkin, shuning uchun timeout uzun.
+  productImage: async (base, token, id, bytes, filename = 'photo.jpg') => {
+    const url = String(base).replace(/\/+$/, '') + '/api/product/image';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 180000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const fd = new FormData();
+      fd.append('id', String(Number(id) || 0));
+      fd.append('photo', new Blob([u8]), filename);
+      const res = await fetch(url, { method: 'POST', headers, body: fd, signal: ctrl.signal });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { data = { ok: false, error: 'Serverdan noto\'g\'ri javob', raw: text.slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi (rasm katta yoki server band)' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // ── Kameralar ───────────────────────────────────────────────────────────────
+  // Ro'yxat bilan birga OQIM TOKENI keladi: tasvir <img src> bilan olinadi,
+  // unga header qo'yib bo'lmaydi (bot/api_cams.py).
+  cams: (base, token) =>
+    req(base, '/api/cams', { token, timeout: 20000 }),
+
   // ── Xodimlar boshqaruvi + KPI ───────────────────────────────────────────────
   staff: (base, token) =>
     req(base, '/api/staff', { token, timeout: 20000 }),

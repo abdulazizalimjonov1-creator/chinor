@@ -250,6 +250,7 @@ const MODULES = [
   { key: 'moliya', label: 'Moliya', icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
   { key: 'xodimlar', label: 'Xodimlar', icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
   { key: 'mijozlar', label: 'Mijozlar', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+  { key: 'kameralar', label: 'Kameralar', icon: 'M23 7l-7 5 7 5zM14 5H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' },
   { key: 'sozlamalar', label: 'Sozlamalar', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
 ];
 
@@ -275,7 +276,7 @@ function selectModule(mod) {
 }
 
 function moduleTitle(mod) {
-  return ({ hisobotlar: 'Hisobotlar menyusi', tovarlar: 'Tovarlar menyusi', ombor: 'Ombor', moliya: 'Moliya', xodimlar: 'Xodimlar', mijozlar: 'Mijozlar', sozlamalar: 'Sozlamalar' })[mod] || mod;
+  return ({ hisobotlar: 'Hisobotlar menyusi', tovarlar: 'Tovarlar menyusi', ombor: 'Ombor', moliya: 'Moliya', xodimlar: 'Xodimlar', mijozlar: 'Mijozlar', kameralar: 'Kameralar', sozlamalar: 'Sozlamalar' })[mod] || mod;
 }
 
 function openTab(key, title, render) {
@@ -343,12 +344,14 @@ function renderModuleMenu(mod) {
       { key: 'fast', label: 'Tez sotiladigan', icon: 'M13 2 3 14h7l-1 8 10-12h-7z', soon: true },
       { key: 'kg', label: 'Kiloli tovarlar', icon: 'M12 3a3 3 0 0 0-3 3h6a3 3 0 0 0-3-3zM5 6h14l2 15H3z', soon: true },
       { key: 'labels', label: 'Sennik chop etish', icon: 'M20 12V8a2 2 0 0 0-2-2H6L2 12l4 6h12a2 2 0 0 0 2-2zM6 9h.01' },
+      { key: 'nophoto', label: 'Rasmsiz tovarlar', icon: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
       { key: 'serial', label: 'Seriyali tovarlar', icon: 'M3 6h18v12H3zM7 9v6M11 9v6M15 9v6M19 9v6', soon: true },
       { key: 'pricehist', label: 'Narxlar tarixi', icon: 'M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4', soon: true },
     ]);
     bindTiles(c, {
       list: () => openTab('tov:list', 'Tovarlar', renderProducts),
       labels: () => openTab('tov:labels', 'Sennik chop etish', renderPriceTags),
+      nophoto: () => openTab('tov:nophoto', 'Rasmsiz tovarlar', renderNoPhoto),
     });
   } else if (mod === 'ombor') {
     c.innerHTML = tilesHtml([
@@ -381,6 +384,8 @@ function renderModuleMenu(mod) {
       list: () => openTab('stf:list', 'Xodimlar', renderStaff),
       kpi: () => openTab('stf:kpi', 'Xodimlar KPI', renderStaffKpi),
     });
+  } else if (mod === 'kameralar') {
+    renderCams(c);
   } else if (mod === 'sozlamalar') {
     renderSettings(c);
   } else {
@@ -2898,5 +2903,503 @@ api.getLogo().then((d) => {
   if (!d) return;
   document.querySelectorAll('img[src="logo.png"]').forEach((img) => { img.src = d; });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🖼 RASMSIZ TOVARLAR — Mini App'dagi bo'limning kompyuter varianti
+// ════════════════════════════════════════════════════════════════════════════
+// Qoida SERVERDA (bot/api_photos.py): surat fayl nomida tovar id si bo'lsa —
+// o'zimizniki, aks holda "umumiy" (internetdan olingan, o'nta tovarda
+// takrorlanadigan) rasm. Mijoz ilovasi va sayt faqat o'z suratlilarini
+// ko'rsatadi, bu ro'yxat esa navbat bo'lib turadi.
+// Kompyuterda ikki qulaylik bor: suratni fayldan tanlab yoki ustiga TASHLAB
+// (drag & drop) yuklash mumkin va bir ekranda 100 tovar ko'rinadi.
+
+function srvUrl(u) {
+  if (!u) return '';
+  return /^https?:/i.test(u) ? u : (String(S.serverUrl || '').replace(/\/+$/, '') + u);
+}
+
+async function renderNoPhoto(c) {
+  const st = renderNoPhoto;
+  if (st._q === undefined) { st._q = ''; st._stock = true; }
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const [sum, r] = await Promise.all([
+    api.photosSummary(),
+    api.noPhoto(0, st._q, st._stock, 100),
+  ]);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  st._sum = sum.ok ? sum : null;
+  st._items = r.items || [];
+  st._total = r.total || 0;
+  st._more = !!r.has_more;
+  st._page = 0;
+  drawNoPhoto(c);
+}
+
+function drawNoPhoto(c) {
+  const st = renderNoPhoto;
+  const x = st._sum;
+  const rows = st._items;
+  c.innerHTML = `
+    ${x ? `<div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v" id="npOwn">${int(x.own)}</div><div class="l">O'z surati bor</div></div>
+      <div class="sum-chip"><div class="v" id="npGen">${int(x.generic)}</div><div class="l">Umumiy rasm</div></div>
+      <div class="sum-chip"><div class="v" id="npMiss">${int(x.missing)}</div><div class="l">Rasmsiz</div></div>
+    </div>
+    <div class="card np-head">
+      <label class="np-check"><input type="checkbox" id="npMode"${x.client_photo_only ? ' checked' : ''}>
+        <span>Mijoz ilovasi va saytda faqat <b>o'z suratli</b> tovarlar ko'rinsin</span></label>
+      ${x.generic ? `<button class="btn-soft" id="npClean">🧹 Umumiy rasmlarni tozalash (${int(x.generic)} ta)</button>
+        <div class="np-hint">Takrorlanadigan va internetdan olingan rasmlar tovarlardan uziladi,
+        fayllari serverdan o'chadi. Tovarning o'zi, narxi va qoldig'i tegilmaydi.</div>` : ''}
+    </div>` : ''}
+    <div class="filters" style="align-items:flex-end">
+      <div class="filter" style="flex:1; min-width:220px"><label>Qidiruv</label>
+        <input id="npSearch" type="text" placeholder="Tovar nomi yoki barcode" value="${esc(st._q || '')}"></div>
+      <button class="btn-soft${st._stock ? '' : ' ghost'}" id="npStock">Faqat qoldig'i borlari</button>
+      <button class="btn-soft ghost" id="npReload" title="Serverdan qayta yuklash">🔄 Yangilash</button>
+    </div>
+    <div class="np-tip">📷 tugmasini bosing yoki suratni to'g'ridan-to'g'ri qatorning ustiga tashlang.
+      Server fonni kesib, do'kon uslubiga keltiradi — bu 10–60 soniya oladi.</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th style="width:62px">Rasm</th><th>SKU</th><th>Nomi</th>
+          <th class="num">Qoldiq</th><th class="num">Sotilgan</th><th class="num">Narxi</th>
+          <th style="width:130px"></th></tr></thead>
+        <tbody id="npBody">
+          ${rows.length ? rows.map(npRowHtml).join('')
+            : `<tr><td colspan="7"><div class="chart-empty">✅ Ro'yxat bo'sh — hamma tovarning o'z surati bor</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="np-foot">
+      <span id="npCount">${int(st._total)} ta tovarda o'z surati yo'q</span>
+      ${st._more ? `<button class="btn-soft ghost" id="npMore">Yana 100 ta ko'rsatish ↓</button>` : ''}
+    </div>`;
+
+  const re = (id) => document.getElementById(id);
+  const srch = re('npSearch');
+  srch.addEventListener('input', (e) => {
+    st._q = e.target.value;
+    clearTimeout(drawNoPhoto._t);
+    drawNoPhoto._t = setTimeout(() => renderNoPhoto(c), 300);
+  });
+  re('npStock').addEventListener('click', () => { st._stock = !st._stock; renderNoPhoto(c); });
+  re('npReload').addEventListener('click', () => renderNoPhoto(c));
+  if (re('npMore')) re('npMore').addEventListener('click', () => npMore(c));
+  if (re('npMode')) re('npMode').addEventListener('change', async (e) => {
+    const r = await api.photosMode(e.target.checked);
+    toast(r.ok ? (e.target.checked
+      ? '✅ Mijozga faqat o\'z suratli tovarlar ko\'rinadi'
+      : '✅ Mijozga barcha tovarlar ko\'rinadi')
+      : ('⚠️ ' + (r.error || 'Saqlanmadi')));
+  });
+  if (re('npClean')) re('npClean').addEventListener('click', () => npClean(c));
+  npBindRows(c);
+}
+
+function npRowHtml(p) {
+  const rasm = p.generic_image
+    ? `<img class="np-th" src="${esc(srvUrl(p.generic_image))}" alt="" loading="lazy"
+            title="Hozirgi umumiy rasm" onerror="this.style.visibility='hidden'">`
+    : `<span class="np-th np-no">📷</span>`;
+  return `<tr data-pid="${p.id}">
+      <td>${rasm}</td>
+      <td>${esc(p.id)}</td>
+      <td>${esc(p.name)}${p.generic_image ? ` <span class="np-tag">umumiy rasm</span>` : ''}</td>
+      <td class="num">${nf.format(Number(p.qty) || 0)} ${esc(p.unit || '')}</td>
+      <td class="num">${p.sold > 0 ? '🔥 ' + int(p.sold) : '<span class="muted">—</span>'}</td>
+      <td class="num">${money(p.price_sum)}</td>
+      <td class="num"><button class="btn-mini np-up" data-up="${p.id}">📷 Surat qo'yish</button></td>
+    </tr>`;
+}
+
+// Qatorlarga tugma va "faylni tashlash" (drag & drop) ulanadi.
+function npBindRows(c) {
+  c.querySelectorAll('[data-up]').forEach((b) =>
+    b.addEventListener('click', () => npPick(Number(b.dataset.up), c)));
+  c.querySelectorAll('#npBody tr[data-pid]').forEach((tr) => {
+    const pid = Number(tr.dataset.pid);
+    tr.addEventListener('dragover', (e) => { e.preventDefault(); tr.classList.add('np-drop'); });
+    tr.addEventListener('dragleave', () => tr.classList.remove('np-drop'));
+    tr.addEventListener('drop', (e) => {
+      e.preventDefault(); tr.classList.remove('np-drop');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) npUpload(pid, f, c);
+    });
+  });
+}
+
+function npPick(pid, c) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.addEventListener('change', () => {
+    const f = inp.files && inp.files[0];
+    if (f) npUpload(pid, f, c);
+  });
+  inp.click();
+}
+
+async function npUpload(pid, file, c) {
+  const st = renderNoPhoto;
+  const tr = c.querySelector(`#npBody tr[data-pid="${pid}"]`);
+  const btn = tr && tr.querySelector('.np-up');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Yuklanmoqda…'; }
+  let buf;
+  try { buf = new Uint8Array(await file.arrayBuffer()); }
+  catch (e) { toast('⚠️ Faylni o\'qib bo\'lmadi'); return; }
+  const r = await api.productImage(pid, buf, file.name || 'photo.jpg');
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    toast('⚠️ ' + (r.error || 'Surat yuklanmadi'));
+    if (btn) { btn.disabled = false; btn.textContent = '📷 Surat qo\'yish'; }
+    return;
+  }
+  toast('✅ Surat qo\'yildi');
+  st._items = (st._items || []).filter((p) => p.id !== pid);
+  st._total = Math.max(0, st._total - 1);
+  if (tr) tr.remove();
+  const cnt = document.getElementById('npCount');
+  if (cnt) cnt.textContent = int(st._total) + ' ta tovarda o\'z surati yo\'q';
+  // Tepadagi raqamlar ham jonli bo'lsin
+  const sum = await api.photosSummary();
+  if (sum.ok) {
+    st._sum = sum;
+    const o = document.getElementById('npOwn'), g = document.getElementById('npGen'),
+          m = document.getElementById('npMiss');
+    if (o) o.textContent = int(sum.own);
+    if (g) g.textContent = int(sum.generic);
+    if (m) m.textContent = int(sum.missing);
+  }
+}
+
+async function npMore(c) {
+  const st = renderNoPhoto;
+  const btn = document.getElementById('npMore');
+  if (btn) { btn.disabled = true; btn.textContent = 'Yuklanmoqda…'; }
+  st._page = (st._page || 0) + 1;
+  const r = await api.noPhoto(st._page, st._q, st._stock, 100);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    toast('⚠️ ' + (r.error || 'Yuklanmadi'));
+    if (btn) { btn.disabled = false; btn.textContent = 'Yana 100 ta ko\'rsatish ↓'; }
+    return;
+  }
+  st._items = st._items.concat(r.items || []);
+  st._more = !!r.has_more;
+  const body = document.getElementById('npBody');
+  if (body) body.insertAdjacentHTML('beforeend', (r.items || []).map(npRowHtml).join(''));
+  npBindRows(c);
+  if (btn) {
+    if (st._more) { btn.disabled = false; btn.textContent = 'Yana 100 ta ko\'rsatish ↓'; }
+    else btn.remove();
+  }
+}
+
+async function npClean(c) {
+  if (!confirm('Takrorlanadigan va internetdan olingan rasmlar tovarlardan uzilib, ' +
+               'fayllari serverdan o\'chiriladi.\n\nTovarning o\'zi, narxi va qoldig\'i ' +
+               'tegilmaydi. Davom etamizmi?')) return;
+  const btn = document.getElementById('npClean');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Tozalanmoqda… (bir necha daqiqa)'; }
+  const r = await api.photosClean();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    toast('⚠️ ' + (r.error || 'Tozalanmadi'));
+    if (btn) { btn.disabled = false; btn.textContent = '🧹 Umumiy rasmlarni tozalash'; }
+    return;
+  }
+  toast(`✅ ${int(r.products)} ta tovardan rasm uzildi, ${int(r.files)} ta fayl o'chirildi`);
+  renderNoPhoto(c);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 📹 KAMERALAR — do'kondagi IP kameralar katta ekranda
+// ════════════════════════════════════════════════════════════════════════════
+// Tasvirni SERVER beradi (bot/api_cams.py): kameralar do'kon tarmog'ida,
+// admin kompyuter esa boshqa joyda bo'lishi mumkin. Server RTSP ni JPEG
+// kadrlarga aylantiradi — to'rda 1 kadr/s (trafik kam), to'liq ekranda
+// uzluksiz MJPEG. Ovoz ALOHIDA oqim (<audio>), chunki rasmdan ovoz chiqmaydi.
+// Kameralarni QO'SHISH/SOZLASH Mini App'da qoladi: parol kiritish va
+// tarmoqni skanerlash o'sha yerda, bu yerda faqat ko'rish.
+const CAMS = { list: [], token: '', timer: null, full: 0, profile: 'full',
+               z: { k: 1, x: 0, y: 0 }, audio: null, hiT: null };
+
+function camUrl(id, file, profile) {
+  return srvUrl('/api/cams/' + id + '/' + file) +
+         '?t=' + encodeURIComponent(CAMS.token) + '&p=' + (profile || 'grid');
+}
+
+async function renderCams(c) {
+  c.innerHTML = `<div class="loading">Kameralar yuklanyapti…</div>`;
+  const r = await api.getCams();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Kameralar ochilmadi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  CAMS.list = (r.cams || []).filter((x) => x.enabled && (x.main_path || x.sub_path));
+  CAMS.token = r.token || '';
+  const yoq = r.ffmpeg === false
+    ? `<div class="err-box">⚠️ Serverda <b>ffmpeg</b> o'rnatilmagan — tasvir ko'rsatib bo'lmaydi.</div>` : '';
+  if (!CAMS.list.length) {
+    c.innerHTML = yoq + `<div class="card"><div class="card-title">Kamera yo'q</div>
+      <div class="chart-empty">Kameralar ro'yxati bo'sh. Ularni telefondagi Mini App'ning
+      «📹 Kameralar → ⚙️ Sozlash» bo'limidan qo'shasiz (parol va tarmoqni skanerlash
+      o'sha yerda).</div></div>`;
+    return;
+  }
+  c.innerHTML = yoq + `
+    <div class="filters" style="align-items:flex-end">
+      <div class="filter"><label>Jonli</label><div class="cam-count">${int(CAMS.list.length)} ta kamera</div></div>
+      <button class="btn-soft ghost" id="camReload">🔄 Yangilash</button>
+    </div>
+    <div class="cam-grid" id="camGrid">
+      ${CAMS.list.map((x) => `
+        <div class="cam-card" data-cam="${x.id}">
+          <div class="cam-shot"><img id="camShot${x.id}" alt="">
+            <div class="cam-state" id="camSt${x.id}">ulanmoqda…</div></div>
+          <div class="cam-name">${esc(x.name)}</div>
+        </div>`).join('')}
+    </div>`;
+  document.getElementById('camReload').addEventListener('click', () => renderCams(c));
+  c.querySelectorAll('[data-cam]').forEach((el) =>
+    el.addEventListener('click', () => camOpen(Number(el.dataset.cam))));
+  camTick();
+  clearInterval(CAMS.timer);
+  CAMS.timer = setInterval(camTick, 2500);
+}
+
+// Kadrlarni yangilash. To'r ekrandan ketgan bo'lsa (boshqa bo'lim ochilgan) —
+// taymer o'zini o'chiradi, aks holda server bekorga 20 kamerani dekodlab turadi.
+function camTick() {
+  const grid = document.getElementById('camGrid');
+  if (!grid || !grid.isConnected) { clearInterval(CAMS.timer); CAMS.timer = null; return; }
+  if (CAMS.full) return;                      // to'liq ekranda — to'r kutib turadi
+  const t = Date.now();
+  CAMS.list.forEach((x) => {
+    const img = document.getElementById('camShot' + x.id);
+    if (!img) return;
+    img.onload = () => {
+      const st = document.getElementById('camSt' + x.id);
+      if (st) st.style.display = 'none';
+      img.classList.add('on');
+    };
+    img.onerror = () => {
+      const st = document.getElementById('camSt' + x.id);
+      if (st) { st.style.display = 'block'; st.textContent = 'ulanmadi'; }
+      camTokenYangila();
+    };
+    img.src = camUrl(x.id, 'snap.jpg', 'grid') + '&_=' + t;
+  });
+}
+
+// Oqim tokeni server XOTIRASIDA turadi — bot qayta ishga tushsa yo'qoladi.
+let _camTokAt = 0;
+async function camTokenYangila() {
+  if (Date.now() - _camTokAt < 15000) return;
+  _camTokAt = Date.now();
+  const r = await api.getCams();
+  if (r.ok && r.token) CAMS.token = r.token;
+}
+
+// ── To'liq ekran ────────────────────────────────────────────────────────────
+function camOpen(id) {
+  const cam = CAMS.list.find((x) => x.id === id);
+  if (!cam) return;
+  CAMS.full = id;
+  CAMS.profile = 'full';
+  CAMS.z = { k: 1, x: 0, y: 0 };
+  camAudioStop();
+  let ov = document.getElementById('camOv');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'camOv';
+    ov.className = 'cam-ov';
+    document.body.appendChild(ov);
+  }
+  const i = CAMS.list.findIndex((x) => x.id === id);
+  const kop = CAMS.list.length > 1;
+  ov.innerHTML = `
+    <div class="cam-ov-bar">
+      <b>${esc(cam.name)}${kop ? ` <span class="cam-ov-num">${i + 1}/${CAMS.list.length}</span>` : ''}</b>
+      <div class="cam-ov-acts">
+        <button id="camSnd" title="Ovoz">🔇</button>
+        <button id="camZOut" title="Uzoqlashtirish">−</button>
+        <span class="cam-ov-zk" id="camZk">1.0×</span>
+        <button id="camZIn" title="Yaqinlashtirish">+</button>
+        <button id="camX" title="Yopish (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="cam-ov-body" id="camOvBody">
+      ${kop ? `<button class="cam-ov-nav chap" id="camPrev">‹</button>` : ''}
+      <img id="camOvImg" alt="">
+      ${kop ? `<button class="cam-ov-nav ong" id="camNext">›</button>` : ''}
+      <div class="cam-ov-wait" id="camWait">Ulanmoqda…</div>
+    </div>
+    <div class="cam-ov-foot" id="camFoot">
+      G'ildirak yoki ± bilan yaqinlashtiring · sichqoncha bilan suring${kop ? ' · ← → qo\'shni kamera' : ''}
+    </div>`;
+  ov.style.display = 'flex';
+  const img = document.getElementById('camOvImg');
+  img.onload = () => { const w = document.getElementById('camWait'); if (w) w.style.display = 'none'; };
+  img.onerror = () => camTokenYangila();
+  img.src = camUrl(id, 'live.mjpg', CAMS.profile);
+  document.getElementById('camX').addEventListener('click', camClose);
+  document.getElementById('camSnd').addEventListener('click', camSound);
+  document.getElementById('camZIn').addEventListener('click', () => camZoom(1));
+  document.getElementById('camZOut').addEventListener('click', () => camZoom(-1));
+  if (kop) {
+    document.getElementById('camPrev').addEventListener('click', () => camGoto(-1));
+    document.getElementById('camNext').addEventListener('click', () => camGoto(1));
+  }
+  camBindZoom();
+  document.addEventListener('keydown', camKey);
+  camZApply();
+}
+
+function camKey(e) {
+  if (!CAMS.full) return;
+  if (e.key === 'Escape') { camClose(); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { camGoto(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { camGoto(1); e.preventDefault(); }
+  else if (e.key === '+' || e.key === '=') { camZoom(1); e.preventDefault(); }
+  else if (e.key === '-') { camZoom(-1); e.preventDefault(); }
+}
+
+function camGoto(yon) {
+  if (CAMS.list.length < 2 || !CAMS.full) return;
+  const i = CAMS.list.findIndex((x) => x.id === CAMS.full);
+  const keyingi = CAMS.list[(i + yon + CAMS.list.length) % CAMS.list.length];
+  const eski = document.getElementById('camOvImg');
+  if (eski) eski.src = '';            // oqimni uzamiz — server bekorga ishlamasin
+  camOpen(keyingi.id);
+}
+
+function camClose() {
+  CAMS.full = 0;
+  camAudioStop();
+  clearTimeout(CAMS.hiT);
+  document.removeEventListener('keydown', camKey);
+  const img = document.getElementById('camOvImg');
+  if (img) img.src = '';
+  const ov = document.getElementById('camOv');
+  if (ov) { ov.style.display = 'none'; ov.innerHTML = ''; }
+}
+
+// ── Yaqinlashtirish ─────────────────────────────────────────────────────────
+// Raqamli zoom (kameraning o'zi burilmaydi): tasvir transform bilan
+// kattalashadi. 1.5× dan oshsa server 1920px oqimga o'tadi — aks holda
+// 960px kadr kattalashganda xira bo'lib qoladi.
+function camZApply() {
+  const img = document.getElementById('camOvImg');
+  if (!img) return;
+  const z = CAMS.z;
+  if (z.k <= 1.001) { z.k = 1; z.x = 0; z.y = 0; }
+  const w = img.clientWidth, h = img.clientHeight;
+  const mx = (w * z.k - w) / 2, my = (h * z.k - h) / 2;
+  z.x = Math.max(-mx, Math.min(mx, z.x));
+  z.y = Math.max(-my, Math.min(my, z.y));
+  img.style.transform = `translate(${z.x.toFixed(1)}px, ${z.y.toFixed(1)}px) scale(${z.k.toFixed(3)})`;
+  const lbl = document.getElementById('camZk');
+  if (lbl) lbl.textContent = z.k.toFixed(1) + '×';
+  const body = document.getElementById('camOvBody');
+  if (body) body.classList.toggle('kattalashgan', z.k > 1.02);
+  camSifat();
+}
+
+function camZoom(yon) {
+  const z = CAMS.z, eski = z.k;
+  z.k = Math.max(1, Math.min(4, Math.round((eski + yon * 0.5) * 100) / 100));
+  z.x *= z.k / eski; z.y *= z.k / eski;
+  camZApply();
+}
+
+function camSifat() {
+  if (!CAMS.full) return;
+  const kerak = CAMS.z.k > 1.5 ? 'hi' : 'full';
+  if (kerak === CAMS.profile) return;
+  clearTimeout(CAMS.hiT);
+  CAMS.hiT = setTimeout(() => {
+    const yangi = CAMS.z.k > 1.5 ? 'hi' : 'full';
+    if (!CAMS.full || yangi === CAMS.profile) return;
+    CAMS.profile = yangi;
+    const img = document.getElementById('camOvImg');
+    if (img) img.src = camUrl(CAMS.full, 'live.mjpg', CAMS.profile);
+    const f = document.getElementById('camFoot');
+    if (f) f.textContent = yangi === 'hi'
+      ? 'Yaqin ko\'rinish — to\'liq aniqlik'
+      : 'G\'ildirak yoki ± bilan yaqinlashtiring · sichqoncha bilan suring';
+  }, 450);
+}
+
+function camBindZoom() {
+  const body = document.getElementById('camOvBody');
+  if (!body) return;
+  body.addEventListener('wheel', (e) => { e.preventDefault(); camZoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
+  body.addEventListener('dblclick', () => {
+    CAMS.z = CAMS.z.k > 1.02 ? { k: 1, x: 0, y: 0 } : { k: 2.5, x: 0, y: 0 };
+    camZApply();
+  });
+  body.addEventListener('mousedown', (e) => {
+    if (CAMS.z.k <= 1.02) return;
+    const ax = e.clientX, ay = e.clientY, px = CAMS.z.x, py = CAMS.z.y;
+    const yur = (ev) => { CAMS.z.x = px + ev.clientX - ax; CAMS.z.y = py + ev.clientY - ay; camZApply(); };
+    const tin = () => { document.removeEventListener('mousemove', yur); document.removeEventListener('mouseup', tin); };
+    document.addEventListener('mousemove', yur);
+    document.addEventListener('mouseup', tin);
+    e.preventDefault();
+  });
+}
+
+// ── Ovoz ────────────────────────────────────────────────────────────────────
+function camAudioStop() {
+  if (CAMS.audio) {
+    try { CAMS.audio.pause(); } catch (_) {}
+    try { CAMS.audio.src = ''; CAMS.audio.load(); } catch (_) {}
+    CAMS.audio = null;
+  }
+  const b = document.getElementById('camSnd');
+  if (b) { b.textContent = '🔇'; b.classList.remove('on'); }
+}
+
+async function camSound() {
+  const btn = document.getElementById('camSnd');
+  if (CAMS.audio) { camAudioStop(); return; }
+  if (!CAMS.full) return;
+  if (btn) btn.textContent = '⏳';
+  const url = camUrl(CAMS.full, 'audio', 'full');
+  const a = new Audio(url);
+  a.preload = 'none';
+  CAMS.audio = a;
+  a.onerror = () => { if (CAMS.audio === a) camAudioXato(url); };
+  try {
+    await a.play();
+    if (CAMS.audio === a && btn) { btn.textContent = '🔊'; btn.classList.add('on'); }
+  } catch (e) {
+    if (CAMS.audio === a) camAudioXato(url);
+  }
+}
+
+// Nega ovoz chiqmadi — serverning o'zi aytadi (503 javobida sabab bor).
+async function camAudioXato(url) {
+  camAudioStop();
+  let sabab = 'ovozni ochib bo\'lmadi';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      sabab = d.error || ('xato ' + r.status);
+      if (r.status === 401) { camTokenYangila(); sabab = 'ulanish yangilandi — qayta bosing'; }
+    }
+  } catch (_) {}
+  const f = document.getElementById('camFoot');
+  if (f) f.textContent = '🔇 ' + sabab;
+}
 
 boot();

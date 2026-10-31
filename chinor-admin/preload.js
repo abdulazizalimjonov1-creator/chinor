@@ -43,6 +43,14 @@ contextBridge.exposeInMainWorld('chinor', {
   clientBonus: (payload) => ipcRenderer.invoke('data:clientBonus', payload),
   clientDetail: (client_id) => ipcRenderer.invoke('data:clientDetail', { client_id }),
   clientsTop: (days) => ipcRenderer.invoke('data:clientsTop', { days }),
+  // Tovar suratlari: rasmsiz tovarlar, umumiy rasmlarni tozalash, surat yuklash
+  photosSummary: () => ipcRenderer.invoke('data:photosSummary'),
+  noPhoto: (page, q, stock, limit) => ipcRenderer.invoke('data:noPhoto', { page, q, stock, limit }),
+  photosClean: () => ipcRenderer.invoke('data:photosClean'),
+  photosMode: (on) => ipcRenderer.invoke('data:photosMode', { on }),
+  productImage: (id, bytes, filename) => ipcRenderer.invoke('data:productImage', { id, bytes, filename }),
+  // Kameralar
+  getCams: () => ipcRenderer.invoke('data:cams'),
   // Xodimlar boshqaruvi + KPI
   getStaff: () => ipcRenderer.invoke('data:staff'),
   staffAdd: (payload) => ipcRenderer.invoke('data:staffAdd', payload),

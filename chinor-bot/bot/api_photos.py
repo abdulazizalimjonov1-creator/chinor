@@ -170,7 +170,12 @@ async def api_no_photo(request: web.Request):
         page = max(0, int(request.query.get("page", "0") or 0))
     except ValueError:
         page = 0
-    size = 24
+    # Telefonda 24 talik sahifa qulay, kompyuterdagi admin panelda esa
+    # jadvalga birdan ko'prog'i sig'adi — shuning uchun `limit` so'raladi.
+    try:
+        size = min(200, max(1, int(request.query.get("limit", "24") or 24)))
+    except ValueError:
+        size = 24
 
     prods = await _db.get_all_products(active_only=True)
     shared = shared_urls(prods)

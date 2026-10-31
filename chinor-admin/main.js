@@ -147,6 +147,18 @@ ipcMain.handle('data:clientBonus', withAuth((base, token, arg) => api.clientBonu
 ipcMain.handle('data:clientDetail', withAuth((base, token, arg) => api.clientDetail(base, token, arg.client_id)));
 ipcMain.handle('data:clientsTop', withAuth((base, token, arg) => api.clientsTop(base, token, (arg && arg.days) || 0)));
 // Xodimlar boshqaruvi + KPI
+// Tovar suratlari (rasmsiz tovarlar ro'yxati, umumiy rasmlarni tozalash)
+ipcMain.handle('data:photosSummary', withAuth((base, token) => api.photosSummary(base, token)));
+ipcMain.handle('data:noPhoto', withAuth((base, token, arg) => api.noPhoto(
+  base, token, (arg && arg.page) || 0, (arg && arg.q) || '',
+  arg ? arg.stock !== false : true, (arg && arg.limit) || 100)));
+ipcMain.handle('data:photosClean', withAuth((base, token) => api.photosClean(base, token)));
+ipcMain.handle('data:photosMode', withAuth((base, token, arg) => api.photosMode(base, token, arg && arg.on)));
+ipcMain.handle('data:productImage', withAuth((base, token, arg) =>
+  api.productImage(base, token, arg.id, arg.bytes, arg.filename)));
+// Kameralar — ro'yxat + oqim tokeni (tasvirni renderer to'g'ridan oladi)
+ipcMain.handle('data:cams', withAuth((base, token) => api.cams(base, token)));
+
 ipcMain.handle('data:staff', withAuth((base, token) => api.staff(base, token)));
 ipcMain.handle('data:staffAdd', withAuth((base, token, arg) => api.staffAdd(base, token, arg)));
 ipcMain.handle('data:staffRole', withAuth((base, token, arg) => api.staffRole(base, token, arg.telegram_id, arg.role)));
