@@ -5251,6 +5251,18 @@
                 </div>`);
         };
 
+        // Admin uchun alohida ekran: «🔑 Login/parol».
+        // Ilgari bu faqat mijozning «Hisobim» ekrani ichida turardi va
+        // adminda unga yo'l yo'q edi — login esdan chiqsa botga aynan
+        // «🔑 Login/parol» deb YOZISH kerak bo'lardi. Endi tugma bor.
+        window.openCreds = function () {
+            navMark('openCreds');
+            openTool('🔑 Login/parol',
+                '<div class="stat-block" id="credBlock">' +
+                '<div class="list-status">Yuklanmoqda...</div></div>');
+            renderCredentials();
+        };
+
         // ================================================================
         // KASSA/ADMIN ILOVASI UCHUN LOGIN-PAROL
         // ================================================================
