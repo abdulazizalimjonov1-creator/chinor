@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -72,6 +72,8 @@ ipcMain.handle('state:get', () => ({
   serverUrl: store.get('serverUrl'),
   token: store.get('token'),
   admin: store.get('admin'),
+  perms: store.get('perms'),
+  glavniy: store.get('glavniy'),
   usdRate: store.get('usdRate'),
   loggedOut: store.get('loggedOut'),
   labelPrinter: store.get('labelPrinter') || '',
@@ -94,8 +96,14 @@ ipcMain.handle('auth:login', async (_e, { server, login, password }) => {
     token: r.data.session_token,
     admin: r.data.cashier,
     usdRate: r.data.usd_rate,
+    // Eski serverda bu maydonlar yo'q — o'shanda null qoladi va
+    // ilova hamma bo'limni ko'rsatadi (ilgarigidek).
+    perms: Array.isArray(r.data.permissions) ? r.data.permissions : null,
+    glavniy: !!r.data.is_glavniy,
   });
-  return { ok: true, admin: r.data.cashier, usdRate: r.data.usd_rate };
+  return { ok: true, admin: r.data.cashier, usdRate: r.data.usd_rate,
+           perms: Array.isArray(r.data.permissions) ? r.data.permissions : null,
+           glavniy: !!r.data.is_glavniy };
 });
 
 ipcMain.handle('auth:logout', () => { store.clearSession(); return { ok: true }; });
@@ -147,6 +155,35 @@ ipcMain.handle('data:clientBonus', withAuth((base, token, arg) => api.clientBonu
 ipcMain.handle('data:clientDetail', withAuth((base, token, arg) => api.clientDetail(base, token, arg.client_id)));
 ipcMain.handle('data:clientsTop', withAuth((base, token, arg) => api.clientsTop(base, token, (arg && arg.days) || 0)));
 // Xodimlar boshqaruvi + KPI
+// Moliya, ombor, kategoriya, AI — Mini App'dagi bo'limlarning shu yerdagi varianti
+ipcMain.handle('data:cashMovements', withAuth((base, token, arg) => api.cashMovements(
+  base, token, (arg && arg.from) || '', (arg && arg.to) || '', (arg && arg.limit) || 300)));
+ipcMain.handle('data:lowStock', withAuth((base, token, arg) =>
+  api.lowStock(base, token, (arg && arg.threshold) || 0)));
+ipcMain.handle('data:categories', withAuth((base, token) => api.categories(base, token)));
+ipcMain.handle('data:categorySave', withAuth((base, token, arg) => api.categorySave(base, token, arg)));
+ipcMain.handle('data:categoryDelete', withAuth((base, token, arg) => api.categoryDelete(base, token, arg.id)));
+ipcMain.handle('data:reorderSuppliers', withAuth((base, token, arg) =>
+  api.reorderSuppliers(base, token, (arg && arg.days) || 0)));
+ipcMain.handle('data:reorder', withAuth((base, token, arg) =>
+  api.reorder(base, token, arg.supplier_id, (arg && arg.days) || 0)));
+ipcMain.handle('data:aiAnalyze', withAuth((base, token, arg) => api.aiAnalyze(base, token, arg)));
+
+// Excel eksport: serverdan fayl olinadi va foydalanuvchi tanlagan joyga
+// saqlanadi (brauzerdagidek "yuklab olish" yo'q — bu desktop ilova).
+ipcMain.handle('data:export', withAuth(async (base, token, arg) => {
+  const r = await api.exportFile(base, token, (arg && arg.kind) || 'sales', (arg && arg.month) || '');
+  if (!r.ok) return r;
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Hisobotni saqlash',
+    defaultPath: path.join(app.getPath('downloads'), r.data.name),
+    filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+  });
+  if (canceled || !filePath) return { ok: true, status: 200, data: { ok: true, canceled: true } };
+  fs.writeFileSync(filePath, r.data.bytes);
+  return { ok: true, status: 200, data: { ok: true, path: filePath } };
+}));
+
 // Tovar suratlari (rasmsiz tovarlar ro'yxati, umumiy rasmlarni tozalash)
 ipcMain.handle('data:photosSummary', withAuth((base, token) => api.photosSummary(base, token)));
 ipcMain.handle('data:noPhoto', withAuth((base, token, arg) => api.noPhoto(

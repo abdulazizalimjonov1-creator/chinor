@@ -43,6 +43,16 @@ contextBridge.exposeInMainWorld('chinor', {
   clientBonus: (payload) => ipcRenderer.invoke('data:clientBonus', payload),
   clientDetail: (client_id) => ipcRenderer.invoke('data:clientDetail', { client_id }),
   clientsTop: (days) => ipcRenderer.invoke('data:clientsTop', { days }),
+  // Moliya / ombor / kategoriya / AI / eksport
+  cashMovements: (from, to, limit) => ipcRenderer.invoke('data:cashMovements', { from, to, limit }),
+  lowStock: (threshold) => ipcRenderer.invoke('data:lowStock', { threshold }),
+  getCategories: () => ipcRenderer.invoke('data:categories'),
+  categorySave: (payload) => ipcRenderer.invoke('data:categorySave', payload),
+  categoryDelete: (id) => ipcRenderer.invoke('data:categoryDelete', { id }),
+  reorderSuppliers: (days) => ipcRenderer.invoke('data:reorderSuppliers', { days }),
+  reorder: (supplier_id, days) => ipcRenderer.invoke('data:reorder', { supplier_id, days }),
+  aiAnalyze: (payload) => ipcRenderer.invoke('data:aiAnalyze', payload),
+  exportFile: (kind, month) => ipcRenderer.invoke('data:export', { kind, month }),
   // Tovar suratlari: rasmsiz tovarlar, umumiy rasmlarni tozalash, surat yuklash
   photosSummary: () => ipcRenderer.invoke('data:photosSummary'),
   noPhoto: (page, q, stock, limit) => ipcRenderer.invoke('data:noPhoto', { page, q, stock, limit }),

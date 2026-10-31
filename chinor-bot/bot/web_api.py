@@ -3175,6 +3175,11 @@ async def api_desktop_login(request: web.Request):
             kassa_no = await _db.assign_kassa_no(device_id, name=cashier_name)
         except Exception as e:
             logger.warning(f"[desktop/login] kassa_no biriktirish xato: {e}")
+    # Ruxsatlar — kompyuterdagi ADMIN PANELI uchun: xodim o'ziga berilmagan
+    # bo'limni umuman ko'rmasin (Mini App allaqachon shunday ishlaydi).
+    # Kassa bu maydonlarni e'tiborsiz qoldiradi, qo'shimcha zarar yo'q.
+    from bot.permissions import effective_permissions, is_glavniy
+    perms = sorted(effective_permissions(user))
     return web.json_response({
         "ok": True,
         "session_token": token,
@@ -3182,6 +3187,9 @@ async def api_desktop_login(request: web.Request):
             "id": tg_id,
             "name": cashier_name,
         },
+        "role": (user.get("role") or "full"),
+        "is_glavniy": is_glavniy(tg_id),
+        "permissions": perms,
         "kassa_no": kassa_no,
         "usd_rate": _db.get_usd_rate(),
     })

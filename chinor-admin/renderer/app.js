@@ -8,6 +8,10 @@ const $ = (id) => document.getElementById(id);
 const S = {
   serverUrl: '',
   admin: null,
+  // Bo'lim-bo'lim ruxsatlar (serverdan). null — eski server yoki
+  // aniqlanmagan: o'shanda hamma bo'lim ochiq (eski xulq-atvor).
+  perms: null,
+  glavniy: false,
   usdRate: 12500,
   module: 'hisobotlar',
   tabs: [],          // [{key, title, closable, render}]
@@ -191,6 +195,8 @@ function barChart(bars, opts = {}) {
 async function boot() {
   const st = await api.getState();
   S.serverUrl = st.serverUrl || '';
+  S.perms = Array.isArray(st.perms) ? st.perms : null;
+  S.glavniy = !!st.glavniy;
   $('serverInput').value = S.serverUrl;
   if (st.version) { const v = $('appVer'); if (v) v.textContent = 'v ' + st.version; }
   if (st.token && !st.loggedOut) {
@@ -222,6 +228,8 @@ async function doLogin() {
   btn.disabled = false; btn.textContent = 'Kirish';
   if (!r.ok) { errEl.textContent = r.error || 'Kirish amalga oshmadi'; return; }
   S.admin = r.admin; S.usdRate = r.usdRate || 12500;
+  S.perms = Array.isArray(r.perms) ? r.perms : null;
+  S.glavniy = !!r.glavniy;
   S.serverUrl = server || S.serverUrl;
   enterApp();
 }
@@ -254,9 +262,36 @@ const MODULES = [
   { key: 'sozlamalar', label: 'Sozlamalar', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
 ];
 
+// Xodimda shu ruxsat bormi? Ro'yxat kelmagan bo'lsa (eski server) —
+// hammasi ochiq, ilgarigidek. Bosh adminga har doim ochiq.
+function ruxsat(key) {
+  if (!key) return true;
+  if (S.glavniy || !Array.isArray(S.perms)) return true;
+  return S.perms.includes(key);
+}
+
+// Modul ko'rinadimi: ichidagi bo'limlardan HECH BO'LMASA bittasiga
+// ruxsat bo'lsa ko'rinadi.
+const MODULE_PERMS = {
+  hisobotlar: ['stats', 'receipts', 'sales_history', 'ai_analytics', 'export', 'orders'],
+  tovarlar:   ['products_view', 'products_edit', 'categories', 'pricetags'],
+  ombor:      ['products_qty', 'suppliers', 'low_stock', 'reorder'],
+  moliya:     ['cash', 'stats', 'turnover'],
+  xodimlar:   ['staff'],
+  mijozlar:   ['clients_view', 'debt'],
+  kameralar:  ['cams'],
+  sozlamalar: ['settings'],
+};
+
+function modulKorinadi(key) {
+  const kerak = MODULE_PERMS[key];
+  if (!kerak || S.glavniy || !Array.isArray(S.perms)) return true;
+  return kerak.some((k) => S.perms.includes(k));
+}
+
 function renderNav() {
   const nav = $('nav');
-  nav.innerHTML = MODULES.map((m) => `
+  nav.innerHTML = MODULES.filter((m) => modulKorinadi(m.key)).map((m) => `
     <button class="nav-item${m.key === S.module ? ' active' : ''}" data-mod="${m.key}">
       <svg class="ico" viewBox="0 0 24 24"><path d="${m.icon}"/></svg>${m.label}
     </button>`).join('');
@@ -266,6 +301,10 @@ function renderNav() {
 
 // ── Tab tizimi ──────────────────────────────────────────────────────────────
 function selectModule(mod) {
+  if (!modulKorinadi(mod)) {
+    const birinchi = MODULES.find((m) => modulKorinadi(m.key));
+    mod = birinchi ? birinchi.key : mod;
+  }
   S.module = mod;
   renderNav();
   // Har modul o'z "menyu" tab'i bilan boshlanadi
@@ -317,7 +356,7 @@ function renderActive() {
 
 // ── Modul menyulari (tile'lar) ───────────────────────────────────────────────
 function tilesHtml(items) {
-  return `<div class="tiles">${items.map((it) => `
+  return `<div class="tiles">${items.filter((it) => ruxsat(it.perm)).map((it) => `
     <button class="tile${it.soon ? ' soon' : ''}" data-tile="${it.key}">
       <svg class="ico" viewBox="0 0 24 24"><path d="${it.icon}"/></svg>
       <span>${esc(it.label)}${it.soon ? ' <small>(tez orada)</small>' : ''}</span>
@@ -328,23 +367,27 @@ function renderModuleMenu(mod) {
   const c = $('content');
   if (mod === 'hisobotlar') {
     c.innerHTML = tilesHtml([
-      { key: 'sotuvlar', label: 'Sotuvlar hisoboti', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
-      { key: 'cheklar', label: 'Cheklar', icon: 'M6 2h9l3 3v17l-2-1-2 1-2-1-2 1-2-1-2 1V4a2 2 0 0 1 2-2zM9 8h6M9 12h6M9 16h4' },
-      { key: 'online', label: 'Online savdo', icon: 'M2 3h20v14H2zM8 21h8M12 17v4M6 8l3 3 3-4 3 3' },
+      { key: 'sotuvlar', perm: 'stats', label: 'Sotuvlar hisoboti', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
+      { key: 'cheklar', perm: 'receipts', label: 'Cheklar', icon: 'M6 2h9l3 3v17l-2-1-2 1-2-1-2 1-2-1-2 1V4a2 2 0 0 1 2-2zM9 8h6M9 12h6M9 16h4' },
+      { key: 'online', perm: 'orders', label: 'Online savdo', icon: 'M2 3h20v14H2zM8 21h8M12 17v4M6 8l3 3 3-4 3 3' },
+      { key: 'ai', perm: 'ai_analytics', label: 'AI analitika', icon: 'M12 2a5 5 0 0 1 5 5v1a4 4 0 0 1 0 8v1a5 5 0 0 1-10 0v-1a4 4 0 0 1 0-8V7a5 5 0 0 1 5-5zM9 12h6' },
+      { key: 'export', perm: 'export', label: 'Eksport (Excel)', icon: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3' },
     ]);
     bindTiles(c, {
       sotuvlar: () => openTab('rep:sotuvlar', 'Sotuvlar hisoboti', renderSalesReport),
       cheklar: () => openTab('rep:cheklar', 'Cheklar', renderReceipts),
       online: () => openTab('rep:online', 'Online savdo', renderOnlineReport),
+      ai: () => openTab('rep:ai', 'AI analitika', renderAiAnalytics),
+      export: () => openTab('rep:export', 'Eksport', renderExport),
     });
   } else if (mod === 'tovarlar') {
     c.innerHTML = tilesHtml([
-      { key: 'list', label: 'Tovarlar', icon: 'M3 6h18M3 12h18M3 18h18' },
-      { key: 'cat', label: 'Kategoriyalar', icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z', soon: true },
+      { key: 'list', perm: 'products_view', label: 'Tovarlar', icon: 'M3 6h18M3 12h18M3 18h18' },
+      { key: 'cat', perm: 'categories', label: 'Kategoriyalar', icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z' },
       { key: 'fast', label: 'Tez sotiladigan', icon: 'M13 2 3 14h7l-1 8 10-12h-7z', soon: true },
       { key: 'kg', label: 'Kiloli tovarlar', icon: 'M12 3a3 3 0 0 0-3 3h6a3 3 0 0 0-3-3zM5 6h14l2 15H3z', soon: true },
-      { key: 'labels', label: 'Sennik chop etish', icon: 'M20 12V8a2 2 0 0 0-2-2H6L2 12l4 6h12a2 2 0 0 0 2-2zM6 9h.01' },
-      { key: 'nophoto', label: 'Rasmsiz tovarlar', icon: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+      { key: 'labels', perm: 'pricetags', label: 'Sennik chop etish', icon: 'M20 12V8a2 2 0 0 0-2-2H6L2 12l4 6h12a2 2 0 0 0 2-2zM6 9h.01' },
+      { key: 'nophoto', perm: 'products_edit', label: 'Rasmsiz tovarlar', icon: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
       { key: 'serial', label: 'Seriyali tovarlar', icon: 'M3 6h18v12H3zM7 9v6M11 9v6M15 9v6M19 9v6', soon: true },
       { key: 'pricehist', label: 'Narxlar tarixi', icon: 'M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4', soon: true },
     ]);
@@ -352,23 +395,28 @@ function renderModuleMenu(mod) {
       list: () => openTab('tov:list', 'Tovarlar', renderProducts),
       labels: () => openTab('tov:labels', 'Sennik chop etish', renderPriceTags),
       nophoto: () => openTab('tov:nophoto', 'Rasmsiz tovarlar', renderNoPhoto),
+      cat: () => openTab('tov:cat', 'Kategoriyalar', renderCategories),
     });
   } else if (mod === 'ombor') {
     c.innerHTML = tilesHtml([
-      { key: 'prixod', label: 'Tovar prixod (kirim)', icon: 'M21 8 12 3 3 8v13h18zM3 8l9 5 9-5M12 22v-9M12 13l-3-2M12 13l3-2' },
-      { key: 'suppliers', label: 'Yetkazib beruvchilar', icon: 'M1 3h15v13H1zM16 8h4l3 3v5h-7zM5.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z' },
+      { key: 'prixod', perm: 'products_qty', label: 'Tovar prixod (kirim)', icon: 'M21 8 12 3 3 8v13h18zM3 8l9 5 9-5M12 22v-9M12 13l-3-2M12 13l3-2' },
+      { key: 'suppliers', perm: 'suppliers', label: 'Yetkazib beruvchilar', icon: 'M1 3h15v13H1zM16 8h4l3 3v5h-7zM5.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z' },
+      { key: 'lowstock', perm: 'low_stock', label: 'Past qoldiq', icon: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z' },
+      { key: 'reorder', perm: 'reorder', label: "Buyurtma ro'yxati", icon: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9' },
       { key: 'invent', label: 'Inventarizatsiya', icon: 'M9 11l3 3 8-8M3 6h12M3 12h6M3 18h6', soon: true },
       { key: 'writeoff', label: 'Hisobdan chiqarish', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', soon: true },
     ]);
     bindTiles(c, {
       prixod: () => openTab('omb:prixod', 'Tovar prixod', renderPrixod),
       suppliers: () => openTab('omb:suppliers', 'Yetkazib beruvchilar', renderSuppliers),
+      lowstock: () => openTab('omb:low', 'Past qoldiq', renderLowStock),
+      reorder: () => openTab('omb:reorder', "Buyurtma ro'yxati", renderReorder),
     });
   } else if (mod === 'mijozlar') {
     c.innerHTML = tilesHtml([
-      { key: 'list', label: "Mijozlar ro'yxati", icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
-      { key: 'top', label: 'Top mijozlar', icon: 'M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3' },
-      { key: 'qarz', label: 'Qarzdorlar', icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
+      { key: 'list', perm: 'clients_view', label: "Mijozlar ro'yxati", icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+      { key: 'top', perm: 'clients_view', label: 'Top mijozlar', icon: 'M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3' },
+      { key: 'qarz', perm: 'debt', label: 'Qarzdorlar', icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
     ]);
     bindTiles(c, {
       list: () => { renderClients._filter = ''; openTab('cli:list', 'Mijozlar', renderClients); },
@@ -377,12 +425,21 @@ function renderModuleMenu(mod) {
     });
   } else if (mod === 'xodimlar') {
     c.innerHTML = tilesHtml([
-      { key: 'list', label: "Xodimlar ro'yxati", icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
-      { key: 'kpi', label: 'Xodimlar KPI (CRM)', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
+      { key: 'list', perm: 'staff', label: "Xodimlar ro'yxati", icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+      { key: 'kpi', perm: 'staff', label: 'Xodimlar KPI (CRM)', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
     ]);
     bindTiles(c, {
       list: () => openTab('stf:list', 'Xodimlar', renderStaff),
       kpi: () => openTab('stf:kpi', 'Xodimlar KPI', renderStaffKpi),
+    });
+  } else if (mod === 'moliya') {
+    c.innerHTML = tilesHtml([
+      { key: 'kassa', perm: 'cash', label: 'Kassa harakati', icon: 'M2 7h20v12H2zM2 11h20M6 15h4' },
+      { key: 'aylanma', perm: 'stats', label: 'Aylanma va foyda', icon: 'M3 3v18h18M7 14l4-4 3 3 5-6' },
+    ]);
+    bindTiles(c, {
+      kassa: () => openTab('mol:kassa', 'Kassa harakati', renderCashMoves),
+      aylanma: () => openTab('mol:aylanma', 'Aylanma va foyda', renderTurnover),
     });
   } else if (mod === 'kameralar') {
     renderCams(c);
@@ -3400,6 +3457,392 @@ async function camAudioXato(url) {
   } catch (_) {}
   const f = document.getElementById('camFoot');
   if (f) f.textContent = '🔇 ' + sabab;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MINI APP'DAN KO'CHIRILGAN BO'LIMLAR (moliya, ombor, kategoriya, AI, eksport)
+// ════════════════════════════════════════════════════════════════════════════
+// Hammasi server endpointlarini ishlatadi — telefonda ham, kompyuterda ham
+// bir xil raqam chiqadi. Kompyuterda jadval kengroq: filtrlar yonma-yon,
+// ustunlar ko'proq, eksport esa faylni to'g'ridan-to'g'ri diskka saqlaydi.
+
+function kunOldin(n) {
+  const d = tashkentNow();
+  d.setUTCDate(d.getUTCDate() - n);
+  return ymd(d);
+}
+
+// ── 💸 Kassa harakati (naqd kirim/chiqim) ───────────────────────────────────
+async function renderCashMoves(c) {
+  const st = renderCashMoves;
+  if (!st._from) { st._from = kunOldin(30); st._to = ymd(tashkentNow()); }
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.cashMovements(st._from, st._to, 400);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const items = r.items || [];
+  const sm = r.summary || {};
+  c.innerHTML = `
+    <div class="filters">
+      <div class="filter"><label>Dan</label><input type="date" id="cmFrom" value="${esc(st._from)}"></div>
+      <div class="filter"><label>Gacha</label><input type="date" id="cmTo" value="${esc(st._to)}"></div>
+      <button class="btn-soft" id="cmGo">Ko'rsatish</button>
+      <button class="btn-soft ghost" id="cm30">Oxirgi 30 kun</button>
+    </div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v" style="color:var(--green)">${money(sm.in_total)}</div><div class="l">Kirim (naqd)</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--red)">${money(sm.out_total)}</div><div class="l">Chiqim (rasxod)</div></div>
+      <div class="sum-chip"><div class="v">${money(sm.net)}</div><div class="l">Farq</div></div>
+      <div class="sum-chip"><div class="v">${int(sm.count)}</div><div class="l">Yozuv</div></div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Sana</th><th>Turi</th><th class="num">Summa</th><th>Kategoriya</th>
+          <th>Izoh</th><th>Kim</th><th>Manba</th></tr></thead>
+        <tbody>
+          ${items.length ? items.map((x) => {
+            const kir = x.direction !== 'out';
+            return `<tr>
+              <td>${esc((x.created_at || '').slice(0, 16))}</td>
+              <td><span class="cm-dir ${kir ? 'in' : 'out'}">${kir ? '↓ kirim' : '↑ chiqim'}</span></td>
+              <td class="num" style="color:${kir ? 'var(--green)' : 'var(--red)'}">${money(x.amount)}</td>
+              <td>${esc(x.category || '—')}</td>
+              <td>${esc(x.note || x.recipient || '')}</td>
+              <td>${esc(x.cashier_name || '—')}</td>
+              <td><span class="muted">${esc(x.source || '')}</span></td>
+            </tr>`; }).join('')
+            : `<tr><td colspan="7"><div class="chart-empty">Bu oraliqda naqd harakat yo'q</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+  document.getElementById('cmGo').addEventListener('click', () => {
+    st._from = document.getElementById('cmFrom').value || st._from;
+    st._to = document.getElementById('cmTo').value || st._to;
+    renderCashMoves(c);
+  });
+  document.getElementById('cm30').addEventListener('click', () => {
+    st._from = kunOldin(30); st._to = ymd(tashkentNow()); renderCashMoves(c);
+  });
+}
+
+// ── 💰 Aylanma va foyda ─────────────────────────────────────────────────────
+async function renderTurnover(c) {
+  const st = renderTurnover;
+  st._days = st._days || 30;
+  c.innerHTML = `<div class="loading">Hisoblanyapti…</div>`;
+  const r = await api.getSalesSummary(st._days);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const t = r.today || {}, p = r.period || {};
+  const kun = (d) => `<button class="btn-soft${st._days === d ? '' : ' ghost'}" data-days="${d}">${d} kun</button>`;
+  c.innerHTML = `
+    <div class="filters">${kun(7)}${kun(30)}${kun(90)}</div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${money(t.revenue)}</div><div class="l">Bugungi aylanma (${esc(t.day || '')})</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--green)">${money(t.profit)}</div><div class="l">Bugungi foyda</div></div>
+      <div class="sum-chip"><div class="v">${int(t.count)}</div><div class="l">Bugungi cheklar</div></div>
+    </div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${money(p.revenue)}</div><div class="l">${st._days} kunlik aylanma</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--green)">${money(p.profit)}</div><div class="l">${st._days} kunlik foyda</div></div>
+      <div class="sum-chip"><div class="v">${int(p.count)}</div><div class="l">Cheklar</div></div>
+      <div class="sum-chip"><div class="v">${money(p.avg_check)}</div><div class="l">O'rtacha chek</div></div>
+    </div>
+    ${r.profit_coverage < 100 ? `<div class="np-hint" style="margin-bottom:14px">
+      ⚠️ Foyda savdoning <b>${int(r.profit_coverage)}%</b> i bo'yicha hisoblandi —
+      qolgan tovarlarning tannarxi kiritilmagan yoki ular katalogga bog'lanmagan.</div>` : ''}
+    <div class="card-row">
+      <div class="card"><div class="card-title">Eng ko'p sotilganlar</div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Tovar</th><th class="num">Miqdor</th><th class="num">Summa</th></tr></thead>
+          <tbody>${(r.top_products || []).map((x) => `<tr><td>${esc(x.name)}</td>
+            <td class="num">${nf.format(x.qty)}</td><td class="num">${money(x.sum)}</td></tr>`).join('')
+            || `<tr><td colspan="3"><div class="chart-empty">Ma'lumot yo'q</div></td></tr>`}</tbody>
+        </table></div>
+      </div>
+      <div class="card"><div class="card-title">Kassirlar</div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Kassir</th><th class="num">Chek</th><th class="num">Summa</th></tr></thead>
+          <tbody>${(r.cashiers || []).map((x) => `<tr><td>${esc(x.name)}</td>
+            <td class="num">${int(x.count)}</td><td class="num">${money(x.sum)}</td></tr>`).join('')
+            || `<tr><td colspan="3"><div class="chart-empty">Ma'lumot yo'q</div></td></tr>`}</tbody>
+        </table></div>
+      </div>
+    </div>`;
+  c.querySelectorAll('[data-days]').forEach((b) => b.addEventListener('click', () => {
+    st._days = Number(b.dataset.days); renderTurnover(c);
+  }));
+}
+
+// ── ⚠️ Past qoldiq ──────────────────────────────────────────────────────────
+async function renderLowStock(c) {
+  const st = renderLowStock;
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.lowStock(st._th || 0);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const rows = r.products || [];
+  c.innerHTML = `
+    <div class="filters">
+      <div class="filter"><label>Ostona (shu sondan kam qolganlar)</label>
+        <input type="number" id="lsTh" min="0" step="any" value="${Number(st._th) || 0}" style="width:140px"></div>
+      <button class="btn-soft" id="lsGo">Ko'rsatish</button>
+    </div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${int(r.count)}</div><div class="l">Tovar</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--red)">${int(rows.filter((x) => (x.qty || 0) <= 0).length)}</div><div class="l">Butunlay tugagan</div></div>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Narxi</th></tr></thead>
+      <tbody>${rows.length ? rows.map((x) => `<tr>
+          <td>${esc(x.id)}</td><td>${esc(x.name)}</td>
+          <td class="num">${(x.qty || 0) <= 0 ? '<span class="badge-low">0</span>' : nf.format(x.qty)}</td>
+          <td>${esc(x.unit || '')}</td><td class="num">${money(x.sell_price)}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="5"><div class="chart-empty">✅ Hammasi yetarli</div></td></tr>`}</tbody>
+    </table></div>`;
+  document.getElementById('lsGo').addEventListener('click', () => {
+    st._th = Number(document.getElementById('lsTh').value) || 0;
+    renderLowStock(c);
+  });
+}
+
+// ── 🗂 Kategoriyalar ────────────────────────────────────────────────────────
+async function renderCategories(c) {
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.getCategories();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const rows = r.categories || [];
+  c.innerHTML = `
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${int(rows.length)}</div><div class="l">Bo'limlar</div></div>
+      <div class="sum-chip"><div class="v">${int(r.total_products)}</div><div class="l">Jami tovar</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--gold)">${int(r.uncategorized)}</div><div class="l">Bo'limsiz tovar</div></div>
+    </div>
+    <div class="filters">
+      <div class="filter" style="flex:1;min-width:240px"><label>Yangi bo'lim</label>
+        <input type="text" id="catNew" placeholder="Masalan: Santexnika" maxlength="64"></div>
+      <button class="btn-soft" id="catAdd">➕ Qo'shish</button>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Nomi</th><th class="num">Tovar</th><th class="num">Qoldig'i bor</th><th style="width:90px"></th></tr></thead>
+      <tbody>${rows.length ? rows.map((x) => `<tr data-cid="${x.id}">
+          <td><input class="qty-inp cat-name" data-cid="${x.id}" value="${esc(x.name)}" style="width:100%;text-align:left"></td>
+          <td class="num">${int(x.count)}</td>
+          <td class="num">${int(x.in_stock)}</td>
+          <td class="num"><button class="btn-mini danger" data-del="${x.id}" title="O'chirish">🗑</button></td>
+        </tr>`).join('')
+        : `<tr><td colspan="4"><div class="chart-empty">Bo'lim yo'q</div></td></tr>`}</tbody>
+    </table></div>`;
+  const add = async () => {
+    const inp = document.getElementById('catNew');
+    const name = inp.value.trim();
+    if (!name) return;
+    const res = await api.categorySave({ id: 0, name });
+    if (!res.ok) { if (res.authRequired) return doLogout(); toast('⚠️ ' + (res.error || 'Saqlanmadi')); return; }
+    toast('✅ Qo\'shildi'); renderCategories(c);
+  };
+  document.getElementById('catAdd').addEventListener('click', add);
+  document.getElementById('catNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  c.querySelectorAll('.cat-name').forEach((inp) => {
+    const asl = inp.value;
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+    inp.addEventListener('change', async () => {
+      const name = inp.value.trim();
+      if (!name || name === asl) { inp.value = asl; return; }
+      const res = await api.categorySave({ id: Number(inp.dataset.cid), name });
+      toast(res.ok ? '✅ Nomi o\'zgardi' : ('⚠️ ' + (res.error || 'Saqlanmadi')));
+      if (!res.ok) inp.value = asl;
+    });
+  });
+  c.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    const tr = b.closest('tr');
+    const nom = tr.querySelector('.cat-name').value;
+    if (!confirm(`«${nom}» bo'limi o'chirilsinmi?\n\nTovarlar o'chmaydi — ular bo'limsiz qoladi.`)) return;
+    const res = await api.categoryDelete(Number(b.dataset.del));
+    if (!res.ok) { if (res.authRequired) return doLogout(); toast('⚠️ ' + (res.error || 'O\'chmadi')); return; }
+    toast('🗑 O\'chirildi'); renderCategories(c);
+  }));
+}
+
+// ── 📋 Buyurtma ro'yxati (kimdan nima, qanchadan) ───────────────────────────
+// Hisob OG'IR: ketish tezligi qoldiq tarixidan olinadi, shuning uchun
+// birinchi yuklash yarim daqiqagacha cho'zilishi mumkin.
+async function renderReorder(c) {
+  const st = renderReorder;
+  if (st._sid) return reorderItems(c, st._sid, st._sname);
+  c.innerHTML = `<div class="loading">Hisoblanyapti… (bu biroz vaqt oladi)</div>`;
+  const r = await api.reorderSuppliers();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Hisob bajarilmadi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const sup = r.suppliers || [];
+  c.innerHTML = `
+    ${r.warning ? `<div class="np-hint" style="margin-bottom:12px">⚠️ ${esc(r.warning)}</div>` : ''}
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${int(sup.length)}</div><div class="l">Yetkazib beruvchi</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--red)">${int(sup.reduce((a, x) => a + (x.urgent || 0), 0))}</div><div class="l">Shoshilinch pozitsiya</div></div>
+      <div class="sum-chip"><div class="v">${money(sup.reduce((a, x) => a + (x.amount || 0), 0))}</div><div class="l">Umumiy buyurtma summasi</div></div>
+      ${r.unassigned ? `<div class="sum-chip"><div class="v" style="color:var(--gold)">${int(r.unassigned)}</div><div class="l">Biriktirilmagan tovar</div></div>` : ''}
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Yetkazib beruvchi</th><th class="num">Buyurtmaga</th><th class="num">Shoshilinch</th>
+        <th class="num">Qoldiq 0</th><th class="num">Summa</th><th class="num">Kunlik yo'qotish</th><th></th></tr></thead>
+      <tbody>${sup.length ? sup.map((x) => `<tr>
+          <td>${esc(x.name)}<div class="muted" style="font-size:12px">yetkazish ${int(x.lead)} kun · davr ${int(x.cycle)} kun</div></td>
+          <td class="num">${int(x.to_order)} / ${int(x.products)}</td>
+          <td class="num">${x.urgent ? `<span class="badge-low">${int(x.urgent)}</span>` : '0'}</td>
+          <td class="num">${int(x.zero_stock)}</td>
+          <td class="num">${money(x.amount)}</td>
+          <td class="num">${x.lost_per_day ? money(x.lost_per_day) : '<span class="muted">—</span>'}</td>
+          <td class="num"><button class="btn-mini" data-sid="${x.id}" data-sname="${esc(x.name)}">Ro'yxat ›</button></td>
+        </tr>`).join('')
+        : `<tr><td colspan="7"><div class="chart-empty">Buyurtma kerak emas</div></td></tr>`}</tbody>
+    </table></div>`;
+  c.querySelectorAll('[data-sid]').forEach((b) => b.addEventListener('click', () => {
+    st._sid = Number(b.dataset.sid); st._sname = b.dataset.sname;
+    reorderItems(c, st._sid, st._sname);
+  }));
+}
+
+async function reorderItems(c, sid, nom) {
+  c.innerHTML = `<div class="loading">Ro'yxat hisoblanyapti…</div>`;
+  const r = await api.reorder(sid);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Hisob bajarilmadi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  const items = r.items || [];
+  const kerak = items.filter((x) => x.need > 0);
+  c.innerHTML = `
+    <div class="filters">
+      <button class="btn-soft ghost" id="roBack">‹ Yetkazib beruvchilar</button>
+      <div class="filter"><label>Kompaniya</label><div class="cam-count">${esc(r.name || nom || '')}</div></div>
+    </div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${int(kerak.length)}</div><div class="l">Buyurtma qilinadi</div></div>
+      <div class="sum-chip"><div class="v">${money(r.total)}</div><div class="l">Summa</div></div>
+      <div class="sum-chip"><div class="v">${int(r.lead)} / ${int(r.cycle)}</div><div class="l">Yetkazish / davr (kun)</div></div>
+      ${r.period ? `<div class="sum-chip"><div class="v" style="font-size:15px">${esc(r.period)}</div><div class="l">Hisob davri</div></div>` : ''}
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>SKU</th><th>Tovar</th><th class="num">Qoldiq</th><th class="num">Kunlik ketish</th>
+        <th class="num">Yetadi (kun)</th><th class="num">Buyurtma</th><th class="num">Summa</th><th>Holat</th></tr></thead>
+      <tbody>${items.length ? items.map((x) => `<tr${x.need > 0 ? '' : ' class="ro-skip"'}>
+          <td>${esc(x.sku)}</td>
+          <td>${esc(x.name)}${x.thin ? ' <span class="np-tag" style="color:var(--gold);background:#fdf3e0">kam ma\'lumot</span>' : ''}</td>
+          <td class="num">${nf.format(x.stock)}</td>
+          <td class="num">${nf.format(x.rate)}</td>
+          <td class="num">${x.days_left == null ? '<span class="muted">—</span>' : nf.format(x.days_left)}</td>
+          <td class="num"><b>${x.need > 0 ? int(x.need) : '—'}</b></td>
+          <td class="num">${x.need > 0 ? money(x.amount) : '<span class="muted">—</span>'}</td>
+          <td>${esc(x.status || '')}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="8"><div class="chart-empty">Ro'yxat bo'sh</div></td></tr>`}</tbody>
+    </table></div>`;
+  document.getElementById('roBack').addEventListener('click', () => {
+    renderReorder._sid = 0; renderReorder(c);
+  });
+}
+
+// ── 🤖 AI analitika ─────────────────────────────────────────────────────────
+const AI_SAVOLLAR = [
+  ['top', 'Eng foydali tovarlar'],
+  ['slow', 'Sekin sotilayotganlar'],
+  ['stock', 'Ombor holati'],
+  ['clients', 'Mijozlar tahlili'],
+  ['profit', 'Foydani qanday oshirish'],
+];
+
+function renderAiAnalytics(c) {
+  c.innerHTML = `
+    <div class="card">
+      <div class="card-title">🤖 Biznes tahlili</div>
+      <div class="np-hint" style="margin-bottom:12px">Savol tanlang yoki o'zingiz yozing.
+        Serverga savdo, foyda va top tovarlar konteksti yuboriladi — javob 10–40 soniyada keladi.</div>
+      <div class="filters" style="margin-bottom:10px">
+        ${AI_SAVOLLAR.map(([k, t]) => `<button class="btn-soft ghost" data-ai="${k}">${esc(t)}</button>`).join('')}
+      </div>
+      <div class="filters">
+        <div class="filter" style="flex:1;min-width:280px"><label>O'z savolingiz</label>
+          <input type="text" id="aiQ" maxlength="500" placeholder="Masalan: qaysi bo'limda qoldiq ortib ketgan?"></div>
+        <button class="btn-soft" id="aiGo">So'rash</button>
+      </div>
+    </div>
+    <div id="aiOut"></div>`;
+  const sora = async (payload, tugma) => {
+    const out = document.getElementById('aiOut');
+    out.innerHTML = `<div class="loading">🤖 AI o'ylayapti… (10–40 soniya)</div>`;
+    c.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    const r = await api.aiAnalyze(payload);
+    c.querySelectorAll('button').forEach((b) => (b.disabled = false));
+    if (!r.ok) {
+      if (r.authRequired) return doLogout();
+      out.innerHTML = `<div class="err-box">${esc(r.error || 'AI javob bermadi')}</div>`;
+      return;
+    }
+    out.innerHTML = `<div class="card"><div class="card-title">${esc(tugma || 'Javob')}</div>
+      <div class="ai-answer">${esc(r.answer || '').replace(/\n/g, '<br>')}</div></div>`;
+  };
+  c.querySelectorAll('[data-ai]').forEach((b) =>
+    b.addEventListener('click', () => sora({ preset: b.dataset.ai }, b.textContent)));
+  document.getElementById('aiGo').addEventListener('click', () => {
+    const q = document.getElementById('aiQ').value.trim();
+    if (!q) { toast('Savolni yozing'); return; }
+    sora({ question: q }, q);
+  });
+}
+
+// ── 📥 Eksport (Excel) ──────────────────────────────────────────────────────
+function renderExport(c) {
+  c.innerHTML = `
+    <div class="card">
+      <div class="card-title">📥 Excel hisobot</div>
+      <div class="np-hint" style="margin-bottom:12px">Fayl serverdan olinadi va siz tanlagan
+        papkaga saqlanadi.</div>
+      <div class="filters">
+        <div class="filter"><label>Oy (ixtiyoriy, sotuvlar uchun)</label>
+          <input type="month" id="exMonth"></div>
+      </div>
+      <div class="filters">
+        <button class="btn-soft" data-ex="sales">🧾 Sotuvlar</button>
+        <button class="btn-soft ghost" data-ex="clients">👤 Mijozlar</button>
+        <button class="btn-soft ghost" data-ex="debtors">💳 Qarzdorlar</button>
+      </div>
+      <div id="exMsg" class="np-hint"></div>
+    </div>`;
+  c.querySelectorAll('[data-ex]').forEach((b) => b.addEventListener('click', async () => {
+    const msg = document.getElementById('exMsg');
+    const oy = (document.getElementById('exMonth') || {}).value || '';
+    msg.textContent = '⏳ Tayyorlanmoqda…';
+    c.querySelectorAll('button').forEach((x) => (x.disabled = true));
+    const r = await api.exportFile(b.dataset.ex, b.dataset.ex === 'sales' ? oy : '');
+    c.querySelectorAll('button').forEach((x) => (x.disabled = false));
+    if (!r.ok) {
+      if (r.authRequired) return doLogout();
+      msg.innerHTML = `<span style="color:var(--red)">${esc(r.error || 'Saqlanmadi')}</span>`;
+      return;
+    }
+    if (r.canceled) { msg.textContent = 'Bekor qilindi'; return; }
+    msg.innerHTML = `<span style="color:var(--green)">✅ Saqlandi: ${esc(r.path || '')}</span>`;
+    toast('✅ Hisobot saqlandi');
+  }));
 }
 
 boot();

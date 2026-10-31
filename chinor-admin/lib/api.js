@@ -177,6 +177,70 @@ module.exports = {
     }
   },
 
+  // ── Moliya: naqd kirim/chiqim jurnali ───────────────────────────────────────
+  cashMovements: (base, token, from = '', to = '', limit = 300) => {
+    const qs = [`limit=${Number(limit) || 300}`];
+    if (from) qs.push('from=' + encodeURIComponent(from));
+    if (to) qs.push('to=' + encodeURIComponent(to));
+    return req(base, '/api/cash-movements?' + qs.join('&'), { token, timeout: 25000 });
+  },
+
+  // ── Past qoldiq ─────────────────────────────────────────────────────────────
+  lowStock: (base, token, threshold = 0) =>
+    req(base, '/api/low-stock' + (threshold ? `?threshold=${Number(threshold)}` : ''),
+        { token, timeout: 25000 }),
+
+  // ── Kategoriyalar ───────────────────────────────────────────────────────────
+  categories: (base, token) =>
+    req(base, '/api/categories', { token, timeout: 20000 }),
+  categorySave: (base, token, payload) =>
+    req(base, '/api/category/save', { method: 'POST', token, body: payload, timeout: 15000 }),
+  categoryDelete: (base, token, id) =>
+    req(base, '/api/category/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
+
+  // ── Buyurtma ro'yxati (yetkazib beruvchiga nima kerak) ──────────────────────
+  // Hisob og'ir (qoldiq tarixi bo'yicha ketish tezligi) — timeout uzun.
+  reorderSuppliers: (base, token, days = 0) =>
+    req(base, '/api/reorder/suppliers' + (days ? `?days=${Number(days)}` : ''),
+        { token, timeout: 90000 }),
+  reorder: (base, token, supplier_id, days = 0) =>
+    req(base, `/api/reorder?supplier_id=${Number(supplier_id) || 0}` +
+              (days ? `&days=${Number(days)}` : ''), { token, timeout: 90000 }),
+
+  // ── AI analitika ────────────────────────────────────────────────────────────
+  aiAnalyze: (base, token, payload) =>
+    req(base, '/api/ai/analyze', { method: 'POST', token, body: payload, timeout: 90000 }),
+
+  // ── Excel eksport ───────────────────────────────────────────────────────────
+  // Javob — faylning o'zi (JSON emas), shuning uchun `req` ishlatilmaydi.
+  exportFile: async (base, token, kind = 'sales', month = '') => {
+    const url = String(base).replace(/\/+$/, '') +
+      `/api/export?type=${encodeURIComponent(kind)}` + (month ? `&month=${encodeURIComponent(month)}` : '');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const res = await fetch(url, { headers, signal: ctrl.signal });
+      if (!res.ok) {
+        let err = 'Xato ' + res.status;
+        try { err = (await res.json()).error || err; } catch { /* fayl emas */ }
+        return { ok: false, status: res.status, data: { ok: false, error: err } };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      // Fayl nomi serverdan (Content-Disposition) yoki turiga qarab
+      const cd = res.headers.get('content-disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const name = (m && decodeURIComponent(m[1])) || `${kind}.xlsx`;
+      return { ok: true, status: 200, data: { ok: true, name, bytes: buf } };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
   // ── Kameralar ───────────────────────────────────────────────────────────────
   // Ro'yxat bilan birga OQIM TOKENI keladi: tasvir <img src> bilan olinadi,
   // unga header qo'yib bo'lmaydi (bot/api_cams.py).

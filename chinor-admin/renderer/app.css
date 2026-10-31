@@ -512,3 +512,10 @@ table.tbl tr:hover td { background: #f7faf6; }
 .cam-ov-nav.chap { left: 10px; }
 .cam-ov-nav.ong { right: 10px; }
 .cam-ov-foot { padding: 10px 14px 16px; color: #6f7b85; font-size: 12.5px; text-align: center; }
+
+/* ═══════ Moliya / buyurtma / AI ═══════ */
+.cm-dir { font-size: 12.5px; font-weight: 600; }
+.cm-dir.in  { color: var(--green); }
+.cm-dir.out { color: var(--red); }
+.ro-skip td { opacity: .55; }
+.ai-answer { font-size: 14.5px; line-height: 1.65; white-space: pre-wrap; }
