@@ -20,6 +20,13 @@ ffmpeg faqat KIMDIR KO'RAYOTGANDA ishlaydi: oxirgi so'rovdan 25 soniya
 o'tsa jarayon o'zi o'chadi. Aks holda 20 ta kamera serverni doim band
 qilib turardi.
 
+Ovoz ALOHIDA oqim bo'lib boradi (`/audio`): MJPEG kadrlari ichiga ovozni
+joylab bo'lmaydi, brauzer esa `<img>` dan ovoz chiqarmaydi. Shuning uchun
+server o'sha RTSP dan ovozni MP3 (bo'lmasa AAC) qilib uzatadi, Mini App
+uni oddiy `<audio>` bilan o'ynatadi. Ovoz faqat tugma bosilganda yoqiladi:
+brauzer o'z-o'zidan ovoz chiqarishga ruxsat bermaydi, qolaversa nazoratchi
+har kameraga kirganda do'kon shovqini yangrab ketmasin.
+
 Rasm `<img src=...>` bilan yuklanadi, unga header qo'yib bo'lmaydi —
 shuning uchun oqim manzili qisqa muddatli TOKEN bilan ochiladi
 (`/api/cams/token`, admin sessiyasidan olinadi, 12 soat yashaydi).
@@ -28,6 +35,7 @@ Endpointlar:
   GET  /api/cams                    — ro'yxat + oqim tokeni (admin)
   GET  /api/cams/{id}/snap.jpg?t=   — bitta kadr (to'r uchun)
   GET  /api/cams/{id}/live.mjpg?t=  — uzluksiz oqim (to'liq ekran)
+  GET  /api/cams/{id}/audio?t=      — kamera mikrofoni (ovozli kameralarda)
   POST /api/admin/cams/save         — qo'shish / tahrirlash
   POST /api/admin/cams/delete       — o'chirish
   POST /api/admin/cams/discover     — tarmoqdan kameralarni topish
@@ -64,6 +72,9 @@ MAX_CAMS = 64
 PROFILES = {
     "grid": {"fps": 1, "width": 480, "q": 8, "path": "sub"},
     "full": {"fps": 6, "width": 960, "q": 4, "path": "main"},
+    # Yaqinlashtirilganda (zoom) — kameraning to'liq aniqligi. 960px kadrni
+    # 3 barobar kattalashtirsa yozuv ham, odam yuzi ham tanib bo'lmas edi.
+    "hi":   {"fps": 4, "width": 1920, "q": 3, "path": "main"},
 }
 
 # Kamera brendlari bo'yicha RTSP yo'llari: (asosiy, kichik oqim).
@@ -379,13 +390,17 @@ _reaper: asyncio.Task | None = None
 
 
 async def _reap() -> None:
-    """Hech kim ko'rmayotgan kameralarni o'chiradi."""
+    """Hech kim ko'rmayotgan kameralarni o'chiradi (tasvir ham, ovoz ham)."""
     while True:
         await asyncio.sleep(5)
         for key, w in list(_workers.items()):
             if w.idle:
                 _workers.pop(key, None)
                 await w.stop()
+        for key, a in list(_audio.items()):
+            if a.idle:
+                _audio.pop(key, None)
+                await a.stop()
 
 
 async def _worker(cam: dict, profile: str) -> _Worker:
@@ -408,13 +423,191 @@ async def _worker(cam: dict, profile: str) -> _Worker:
 
 def stop_all() -> None:
     """Bot o'chayotganda chaqiriladi."""
-    for w in list(_workers.values()):
+    for w in list(_workers.values()) + list(_audio.values()):
         if w.proc and w.proc.returncode is None:
             try:
                 w.proc.kill()
             except Exception:
                 pass
     _workers.clear()
+    _audio.clear()
+
+
+# ─── Ovoz: RTSP → MP3 (yoki AAC) ───────────────────────────────────────────
+# Nega alohida jarayon: tasvir kichik oqimdan, 1-6 kadr/s bilan olinadi va
+# ovoz uchun yaramaydi; qolaversa ovoz HAR DOIM emas, faqat tugma bosilganda
+# kerak. Shuning uchun ovoz o'z ffmpeg'ida, o'z hayot sikli bilan yuradi.
+
+AUDIO_IDLE = 12          # shuncha soniya hech kim eshitmasa — o'chadi
+_acodec: tuple | None = None       # (kodek, format, content-type)
+
+
+async def _audio_codec() -> tuple:
+    """Shu serverdagi ffmpeg nimani kodlay oladi: MP3 yoki AAC.
+
+    MP3 ni hamma brauzer (iPhone ham) oqim holida o'ynaydi, lekin ba'zi
+    ffmpeg yig'malarida `libmp3lame` bo'lmaydi — o'shanda AAC (ADTS)."""
+    global _acodec
+    if _acodec:
+        return _acodec
+    ff = shutil.which("ffmpeg")
+    txt = ""
+    if ff:
+        try:
+            pr = await asyncio.create_subprocess_exec(
+                ff, "-hide_banner", "-encoders",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(pr.communicate(), 10)
+            txt = out.decode("utf-8", "replace")
+        except Exception:                            # pragma: no cover
+            txt = ""
+    _acodec = (("libmp3lame", "mp3", "audio/mpeg") if "libmp3lame" in txt
+               else ("aac", "adts", "audio/aac"))
+    return _acodec
+
+
+class _AudioWorker:
+    """Bitta kameraning ovozi. Eshitayotganlarga bo'laklab tarqatiladi."""
+
+    def __init__(self, key: str, url: str, enc: tuple):
+        self.key = key
+        self.url = url
+        self.enc = enc
+        self.proc: asyncio.subprocess.Process | None = None
+        self.task: asyncio.Task | None = None
+        self.subs: set = set()
+        self.error: str = ""
+        self.first: bytes = b""
+        self.event = asyncio.Event()
+        self.touched = time.time()
+
+    async def start(self) -> None:
+        if self.task and not self.task.done():
+            return
+        self.task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self.proc and self.proc.returncode is None:
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+        if self.task:
+            self.task.cancel()
+        self.proc = None
+
+    def touch(self) -> None:
+        self.touched = time.time()
+
+    @property
+    def idle(self) -> bool:
+        return not self.subs and (time.time() - self.touched) > AUDIO_IDLE
+
+    async def _run(self) -> None:
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            self.error = "ffmpeg o'rnatilmagan"
+            self.event.set()
+            return
+        codec, fmt, _ctype = self.enc
+        cmd = [
+            ff, "-hide_banner", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-fflags", "nobuffer",
+            "-timeout", "8000000",
+            "-i", self.url,
+            "-vn", "-ac", "1", "-ar", "22050",
+            "-c:a", codec, "-b:a", "48k",
+            "-f", fmt, "-flush_packets", "1", "pipe:1",
+        ]
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE)
+        except Exception as e:                       # pragma: no cover
+            self.error = f"ffmpeg ishga tushmadi: {e}"
+            self.event.set()
+            return
+        err_task = asyncio.create_task(self._drain_err())
+        try:
+            while True:
+                chunk = await self.proc.stdout.read(4096)
+                if not chunk:
+                    break
+                if not self.first:
+                    self.first = chunk
+                    self.event.set()
+                for q in list(self.subs):
+                    if q.full():
+                        try:
+                            q.get_nowait()       # kechikkan tomoshabin — eskisi tashlanadi
+                        except Exception:
+                            pass
+                    try:
+                        q.put_nowait(chunk)
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:                       # pragma: no cover
+            self.error = str(e)
+        finally:
+            err_task.cancel()
+            if not self.first and not self.error:
+                self.error = "kameradan ovoz kelmadi"
+            self.event.set()
+            await self.stop()
+
+    async def _drain_err(self) -> None:
+        try:
+            while True:
+                line = await self.proc.stderr.readline()
+                if not line:
+                    return
+                txt = line.decode("utf-8", "replace").strip()
+                if not txt:
+                    continue
+                # Ovozsiz kamera: "Output file #0 does not contain any stream"
+                if "does not contain any stream" in txt or "Audio: none" in txt:
+                    self.error = "bu kamerada ovoz yo'q"
+                else:
+                    self.error = txt[:200]
+                self.event.set()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def wait_start(self, timeout: float = 12.0) -> bytes:
+        """Birinchi bo'lak kelguncha kutadi (ffmpeg kamerani ulashi vaqt oladi)."""
+        self.touch()
+        if self.first:
+            return self.first
+        try:
+            await asyncio.wait_for(self.event.wait(), timeout)
+        except asyncio.TimeoutError:
+            return b""
+        return self.first
+
+
+_audio: dict = {}
+
+
+async def _audio_worker(cam: dict, enc: tuple) -> _AudioWorker:
+    global _reaper
+    if _reaper is None or _reaper.done():
+        _reaper = asyncio.create_task(_reap())
+    key = str(cam["id"])
+    a = _audio.get(key)
+    if a and a.task and a.task.done() and not a.subs:
+        _audio.pop(key, None)
+        a = None
+    if a is None:
+        # Ovoz ASOSIY oqimda bo'ladi — kichik oqimda ko'pincha ovoz yo'q.
+        a = _AudioWorker(key, rtsp_url(cam, "full"), enc)
+        _audio[key] = a
+        await a.start()
+    a.touch()
+    return a
 
 
 # ─── Tarmoqdan kamera izlash ───────────────────────────────────────────────
@@ -759,6 +952,45 @@ async def api_live(request: web.Request):
     finally:
         w.subs.discard(q)
         w.touch()
+    return resp
+
+
+@CAM_ROUTES.get("/api/cams/{id}/audio")
+async def api_audio(request: web.Request):
+    """Kamera mikrofoni — uzluksiz MP3 (yoki AAC) oqimi.
+
+    Mini App buni `<audio>` bilan o'ynatadi. Ovozsiz kamerada ffmpeg
+    darrov to'xtaydi va biz sababni aytamiz — tugma jim qotib qolmasin."""
+    cam, _profile = await _cam_for_stream(request)
+    enc = await _audio_codec()
+    a = await _audio_worker(cam, enc)
+    first = await a.wait_start()
+    if not first:
+        return web.json_response(
+            {"ok": False, "error": _mask_url(a.error or "ovoz yo'q")}, status=503)
+
+    resp = web.StreamResponse(headers={
+        "Content-Type": enc[2],
+        "Cache-Control": "no-store",
+        "Connection": "close",
+    })
+    await resp.prepare(request)
+    q: asyncio.Queue = asyncio.Queue(maxsize=64)
+    a.subs.add(q)
+    try:
+        await resp.write(first)
+        while True:
+            a.touch()
+            chunk = await asyncio.wait_for(q.get(), timeout=20)
+            await resp.write(chunk)
+    except (asyncio.TimeoutError, asyncio.CancelledError,
+            ConnectionResetError, ConnectionError):
+        pass
+    except Exception as e:                            # pragma: no cover
+        logger.debug("kamera ovozi uzildi: %s", e)
+    finally:
+        a.subs.discard(q)
+        a.touch()
     return resp
 
 

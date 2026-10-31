@@ -668,6 +668,15 @@ def _plain(html_text: str) -> str:
     return _html.unescape(_re.sub(r"<[^>]+>", "", html_text or "")).strip()
 
 
+def _own_photo(p: dict) -> bool:
+    """Rasm AYNAN shu tovar uchun olinganmi (umumiy/internetdan emas)."""
+    try:
+        from bot import api_photos
+        return api_photos.is_own(p)
+    except Exception:                        # pragma: no cover
+        return bool(p.get("image_url"))
+
+
 def _product_json(p: dict, role: str, ctype: str) -> dict:
     usd, summ = _price_pair(p, ctype)
     # Mijozga CHIROYLI nom (display_name), adminga ASL nom + ikkalasi ham.
@@ -697,6 +706,9 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         # shaklida saqlanadi; Mini App'ga oddiy matn bo'lib beriladi.
         "usage_info": _plain(p.get("usage_info") or ""),
         "has_image": bool(p.get("image_file_id") or p.get("image_url")),
+        # O'Z suratimizmi yoki internetdan olingan umumiy rasmmi —
+        # "rasmsiz tovarlar" ro'yxati va tahrir ekrani shuni ajratadi.
+        "own_photo": _own_photo(p),
         "category_id": int(p.get("category_id") or 0),
     }
     if role == "admin":
@@ -764,12 +776,15 @@ async def api_client_top(request: web.Request):
     Ilgari bo'sh joy qoldiq tovarlar bilan (alifbo tartibida) to'ldirilardi —
     mijozga "0 shina" ko'p sotilayotgandek ko'rinardi, bu yolg'on edi."""
     from database.channel_db import db as _db
-    from bot import api_recommend
+    from bot import api_recommend, api_photos
     auth = await _authenticate(request, _db)
     if not auth:
         return _err("Avtorizatsiya talab qilinadi", 401)
     idx = await api_recommend._index(_db)
-    top = api_recommend.recent_top(idx, limit=12)
+    # Bosh sahifaga ham faqat o'z suratli tovarlar chiqadi.
+    faqat_suratli = api_photos.client_photo_only(_db)
+    top = [p for p in api_recommend.recent_top(idx, limit=40)
+           if not faqat_suratli or p["id"] in idx.own][:12]
     import datetime
     cutoff = datetime.datetime.now() - datetime.timedelta(days=30)
     new_prods = []
@@ -780,7 +795,8 @@ async def api_client_top(request: web.Request):
             continue
         if dt.replace(tzinfo=None) > cutoff:
             new_prods.append((dt.replace(tzinfo=None), p))
-    new_prods = [p for _, p in sorted(new_prods, key=lambda x: x[0], reverse=True)[:12]]
+    new_prods = [p for _, p in sorted(new_prods, key=lambda x: x[0], reverse=True)
+                 if not faqat_suratli or p["id"] in idx.own][:12]
 
     u = auth.get("user") or {}
     ctype = (u.get("client_type") or "dona").lower() if auth["role"] == "client" else "dona"
@@ -849,6 +865,13 @@ async def api_products(request: web.Request):
         if role == "client":
             prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
 
+    # Mijozga FAQAT o'zimiz suratga olgan tovarlar ko'rinadi (qidiruvda
+    # ham): internetdan olingan umumiy rasm o'nlab tovarda takrorlanib,
+    # ilova qalbaki ko'rinardi. Sozlamadan o'chirish mumkin.
+    if role == "client":
+        from bot import api_photos
+        prods = api_photos.for_client(_db, prods)
+
     # Kategoriya bo'yicha saralash (qidiruvga ham qo'llanadi).
     # `category=none` — bo'limi BIRIKTIRILMAGAN tovarlar (0 ni filtr deb
     # qabul qilib bo'lmaydi: 0 «filtr yo'q» degani).
@@ -899,6 +922,7 @@ _SHOP_TTL = 60          # sekund: baza har so'rovda o'qilmasin
 
 async def _shop_data(db):
     """Katalogni tayyorlaydi va 60 soniya keshda saqlaydi."""
+    from bot import api_photos
     now = time.time()
     if now - _shop_cache["at"] < _SHOP_TTL and _shop_cache["items"]:
         return _shop_cache["items"], _shop_cache["cats"]
@@ -910,8 +934,12 @@ async def _shop_data(db):
     all_cats = [{"name": c["name"], "count": int(c.get("product_count") or 0)}
                 for c in cat_rows if int(c.get("product_count") or 0) > 0]
     all_cats.sort(key=lambda x: -x["count"])
+    # Saytga FAQAT o'zimiz suratga olgan tovarlar chiqadi. Rasmsizi ham,
+    # internetdan olingan "turi bo'yicha" umumiy rasmlisi ham tushmaydi —
+    # bitta surat o'nta tovarda takrorlansa do'kon qalbaki ko'rinardi.
+    shown = api_photos.for_client(db, prods)
     items = []
-    for p in prods:
+    for p in shown:
         if not (p.get("image_url") or ""):
             continue                      # rasmsiz tovar saytda ko'rinmaydi
         qty = float(p.get("qty", 0) or 0)
@@ -4726,6 +4754,9 @@ def create_app() -> web.Application:
     # Do'kondagi IP kameralar — server oqimni olib Mini App'ga uzatadi
     from bot import api_cams
     api_cams.setup(app)
+    # Tovar suratlari: rasmsiz tovarlar ro'yxati va umumiy rasmlarni tozalash
+    from bot import api_photos
+    api_photos.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)

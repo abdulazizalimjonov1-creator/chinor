@@ -1812,3 +1812,47 @@
 }
 .perm-row:last-child { border-bottom: none; }
 .perm-row input { width: 22px; height: 22px; flex-shrink: 0; accent-color: var(--primary-mid); }
+
+/* ───────── Kameralar: ovoz, yaqinlashtirish ───────── */
+.cam-ov-acts { display: flex; align-items: center; gap: 6px; }
+.cam-ov-act {
+    background: rgba(255,255,255,.14); color: #fff; border: 0; cursor: pointer;
+    width: 34px; height: 34px; border-radius: 50%; font-size: 15px;
+}
+.cam-ov-act.on { background: var(--primary); }
+.cam-ov-zk {
+    min-width: 42px; text-align: center; font-size: 12px; color: #9aa7b2;
+}
+/* Yaqinlashtirish o'zimizda — sahifa/ilova kattalashmasin */
+.cam-ov-body { touch-action: none; }
+.cam-ov-body img { transform-origin: center center; will-change: transform; }
+/* Kattalashtirilganda rasm butun maydonni egallasin (chetida qora bo'lmasin) */
+.cam-ov-body.kattalashgan img { cursor: grab; }
+.cam-ov-body.kattalashgan .cam-ov-nav { opacity: .25; }
+
+/* ───────── Rasmsiz tovarlar ───────── */
+.np-xul {
+    display: flex; gap: 8px; margin-bottom: 12px;
+}
+.np-xul div {
+    flex: 1; text-align: center; padding: 10px 6px; border-radius: 12px;
+    background: var(--card); border: 1px solid var(--border);
+}
+.np-xul b    { display: block; font-size: 19px; color: var(--text); }
+.np-xul span { font-size: 11.5px; color: var(--muted); }
+.np-switch {
+    display: flex; align-items: center; gap: 10px; margin: 10px 0;
+    font-size: 13.5px; color: var(--text); cursor: pointer;
+}
+.np-switch input { width: 20px; height: 20px; accent-color: var(--primary-mid); }
+.np-hint { font-size: 12px; color: var(--muted); margin: 6px 0 2px; line-height: 1.5; }
+.np-img {
+    width: 44px; height: 44px; border-radius: 10px; object-fit: cover;
+    flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+}
+.np-img.yoq {
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+    color: var(--muted);
+}
+
+.np-img + div { flex: 1; min-width: 0; }
