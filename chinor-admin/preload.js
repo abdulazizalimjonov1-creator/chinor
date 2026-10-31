@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('chinor', {
   getProducts: (page, limit) => ipcRenderer.invoke('data:products', { page: page || 0, limit: limit || 0 }),
   productQty: (id, delta) => ipcRenderer.invoke('data:productQty', { id, delta }),
   productSave: (prod) => ipcRenderer.invoke('data:productSave', prod),
+  productDelete: (id) => ipcRenderer.invoke('data:productDelete', { id }),
   prixodScan: (bytes, filename) => ipcRenderer.invoke('data:prixodScan', { bytes, filename }),
   prixodList: (from, to) => ipcRenderer.invoke('data:prixodList', { from, to }),
   prixodSave: (payload) => ipcRenderer.invoke('data:prixodSave', payload),
@@ -59,6 +60,16 @@ contextBridge.exposeInMainWorld('chinor', {
   photosClean: () => ipcRenderer.invoke('data:photosClean'),
   photosMode: (on) => ipcRenderer.invoke('data:photosMode', { on }),
   productImage: (id, bytes, filename) => ipcRenderer.invoke('data:productImage', { id, bytes, filename }),
+  // Maslahatlar
+  getGuides: () => ipcRenderer.invoke('data:guides'),
+  guideSave: (payload) => ipcRenderer.invoke('data:guideSave', payload),
+  guideDelete: (id) => ipcRenderer.invoke('data:guideDelete', { id }),
+  guideDraft: (payload) => ipcRenderer.invoke('data:guideDraft', payload),
+  // Yorliq o'qitish
+  getLabels: () => ipcRenderer.invoke('data:labels'),
+  getLabel: (pid) => ipcRenderer.invoke('data:label', { pid }),
+  labelSave: (payload) => ipcRenderer.invoke('data:labelSave', payload),
+  labelRead: (pid, files) => ipcRenderer.invoke('data:labelRead', { pid, files }),
   // Kameralar
   getCams: () => ipcRenderer.invoke('data:cams'),
   // Xodimlar boshqaruvi + KPI

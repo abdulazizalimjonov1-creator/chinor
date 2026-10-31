@@ -134,6 +134,7 @@ ipcMain.handle('data:products', withAuth((base, token, arg) => {
 }));
 ipcMain.handle('data:productQty', withAuth((base, token, arg) => api.productQty(base, token, arg.id, arg.delta)));
 ipcMain.handle('data:productSave', withAuth((base, token, arg) => api.productSave(base, token, arg)));
+ipcMain.handle('data:productDelete', withAuth((base, token, arg) => api.productDelete(base, token, arg.id)));
 ipcMain.handle('data:prixodScan', withAuth((base, token, arg) => api.prixodScan(base, token, arg.bytes, arg.filename)));
 ipcMain.handle('data:prixodList', withAuth((base, token, arg) => api.prixodList(base, token, (arg && arg.from) || '', (arg && arg.to) || '')));
 ipcMain.handle('data:prixodSave', withAuth((base, token, arg) => api.prixodSave(base, token, arg)));
@@ -193,6 +194,17 @@ ipcMain.handle('data:photosClean', withAuth((base, token) => api.photosClean(bas
 ipcMain.handle('data:photosMode', withAuth((base, token, arg) => api.photosMode(base, token, arg && arg.on)));
 ipcMain.handle('data:productImage', withAuth((base, token, arg) =>
   api.productImage(base, token, arg.id, arg.bytes, arg.filename)));
+// Maslahatlar (mijoz Mini App'idagi savol-javob kartochkalari)
+ipcMain.handle('data:guides', withAuth((base, token) => api.guides(base, token)));
+ipcMain.handle('data:guideSave', withAuth((base, token, arg) => api.guideSave(base, token, arg)));
+ipcMain.handle('data:guideDelete', withAuth((base, token, arg) => api.guideDelete(base, token, arg.id)));
+ipcMain.handle('data:guideDraft', withAuth((base, token, arg) => api.guideDraft(base, token, arg)));
+// Yorliq o'qitish (zavod yo'riqnomasi → o'zbekcha kartochka)
+ipcMain.handle('data:labels', withAuth((base, token) => api.labels(base, token)));
+ipcMain.handle('data:label', withAuth((base, token, arg) => api.label(base, token, arg.pid)));
+ipcMain.handle('data:labelSave', withAuth((base, token, arg) => api.labelSave(base, token, arg)));
+ipcMain.handle('data:labelRead', withAuth((base, token, arg) =>
+  api.labelRead(base, token, arg.pid, arg.files)));
 // Kameralar — ro'yxat + oqim tokeni (tasvirni renderer to'g'ridan oladi)
 ipcMain.handle('data:cams', withAuth((base, token) => api.cams(base, token)));
 

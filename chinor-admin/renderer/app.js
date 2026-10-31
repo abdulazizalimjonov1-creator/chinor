@@ -274,7 +274,7 @@ function ruxsat(key) {
 // ruxsat bo'lsa ko'rinadi.
 const MODULE_PERMS = {
   hisobotlar: ['stats', 'receipts', 'sales_history', 'ai_analytics', 'export', 'orders'],
-  tovarlar:   ['products_view', 'products_edit', 'categories', 'pricetags'],
+  tovarlar:   ['products_view', 'products_edit', 'categories', 'pricetags', 'guides'],
   ombor:      ['products_qty', 'suppliers', 'low_stock', 'reorder'],
   moliya:     ['cash', 'stats', 'turnover'],
   xodimlar:   ['staff'],
@@ -387,6 +387,8 @@ function renderModuleMenu(mod) {
       { key: 'fast', label: 'Tez sotiladigan', icon: 'M13 2 3 14h7l-1 8 10-12h-7z', soon: true },
       { key: 'kg', label: 'Kiloli tovarlar', icon: 'M12 3a3 3 0 0 0-3 3h6a3 3 0 0 0-3-3zM5 6h14l2 15H3z', soon: true },
       { key: 'labels', perm: 'pricetags', label: 'Sennik chop etish', icon: 'M20 12V8a2 2 0 0 0-2-2H6L2 12l4 6h12a2 2 0 0 0 2-2zM6 9h.01' },
+      { key: 'labels2', perm: 'products_edit', label: "Yorliq o'qitish", icon: 'M4 4h10l6 6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM14 4v6h6M7 14h8M7 17h5' },
+      { key: 'guides', perm: 'guides', label: 'Maslahatlar', icon: 'M12 2a7 7 0 0 0-4 12.7V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.3A7 7 0 0 0 12 2zM9 21h6' },
       { key: 'nophoto', perm: 'products_edit', label: 'Rasmsiz tovarlar', icon: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
       { key: 'serial', label: 'Seriyali tovarlar', icon: 'M3 6h18v12H3zM7 9v6M11 9v6M15 9v6M19 9v6', soon: true },
       { key: 'pricehist', label: 'Narxlar tarixi', icon: 'M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4', soon: true },
@@ -396,6 +398,8 @@ function renderModuleMenu(mod) {
       labels: () => openTab('tov:labels', 'Sennik chop etish', renderPriceTags),
       nophoto: () => openTab('tov:nophoto', 'Rasmsiz tovarlar', renderNoPhoto),
       cat: () => openTab('tov:cat', 'Kategoriyalar', renderCategories),
+      guides: () => openTab('tov:guides', 'Maslahatlar', renderGuides),
+      labels2: () => openTab('tov:labels2', "Yorliq o'qitish", renderLabels),
     });
   } else if (mod === 'ombor') {
     c.innerHTML = tilesHtml([
@@ -821,6 +825,7 @@ function drawProducts(c) {
     String(p.id).includes(q) ||
     prodCodes(p).some((cd) => cd.includes(q)));
   if (st._onlyOut) list = list.filter((p) => (p.qty || 0) <= 0);
+  if (st._noPhoto) list = list.filter((p) => !p.own_photo);
   // Katalog minglab tovar bo'lishi mumkin — jadvalga birinchi 400 tasini
   // chiqaramiz (qidiruv baribir TO'LIQ ro'yxatdan izlaydi).
   const shown = list.slice(0, 400);
@@ -831,6 +836,8 @@ function drawProducts(c) {
       <div class="filter" style="flex:1; min-width:220px"><label>Qidiruv</label>
         <input id="prSearch" type="text" placeholder="Nomi · SKU · barcode" value="${esc(st._q || '')}"></div>
       <button class="btn-soft${st._onlyOut ? '' : ' ghost'}" id="prOut">Qoldiq tugagan</button>
+      <button class="btn-soft${st._noPhoto ? '' : ' ghost'}" id="prNoImg" title="O'z surati yo'qlari">📷 Rasmsiz</button>
+      <button class="btn-soft" id="prNew">➕ Yangi tovar</button>
       <button class="btn-soft ghost" id="prReload" title="Serverdan qayta yuklash">🔄 Yangilash</button>
     </div>
     <div class="sum-chips" style="margin:12px 0">
@@ -840,10 +847,11 @@ function drawProducts(c) {
     </div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th><th>Yetkazib beruvchi</th><th></th></tr></thead>
+        <thead><tr><th style="width:56px">Rasm</th><th>SKU</th><th>Nomi</th><th class="num">Qoldiq</th><th>Birlik</th><th class="num">Tannarx</th><th class="num">Sotuv narxi</th><th class="num">Ulgurji</th><th>Yetkazib beruvchi</th><th></th></tr></thead>
         <tbody>
           ${shown.length ? shown.map((p) => `
             <tr data-pid="${p.id}">
+              <td>${prodThumb(p)}</td>
               <td>${esc(p.id)}</td>
               <td>${esc(p.name)}</td>
               <td class="num"><input class="qty-inp pr-inp" type="number" min="0" step="any" data-pid="${p.id}" data-f="qty" value="${Number(p.qty) || 0}"></td>
@@ -854,8 +862,8 @@ function drawProducts(c) {
               <td><select class="sup-sel" data-pid="${p.id}"><option value="0">—</option>${supOptions(p.supplier_id)}</select></td>
               <td class="num"><button class="btn-mini" data-edit="${p.id}" title="To'liq tahrirlash (nomi, birlik, barcode)">✏️</button></td>
             </tr>`).join('')
-            : `<tr><td colspan="9"><div class="chart-empty">Tovar topilmadi</div></td></tr>`}
-          ${hidden > 0 ? `<tr><td colspan="9"><div class="chart-empty">… yana ${int(hidden)} ta tovar — qidiruv orqali toping</div></td></tr>` : ''}
+            : `<tr><td colspan="10"><div class="chart-empty">Tovar topilmadi</div></td></tr>`}
+          ${hidden > 0 ? `<tr><td colspan="10"><div class="chart-empty">… yana ${int(hidden)} ta tovar — qidiruv orqali toping</div></td></tr>` : ''}
         </tbody>
       </table>
     </div>`;
@@ -867,6 +875,8 @@ function drawProducts(c) {
     drawProducts._t = setTimeout(() => drawProducts(c), 200);
   });
   re('prOut').addEventListener('click', () => { st._onlyOut = !st._onlyOut; drawProducts(c); });
+  re('prNoImg').addEventListener('click', () => { st._noPhoto = !st._noPhoto; drawProducts(c); });
+  re('prNew').addEventListener('click', () => openNewProductModal(c, {}, () => renderProducts(c, true)));
   re('prReload').addEventListener('click', () => renderProducts(c, true));
 
   // Joyida tahrirlash: qoldiq/tannarx/sotuv/ulgurji — o'zgartirib Enter yoki
@@ -894,6 +904,25 @@ function drawProducts(c) {
     const p = (st._all || []).find((x) => x.id === Number(b.dataset.edit));
     if (p) openProductEditModal(p, () => drawProducts(c));
   }));
+}
+
+// Bo'limlar (kategoriyalar) keshi — tahrir modali va filtr ishlatadi.
+let _catCache = null;
+async function loadCats(force) {
+  if (_catCache && !force) return _catCache;
+  const r = await api.getCategories();
+  _catCache = (r.ok && r.categories) ? r.categories : [];
+  return _catCache;
+}
+
+// Jadvaldagi kichik rasm. `own_photo` — serverdan keladi: rasm AYNAN shu
+// tovar uchun olinganmi yoki internetdan olingan umumiy rasmmi.
+function prodThumb(p) {
+  const u = (p.image_url || '').trim();
+  if (!u) return '<span class="np-th np-no" title="Rasm yo\'q">📷</span>';
+  return `<img class="np-th${p.own_photo ? '' : ' umumiy'}" src="${esc(srvUrl(u))}" alt="" loading="lazy"` +
+         ` title="${p.own_photo ? 'O\'z suratimiz' : 'Umumiy rasm — almashtirish kerak'}"` +
+         ` onerror="this.style.visibility='hidden'">`;
 }
 
 // Tovarning shtrix-kodlari — massiv (eski yakka `barcode` bilan ham mos)
@@ -1023,9 +1052,36 @@ function openProductEditModal(p, onSaved) {
           <div><label class="np-l">Yetkazib beruvchi</label>
             <select id="peSupplier" class="np-inp"><option value="0">— biriktirilmagan —</option>${supOptions(p.supplier_id)}</select></div>
         </div>
+        <div class="np-2">
+          <div><label class="np-l">Bo'lim (kategoriya)</label>
+            <select id="peCat" class="np-inp"><option value="0">— belgilanmagan —</option></select></div>
+          <div><label class="np-l">Chiroyli nom <small>— mijozga shu ko'rinadi</small></label>
+            <input id="peDisp" class="np-inp" type="text" value="${esc(p.display_name || '')}"
+                   placeholder="${esc(p.name || '')}"></div>
+        </div>
+        <label class="np-l">Tavsif</label>
+        <textarea id="peDesc" class="np-inp" rows="2"
+                  placeholder="Mijozga ko'rinadigan qisqa tavsif">${esc(p.description || '')}</textarea>
+        <label class="np-l">Rasm</label>
+        <div class="pe-img" id="peImgBox">
+          ${p.image_url
+            ? `<img src="${esc(srvUrl(p.image_url))}" alt="" id="peImg"
+                    onerror="this.style.visibility='hidden'">`
+            : '<div class="pe-img-no" id="peImg">📷</div>'}
+          <div class="pe-img-side">
+            <div class="pe-img-st" id="peImgSt">${p.image_url
+              ? (p.own_photo ? '✅ O\'z suratimiz' : '⚠️ Umumiy rasm — almashtirgan ma\'qul')
+              : 'Rasm yo\'q'}</div>
+            <button class="btn-soft ghost" id="peImgPick">📷 Rasm tanlash</button>
+            <div class="np-hint">Faylni shu yerga tashlasangiz ham bo'ladi.
+              Server fonni kesib, do'kon uslubiga keltiradi (10–60 soniya).</div>
+          </div>
+        </div>
         <div id="peMsg" class="px-msg"></div>
       </div>
       <div class="np-foot">
+        <button class="btn-soft ghost danger-txt" id="peDel">🗑 O'chirish</button>
+        <span style="flex:1"></span>
         <button class="btn-soft ghost" id="peCancel">Bekor</button>
         <button class="btn-soft" id="peSave">Saqlash</button>
       </div>
@@ -1038,6 +1094,63 @@ function openProductEditModal(p, onSaved) {
   ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
   const peBc = bcChips('peBcWrap', 'peBarcode', prodCodes(p));
   re('peName').focus();
+
+  // Bo'limlar ro'yxati (bir marta yuklanadi, keshlanadi)
+  loadCats().then((cats) => {
+    const sel = re('peCat');
+    if (!sel) return;
+    sel.innerHTML = '<option value="0">— belgilanmagan —</option>' +
+      cats.map((x) => `<option value="${x.id}"${Number(p.category_id) === x.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  });
+
+  // Rasm: tugma orqali tanlash yoki ustiga tashlash
+  const box = re('peImgBox');
+  const yukla = async (file) => {
+    const st = re('peImgSt');
+    if (st) st.textContent = '⏳ Yuklanmoqda…';
+    let buf;
+    try { buf = new Uint8Array(await file.arrayBuffer()); }
+    catch (_) { if (st) st.textContent = '⚠️ Faylni o\'qib bo\'lmadi'; return; }
+    const r = await api.productImage(p.id, buf, file.name || 'photo.jpg');
+    if (!r.ok) {
+      if (r.authRequired) return doLogout();
+      if (st) st.textContent = '⚠️ ' + (r.error || 'Yuklanmadi');
+      return;
+    }
+    p.image_url = r.image_url || p.image_url;
+    p.own_photo = true;
+    const img = re('peImg');
+    const yangi = srvUrl(p.image_url) + '?t=' + Date.now();
+    if (img && img.tagName === 'IMG') { img.src = yangi; img.style.visibility = 'visible'; }
+    else if (img) img.outerHTML = `<img src="${esc(yangi)}" alt="" id="peImg">`;
+    if (st) st.textContent = '✅ O\'z suratimiz';
+    invalidateProducts();
+    toast('✅ Surat qo\'yildi');
+  };
+  re('peImgPick').addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; if (f) yukla(f); });
+    inp.click();
+  });
+  box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('np-drop'); });
+  box.addEventListener('dragleave', () => box.classList.remove('np-drop'));
+  box.addEventListener('drop', (e) => {
+    e.preventDefault(); box.classList.remove('np-drop');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) yukla(f);
+  });
+
+  re('peDel').addEventListener('click', async () => {
+    if (!confirm(`«${p.name}» o'chirilsinmi?\n\nTovar katalogdan olib tashlanadi ` +
+                 `(savdo tarixi saqlanib qoladi).`)) return;
+    const r = await api.productDelete(p.id);
+    if (!r.ok) { if (r.authRequired) return doLogout(); toast('⚠️ ' + (r.error || 'O\'chmadi')); return; }
+    invalidateProducts();
+    close();
+    toast('🗑 O\'chirildi');
+    if (onSaved) onSaved();
+  });
   re('peSave').addEventListener('click', async () => {
     const name = re('peName').value.trim();
     const msg = re('peMsg');
@@ -1053,6 +1166,9 @@ function openProductEditModal(p, onSaved) {
       sell_price_sum: Math.max(0, parseFloat(re('peSell').value) || 0),
       wholesale_sum: Math.max(0, parseFloat(re('peWhs').value) || 0),
       supplier_id: parseInt(re('peSupplier').value, 10) || 0,
+      category_id: parseInt(re('peCat').value, 10) || 0,
+      display_name: re('peDisp').value.trim(),
+      description: re('peDesc').value.trim(),
     });
     const btn = re('peSave'); btn.disabled = true; btn.textContent = 'Saqlanyapti…';
     const r = await api.productSave(payload);
@@ -2817,7 +2933,7 @@ async function pxSave(c) {
 
 // Yangi tovar yaratish modal'i (avtomat SKU, kerakmas maydonlarsiz)
 // prefill — AI prixod review'dan keladi: { name, cost, sell, unit, qty }
-function openNewProductModal(c, prefill) {
+function openNewProductModal(c, prefill, onCreated) {
   prefill = prefill || {};
   const old = document.getElementById('npOverlay');
   if (old) old.remove();
@@ -2895,9 +3011,11 @@ function openNewProductModal(c, prefill) {
     const np = r.product || { id: r.id, name, unit: prod.unit, qty: 0, barcode: prod.barcode, barcodes: codes,
       cost_price_sum: prod.cost_price_sum, sell_price_sum: prod.sell_price_sum, wholesale_sum: prod.wholesale_sum };
     if (Number(np.id) > 0) S.nextSku = Number(np.id) + 1;   // keyingi modal to'g'ri raqam ko'rsatsin
-    renderPrixod._items.push(np);     // keshga qo'shamiz
+    if (Array.isArray(renderPrixod._items)) renderPrixod._items.push(np);
     invalidateProducts();             // umumiy katalog keshi ham yangilansin
     close();
+    // Tovarlar ekranidan chaqirilgan bo'lsa — prixod jadvaliga tegmaymiz
+    if (onCreated) { toast(`✓ «${name}» yaratildi (SKU ${np.id})`); onCreated(np); return; }
     pxAddLine(np.id, c);              // qabul qilish jadvaliga qator sifatida qo'shamiz
     const newLn = renderPrixod._lines.find((l) => l.id === np.id);
     if (newLn) {
@@ -3653,7 +3771,7 @@ async function renderCategories(c) {
     if (!name) return;
     const res = await api.categorySave({ id: 0, name });
     if (!res.ok) { if (res.authRequired) return doLogout(); toast('⚠️ ' + (res.error || 'Saqlanmadi')); return; }
-    toast('✅ Qo\'shildi'); renderCategories(c);
+    toast('✅ Qo\'shildi'); _catCache = null; renderCategories(c);
   };
   document.getElementById('catAdd').addEventListener('click', add);
   document.getElementById('catNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
@@ -3843,6 +3961,332 @@ function renderExport(c) {
     msg.innerHTML = `<span style="color:var(--green)">✅ Saqlandi: ${esc(r.path || '')}</span>`;
     toast('✅ Hisobot saqlandi');
   }));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🧐 MASLAHATLAR — mijoz Mini App'idagi savol-javob kartochkalari
+// ════════════════════════════════════════════════════════════════════════════
+// Mijoz «qaysi bo'yoqni olay?» deb so'raganda ko'rsatiladigan tayyor
+// javoblar. Qoralamani AI yozib beradi (internetdan ham qaraydi), lekin
+// MIJOZGA faqat admin tasdiqlagani (status=published) chiqadi — AI o'zidan
+// narx yoki tavsiya to'qib qo'ymasin.
+async function renderGuides(c) {
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const r = await api.getGuides();
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
+    return;
+  }
+  renderGuides._paint = r.paint_types || {};
+  const rows = r.guides || [];
+  const pub = rows.filter((x) => x.status === 'published').length;
+  c.innerHTML = `
+    <div class="filters">
+      <button class="btn-soft" id="gNew">➕ Yangi savol</button>
+      <button class="btn-soft ghost" id="gReload">🔄 Yangilash</button>
+    </div>
+    <div class="sum-chips" style="margin-bottom:14px">
+      <div class="sum-chip"><div class="v">${int(rows.length)}</div><div class="l">Jami savol</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--green)">${int(pub)}</div><div class="l">Mijozga ko'rinadi</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--gold)">${int(rows.length - pub)}</div><div class="l">Qoralama</div></div>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Savol</th><th>Javob</th><th>Holat</th><th style="width:110px"></th></tr></thead>
+      <tbody>${rows.length ? rows.map((g) => `<tr>
+          <td><b>${esc(g.question)}</b>${g.calc ? `<div class="muted" style="font-size:12px">🧮 ${esc((renderGuides._paint || {})[g.calc] || g.calc)} kalkulyatori</div>` : ''}</td>
+          <td class="g-ans">${esc((g.answer || '').slice(0, 160))}${(g.answer || '').length > 160 ? '…' : ''}
+            ${(g.answer || '').includes('[TEKSHIRING]') ? '<span class="np-tag">tekshirish kerak</span>' : ''}</td>
+          <td>${g.status === 'published'
+              ? '<span class="pill green">Nashr</span>'
+              : '<span class="pill">Qoralama</span>'}</td>
+          <td class="num">
+            <button class="btn-mini" data-gedit="${g.id}" title="Tahrirlash">✏️</button>
+            <button class="btn-mini danger" data-gdel="${g.id}" title="O'chirish">🗑</button>
+          </td>
+        </tr>`).join('')
+        : `<tr><td colspan="4"><div class="chart-empty">Hali savol yo'q — «Yangi savol» bilan boshlang</div></td></tr>`}</tbody>
+    </table></div>`;
+  document.getElementById('gNew').addEventListener('click', () => guideModal({}, c));
+  document.getElementById('gReload').addEventListener('click', () => renderGuides(c));
+  c.querySelectorAll('[data-gedit]').forEach((b) => b.addEventListener('click', () =>
+    guideModal(rows.find((x) => x.id === Number(b.dataset.gedit)) || {}, c)));
+  c.querySelectorAll('[data-gdel]').forEach((b) => b.addEventListener('click', async () => {
+    const g = rows.find((x) => x.id === Number(b.dataset.gdel)) || {};
+    if (!confirm(`«${g.question || ''}» o'chirilsinmi?`)) return;
+    const res = await api.guideDelete(g.id);
+    if (!res.ok) { if (res.authRequired) return doLogout(); toast('⚠️ ' + (res.error || 'O\'chmadi')); return; }
+    toast('🗑 O\'chirildi'); renderGuides(c);
+  }));
+}
+
+function guideModal(g, c) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const paint = renderGuides._paint || {};
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal wide">
+      <div class="np-head"><span>${g.id ? '✏️ Maslahatni tahrirlash' : '➕ Yangi savol'}</span>
+        <button class="np-x" id="gX">✕</button></div>
+      <div class="np-body">
+        <label class="np-l">Mijoz savoli *</label>
+        <input id="gQ" class="np-inp" type="text" maxlength="200" value="${esc(g.question || '')}"
+               placeholder="Masalan: Devorga qanday bo'yoq olsam bo'ladi?">
+        <div class="np-2">
+          <div><label class="np-l">Qaysi tovarlar <small>— qidiruv so'zi</small></label>
+            <input id="gQuery" class="np-inp" type="text" maxlength="200" value="${esc(g.query || '')}"
+                   placeholder="masalan: emal"></div>
+          <div><label class="np-l">Kalkulyator</label>
+            <select id="gCalc" class="np-inp"><option value="">— yo'q —</option>
+              ${Object.keys(paint).map((k) => `<option value="${esc(k)}"${g.calc === k ? ' selected' : ''}>${esc(paint[k])}</option>`).join('')}
+            </select></div>
+        </div>
+        <label class="np-l">Javob <small>— mijoz shuni o'qiydi</small></label>
+        <textarea id="gA" class="np-inp" rows="10" placeholder="Javobni yozing yoki AI qoralama yozsin">${esc(g.answer || '')}</textarea>
+        <div class="np-hint">AI qoralamasida <b>[TEKSHIRING]</b> belgisi qolsa, nashr qilib
+          bo'lmaydi — o'sha joyni tekshirib, belgini o'chiring.</div>
+        <div id="gMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="gDraft">✨ AI qoralama yozsin</button>
+        <span style="flex:1"></span>
+        <button class="btn-soft ghost" id="gCancel">Bekor</button>
+        <button class="btn-soft ghost" id="gSaveDraft">Qoralama saqlash</button>
+        <button class="btn-soft" id="gPublish">Nashr qilish</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('gX').addEventListener('click', close);
+  re('gCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  re('gQ').focus();
+
+  re('gDraft').addEventListener('click', async () => {
+    const msg = re('gMsg');
+    if (!re('gQ').value.trim()) { msg.className = 'px-msg err'; msg.textContent = 'Avval savolni yozing'; return; }
+    const btn = re('gDraft'); btn.disabled = true; btn.textContent = '✨ AI yozyapti… (30–60 s)';
+    const r = await api.guideDraft({ id: g.id || 0, question: re('gQ').value.trim(),
+                                     query: re('gQuery').value.trim(), calc: re('gCalc').value });
+    btn.disabled = false; btn.textContent = '✨ AI qoralama yozsin';
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'AI javob bermadi'; return; }
+    re('gA').value = r.answer || '';
+    msg.className = 'px-msg'; msg.textContent = 'Qoralama tayyor — o\'qib chiqing va tahrirlang.';
+  });
+
+  const saqla = async (status) => {
+    const msg = re('gMsg');
+    const q = re('gQ').value.trim();
+    if (!q) { msg.className = 'px-msg err'; msg.textContent = 'Savolni yozing'; return; }
+    const r = await api.guideSave({ id: g.id || 0, question: q, answer: re('gA').value.trim(),
+                                    query: re('gQuery').value.trim(), calc: re('gCalc').value, status });
+    if (!r.ok) { if (r.authRequired) return doLogout(); msg.className = 'px-msg err'; msg.textContent = r.error || 'Saqlanmadi'; return; }
+    close();
+    toast(status === 'published' ? '✅ Nashr qilindi — mijozga ko\'rinadi' : '💾 Qoralama saqlandi');
+    renderGuides(c);
+  };
+  re('gSaveDraft').addEventListener('click', () => saqla('draft'));
+  re('gPublish').addEventListener('click', () => saqla('published'));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 📄 YORLIQ O'QITISH — zavod yo'riqnomasidan o'zbekcha kartochka
+// ════════════════════════════════════════════════════════════════════════════
+// Tovar qutisidagi yozuvni (ko'pincha ruscha/xitoycha) suratga olib yuborasiz,
+// AI o'qib o'zbekchaga o'giradi va kartochka QORALAMASINI tayyorlaydi. Mijozga
+// esa faqat SIZ TASDIQLAGANI chiqadi — AI o'zidan fakt to'qib qo'ymasin.
+// Tasdiqlangach yorliq suratlari serverdan o'chadi (ma'lumot matn bo'lib qoladi).
+async function renderLabels(c) {
+  const st = renderLabels;
+  if (st._pid) return labelCard(c, st._pid);
+  c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
+  const [lst, prods] = await Promise.all([api.getLabels(), fetchAllProducts()]);
+  if (!lst.ok) {
+    if (lst.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">Server xatosi: ${esc(lst.error || '')}</div>`;
+    return;
+  }
+  st._prods = (prods.ok && prods.items) || [];
+  const rows = lst.items || [];
+  const tasdiq = rows.filter((x) => x.status === 'approved').length;
+  c.innerHTML = `
+    <div class="filters" style="align-items:flex-end">
+      <div class="filter" style="flex:1;min-width:260px"><label>Tovarni toping (nomi yoki SKU)</label>
+        <input id="lbSearch" type="text" placeholder="Yorliq o'qitiladigan tovar..." autocomplete="off"></div>
+      <button class="btn-soft ghost" id="lbReload">🔄 Yangilash</button>
+    </div>
+    <div id="lbFound"></div>
+    <div class="sum-chips" style="margin:12px 0">
+      <div class="sum-chip"><div class="v">${int(rows.length)}</div><div class="l">O'qitilgan tovar</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--green)">${int(tasdiq)}</div><div class="l">Tasdiqlangan</div></div>
+      <div class="sum-chip"><div class="v" style="color:var(--gold)">${int(rows.length - tasdiq)}</div><div class="l">Qoralama</div></div>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>SKU</th><th>Tovar</th><th>Holat</th><th class="num">Baho</th><th>Yangilangan</th><th style="width:90px"></th></tr></thead>
+      <tbody>${rows.length ? rows.map((x) => `<tr>
+          <td>${esc(x.pid)}</td><td>${esc(x.name)}</td>
+          <td>${x.status === 'approved' ? '<span class="pill green">Tasdiqlangan</span>' : '<span class="pill">Qoralama</span>'}</td>
+          <td class="num">${x.rating ? '⭐ ' + x.rating : '<span class="muted">—</span>'}</td>
+          <td>${esc(x.updated_at || '')}</td>
+          <td class="num"><button class="btn-mini" data-lbopen="${x.pid}">Ochish ›</button></td>
+        </tr>`).join('')
+        : `<tr><td colspan="6"><div class="chart-empty">Hali yorliq o'qitilmagan — tepadan tovarni toping</div></td></tr>`}</tbody>
+    </table></div>`;
+  const re = (id) => document.getElementById(id);
+  re('lbReload').addEventListener('click', () => renderLabels(c));
+  c.querySelectorAll('[data-lbopen]').forEach((b) => b.addEventListener('click', () => {
+    st._pid = Number(b.dataset.lbopen); labelCard(c, st._pid);
+  }));
+  let t;
+  re('lbSearch').addEventListener('input', (e) => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const q = e.target.value.trim().toLowerCase();
+      const box = re('lbFound');
+      if (!q) { box.innerHTML = ''; return; }
+      const hits = (st._prods || []).filter((p) =>
+        (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q)).slice(0, 8);
+      box.innerHTML = hits.length
+        ? `<div class="lb-res">${hits.map((p) => `<button class="lb-res-row" data-lbpick="${p.id}">
+             <b>${esc(p.name)}</b><span class="muted"> · SKU ${esc(p.id)}</span></button>`).join('')}</div>`
+        : `<div class="chart-empty" style="padding:14px 0">Topilmadi</div>`;
+      box.querySelectorAll('[data-lbpick]').forEach((b) => b.addEventListener('click', () => {
+        st._pid = Number(b.dataset.lbpick); labelCard(c, st._pid);
+      }));
+    }, 250);
+  });
+}
+
+async function labelCard(c, pid) {
+  c.innerHTML = `<div class="loading">Kartochka yuklanyapti…</div>`;
+  const r = await api.getLabel(pid);
+  if (!r.ok) {
+    if (r.authRequired) return doLogout();
+    c.innerHTML = `<div class="err-box">${esc(r.error || 'Ochilmadi')}</div>`;
+    return;
+  }
+  const p = r.product || {};
+  const facts = r.facts || {};
+  const fields = r.fields || [];
+  const specs = r.specs || [];
+  c.innerHTML = `
+    <div class="filters">
+      <button class="btn-soft ghost" id="lbBack">‹ Ro'yxat</button>
+      <div class="filter"><label>Tovar</label><div class="cam-count">${esc(p.name || ('#' + pid))}</div></div>
+      <span style="flex:1"></span>
+      ${r.status === 'approved' ? '<span class="pill green">Tasdiqlangan</span>' : '<span class="pill">Qoralama</span>'}
+    </div>
+    <div class="card">
+      <div class="card-title">📷 Yorliq suratlari</div>
+      <div class="lb-photos" id="lbPhotos">
+        ${(r.photos || []).map((d) => `<img src="${d}" alt="">`).join('') ||
+          '<div class="muted">Hali surat yuklanmagan — qutidagi yozuvni suratga olib yuklang.</div>'}
+      </div>
+      <div class="filters" style="margin:12px 0 0">
+        <button class="btn-soft" id="lbPick">📷 Surat tanlash (bir nechta bo'lishi mumkin)</button>
+        <button class="btn-soft ghost" id="lbRead"${r.has_ocr ? '' : ' disabled'}>🤖 Qayta o'qitish</button>
+      </div>
+      <div class="np-hint">Rasmni shu kartaning ustiga tashlasangiz ham bo'ladi.
+        AI o'qishi 30–90 soniya oladi.</div>
+      <div id="lbMsg" class="px-msg"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📋 Kartochka <small class="muted">— mijoz shuni o'qiydi</small></div>
+      ${fields.map((f) => `
+        <label class="np-l">${esc(f.label)}</label>
+        <textarea class="np-inp lb-f" data-k="${esc(f.k)}" rows="2">${esc(facts[f.k] || '')}</textarea>`).join('')}
+      <div class="np-2" style="margin-top:12px">
+        <div><label class="np-l">Bo'lim (AI taxmini)</label>
+          <input id="lbCat" class="np-inp" type="text" value="${esc(r.category || '')}"
+                 list="lbCats"><datalist id="lbCats">${(r.categories || []).map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+        <div><label class="np-l">Do'kon bahosi (0–5)</label>
+          <input id="lbRating" class="np-inp" type="number" min="0" max="5" value="${int(r.rating || 0)}"></div>
+      </div>
+      <label class="np-l">Baho izohi</label>
+      <input id="lbNote" class="np-inp" type="text" maxlength="300" value="${esc(r.rating_note || '')}">
+      <label class="np-check" style="margin-top:10px"><input type="checkbox" id="lbApplyCat" checked>
+        <span>Bo'limni tovarga ham biriktirish</span></label>
+      ${specs.length ? `<div class="np-hint" style="margin-top:10px">Qo'shimcha xossalar:
+        ${specs.map((x) => `<b>${esc(x.k)}</b>: ${esc(x.v)}`).join(' · ')}</div>` : ''}
+    </div>
+    <div class="filters">
+      <button class="btn-soft ghost" id="lbDraft">💾 Qoralama saqlash</button>
+      <button class="btn-soft" id="lbApprove">✅ Tasdiqlash (mijozga chiqsin)</button>
+    </div>`;
+
+  const re = (id) => document.getElementById(id);
+  re('lbBack').addEventListener('click', () => { renderLabels._pid = 0; renderLabels(c); });
+
+  let tanlangan = [];
+  const oqi = async () => {
+    const msg = re('lbMsg');
+    msg.className = 'px-msg';
+    msg.textContent = '🤖 AI yorliqni o\'qiyapti… (30–90 soniya)';
+    const files = [];
+    for (const f of tanlangan) {
+      files.push({ bytes: new Uint8Array(await f.arrayBuffer()), name: f.name || 'yorliq.jpg' });
+    }
+    const res = await api.labelRead(pid, files);
+    tanlangan = [];
+    if (!res.ok) {
+      if (res.authRequired) return doLogout();
+      msg.className = 'px-msg err'; msg.textContent = res.error || 'O\'qilmadi';
+      return;
+    }
+    toast('✅ Yorliq o\'qildi — tekshirib tasdiqlang');
+    labelCard(c, pid);                 // yangi qoralama bilan qayta chizamiz
+  };
+  re('lbPick').addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+    inp.addEventListener('change', () => {
+      tanlangan = Array.from(inp.files || []).slice(0, 6);
+      if (tanlangan.length) oqi();
+    });
+    inp.click();
+  });
+  re('lbRead').addEventListener('click', () => { tanlangan = []; oqi(); });
+  const box = re('lbPhotos');
+  const card = box.closest('.card');
+  card.addEventListener('dragover', (e) => { e.preventDefault(); card.classList.add('np-drop'); });
+  card.addEventListener('dragleave', () => card.classList.remove('np-drop'));
+  card.addEventListener('drop', (e) => {
+    e.preventDefault(); card.classList.remove('np-drop');
+    tanlangan = Array.from((e.dataTransfer && e.dataTransfer.files) || []).slice(0, 6);
+    if (tanlangan.length) oqi();
+  });
+
+  const saqla = async (status) => {
+    const msg = re('lbMsg');
+    const facts2 = {};
+    c.querySelectorAll('.lb-f').forEach((t) => { facts2[t.dataset.k] = t.value.trim(); });
+    const res = await api.labelSave({
+      pid, facts: facts2, specs,
+      category: re('lbCat').value.trim(),
+      apply_category: re('lbApplyCat').checked,
+      rating: parseInt(re('lbRating').value, 10) || 0,
+      rating_note: re('lbNote').value.trim(),
+      status,
+    });
+    if (!res.ok) {
+      if (res.authRequired) return doLogout();
+      msg.className = 'px-msg err'; msg.textContent = res.error || 'Saqlanmadi';
+      return;
+    }
+    if (status === 'approved') {
+      toast('✅ Tasdiqlandi' + (res.reposted ? ' — kanalga qayta e\'lon qilindi' : ''));
+      invalidateProducts();
+      renderLabels._pid = 0;
+      renderLabels(c);
+    } else {
+      msg.className = 'px-msg'; msg.textContent = '💾 Qoralama saqlandi';
+      toast('💾 Saqlandi');
+    }
+  };
+  re('lbDraft').addEventListener('click', () => saqla('draft'));
+  re('lbApprove').addEventListener('click', () => saqla('approved'));
 }
 
 boot();

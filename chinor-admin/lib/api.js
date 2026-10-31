@@ -63,6 +63,8 @@ module.exports = {
   // Yangi tovar (id=0 → avtomat SKU) yoki mavjudini tahrirlash.
   productSave: (base, token, prod) =>
     req(base, '/api/product/save', { method: 'POST', token, body: prod, timeout: 20000 }),
+  productDelete: (base, token, id) =>
+    req(base, '/api/product/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
   clients: (base, token) =>
     req(base, '/api/clients', { token, timeout: 20000 }),
   admins: (base, token) =>
@@ -236,6 +238,52 @@ module.exports = {
     } catch (e) {
       return { ok: false, status: 0, data: { ok: false,
         error: e.name === 'AbortError' ? 'Vaqt tugadi' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // ── Maslahatlar (mijozlar uchun savol-javob) ────────────────────────────────
+  guides: (base, token) =>
+    req(base, '/api/admin/guides', { token, timeout: 20000 }),
+  guideSave: (base, token, payload) =>
+    req(base, '/api/admin/guide/save', { method: 'POST', token, body: payload, timeout: 20000 }),
+  guideDelete: (base, token, id) =>
+    req(base, '/api/admin/guide/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
+  // AI qoralama — internetdan ham qaraydi, sekin bo'lishi mumkin.
+  guideDraft: (base, token, payload) =>
+    req(base, '/api/admin/guide/draft', { method: 'POST', token, body: payload, timeout: 120000 }),
+
+  // ── Yorliq o'qitish (zavod yo'riqnomasi → kartochka) ────────────────────────
+  labels: (base, token) =>
+    req(base, '/api/admin/labels', { token, timeout: 25000 }),
+  label: (base, token, pid) =>
+    req(base, `/api/admin/label?pid=${Number(pid) || 0}`, { token, timeout: 25000 }),
+  labelSave: (base, token, payload) =>
+    req(base, '/api/admin/label/save', { method: 'POST', token, body: payload, timeout: 30000 }),
+  // Yorliq suratlari → AI o'qiydi. Bir nechta rasm, OCR + tarjima — sekin.
+  labelRead: async (base, token, pid, files) => {
+    const url = String(base).replace(/\/+$/, '') + '/api/admin/label/read';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 300000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const fd = new FormData();
+      fd.append('pid', String(Number(pid) || 0));
+      (files || []).forEach((f, i) => {
+        const u8 = f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes);
+        fd.append('photo', new Blob([u8]), f.name || `yorliq${i}.jpg`);
+      });
+      const res = await fetch(url, { method: 'POST', headers, body: fd, signal: ctrl.signal });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { data = { ok: false, error: 'Serverdan noto\'g\'ri javob', raw: text.slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi (AI sekin javob berdi)' : String(e.message || e) } };
     } finally {
       clearTimeout(timer);
     }
