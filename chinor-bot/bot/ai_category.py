@@ -31,7 +31,10 @@ OTHER = "Boshqalar"
 # o'sha zahoti yaratiladi). Ro'yxat `marketplace/categorize.py` dagi bilan bir
 # xil — ikkalasi bir do'konning bo'limlari.
 DEFAULT_CATEGORIES = [
-    "Elektr asboblar", "Elektr mollari", "Santexnika", "Bo'yoq va lak",
+    "Elektr asboblar", "Elektr mollari", "Santexnika",
+    # Quvurlar santexnikadan AJRATILDI: do'konda ikki xil tizim bor va ular
+    # bir-biriga umuman mos kelmaydi — xaridor ham, kassa ham adashmasin.
+    "Toza suv quvurlari", "Kanalizatsiya quvurlari", "Bo'yoq va lak",
     "Qurilish aralashmasi", "Sochma material", "Mahkamlagichlar", "Asboblar",
     "Eshik va deraza", "Isitish va gaz", "Maishiy texnika", "Oshxona buyumlari",
     "Uy-ro'zg'or", "Tozalash vositalari", "Shaxsiy parvarish",
@@ -44,7 +47,11 @@ DEFAULT_CATEGORIES = [
 HINTS = {
     "Elektr asboblar": "drel, bolgarka, perforator, svarka — tokda ishlaydigan asbob",
     "Elektr mollari": "sim, kabel, rozetka, lampa, avtomat, schyotchik",
-    "Santexnika": "kran, truba, unitaz, smesitel, shlanka, sifon",
+    "Santexnika": "kran, unitaz, smesitel, shlanka, sifon, rakovina",
+    "Toza suv quvurlari": "RTR/PPR — OQ plastmas quvur va fitinglar, payvandlab ulanadi "
+                          "(mufta, burchak, troynik, amerikanka, ushastik)",
+    "Kanalizatsiya quvurlari": "RTP/PVX — KULRANG quvur va fitinglar, rozetkasida rezina "
+                               "halqa bor (oqava: burchak, troynik, revizia)",
     "Bo'yoq va lak": "kraska, emal, lak, gruntovka, rastvoritel, valik, cho'tka",
     "Qurilish aralashmasi": "sement, gips, shpaklovka, ELIM/kley, plitka yelimi, penoplast, montaj penasi",
     "Sochma material": "qum, shag'al, g'isht, keramzit",
@@ -178,6 +185,15 @@ def suggest(categories: list, name: str = "", image_path: str = "") -> str:
     Bloklovchi (tarmoqqa chiqadi): aiohttp ichida executor'da chaqiring.
     """
     from bot import ai_engine
+    from bot import santex_rules
+
+    # 1) QOIDA — AI'dan oldin. Quvur-fitinglar nomi qat'iy yoziladi
+    # («RTR 25 Mufta»), shuning uchun ularni taxmin qilish shart emas:
+    # rasm o'lchamni baribir ko'rsatmaydi, nom esa ko'rsatadi.
+    ruled = santex_rules.category(name)
+    if ruled:
+        logger.info("🏷 qoida bo'yicha: %s → %s", (name or "")[:40], ruled)
+        return ruled
 
     cats = full_list(categories)
     # Javobda tanish bo'lim nomi bo'lishi shart — bo'lmasa model bema'ni

@@ -1,8 +1,8 @@
-version: 1.3.0
+version: 1.4.0
 files:
-  - url: Chinor-mac-1.3.0.zip
-    sha512: aW5iY7infL9M9xsneAfJFBEk/CbO2OeSvVs4C+mRGM0C2OVNsO6dHyXABrSQWepB1CNNypJgG3w+roLVZcta9g==
-    size: 96247704
-path: Chinor-mac-1.3.0.zip
-sha512: aW5iY7infL9M9xsneAfJFBEk/CbO2OeSvVs4C+mRGM0C2OVNsO6dHyXABrSQWepB1CNNypJgG3w+roLVZcta9g==
-releaseDate: '2026-10-31T14:18:20.282Z'
+  - url: Chinor-mac-1.4.0.zip
+    sha512: fb8VegNzjHFsZ9uwb2d32OsTctM1gAfUGVm6Qawdom9IVmz+949PmW8Y59iwk5IqE57aR1CQwJx0TsPoN2Z/Qg==
+    size: 96256051
+path: Chinor-mac-1.4.0.zip
+sha512: fb8VegNzjHFsZ9uwb2d32OsTctM1gAfUGVm6Qawdom9IVmz+949PmW8Y59iwk5IqE57aR1CQwJx0TsPoN2Z/Qg==
+releaseDate: '2026-10-31T16:41:47.044Z'
