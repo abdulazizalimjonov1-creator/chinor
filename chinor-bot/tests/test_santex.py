@@ -87,6 +87,10 @@ check("chuyan o'tkazgich — kanalizatsiya",
       R.category("RTR perexod chugunniy 50/75") == "Kanalizatsiya quvurlari")
 check("Miramax ma'lumoti", "O'zbekistonda" in R.brand_text("mpp"))
 
+check("chuyan TOVA quvur emas", R.category("Skavarodka chugunniy") == "", R.category("Skavarodka chugunniy"))
+check("chuyan manjet — kanalizatsiya",
+      R.category("Rezina Chugun  uchun manjet 100") == "Kanalizatsiya quvurlari")
+
 print("\n2) Bo'lim:")
 check("RTR → toza suv", R.category("RTR 25 Mufta") == "Toza suv quvurlari")
 check("RTP → kanalizatsiya", R.category("RTP 50 Atvot") == "Kanalizatsiya quvurlari")

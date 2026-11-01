@@ -2088,6 +2088,76 @@ async def api_product_categorize(request: web.Request):
                               "image_sent": bool(img)})
 
 
+@ROUTES.post("/api/admin/pipes/categorize")
+async def api_pipes_categorize(request: web.Request):
+    """Quvur-fitinglarni bo'limga biriktiradi — AI'siz, qoida bo'yicha.
+
+    Nomi «RTR/RTP/MPP» bilan boshlangan har bir tovar `santex_rules` qoidasi
+    orqali «Toza suv quvurlari» yoki «Kanalizatsiya quvurlari» bo'limiga
+    tushadi (MPP da bo'lim diametr bilan aniqlanadi).
+
+    `dry: true` (standart) — hech narsa o'zgarmaydi, faqat REJA qaytadi:
+    nechta tovar, qaysi bo'limga. Haqiqatan biriktirish uchun
+    `{"dry": false}` yuboriladi. Qayta chaqirilsa zarar yo'q: allaqachon
+    to'g'ri turgan tovarlar o'tkazib yuboriladi."""
+    from database.channel_db import db as _db
+    from bot import santex_rules
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    dry = body.get("dry", True) is not False
+
+    prods = await _db.get_all_products(active_only=True)
+    rows = await _db.get_all_categories()
+    by_name = {(r.get("name") or "").strip().lower(): r["id"] for r in rows}
+
+    plan, skip = [], 0
+    for p in prods:
+        cat = santex_rules.category(p.get("name", "") or "")
+        if not cat:
+            continue
+        cid = by_name.get(cat.lower())
+        if cid and int(p.get("category_id") or 0) == cid:
+            skip += 1                      # allaqachon joyida
+            continue
+        plan.append({"id": p["id"], "name": (p.get("name") or "").strip(),
+                     "category": cat})
+
+    by_cat = {}
+    for x in plan:
+        by_cat[x["category"]] = by_cat.get(x["category"], 0) + 1
+
+    if dry:
+        return web.json_response({
+            "ok": True, "dry": True, "would_change": len(plan),
+            "already_ok": skip, "by_category": by_cat,
+            "sample": plan[:15],
+        })
+
+    done = 0
+    for x in plan:
+        cid = by_name.get(x["category"].lower())
+        if not cid:
+            cid = await _db.add_category(x["category"])
+            if not cid:
+                continue
+            by_name[x["category"].lower()] = cid
+        await _db.set_product_category(x["id"], cid)
+        done += 1
+
+    # Katalog keshlari yangilansin — sayt va mijoz ilovasi darrov ko'rsin
+    _shop_cache["at"] = 0.0
+    try:
+        from bot import api_recommend
+        api_recommend._cache["idx"] = None
+    except Exception:
+        pass
+    logger.info("🏷 Quvurlar bo'limga biriktirildi: %s ta (%s)", done, by_cat)
+    return web.json_response({"ok": True, "dry": False, "changed": done,
+                              "already_ok": skip, "by_category": by_cat})
+
+
 @ROUTES.post("/api/product/rebrand")
 async def api_product_rebrand(request: web.Request):
     """Mavjud rasmni qayta brendlaydi (fon kesish + och yashil fon + logotip).

@@ -80,6 +80,7 @@ KINDS = [
     ("perexodnik", "Perexodnik (diametr o'tkazgich)",
      r"pere[xh]a?[o0]dnik|perexadnik|perehadnik|pere[xh]a?[o0]d\b"),
     ("klapan",     "Qaytarmas klapan (obratniy)", r"obratn\w*\s*klap\w*|klapan"),
+    ("manjet",     "Manjet (rezina halqa)", r"manjet\w*"),
     ("kran",       "Sharavoy kran",        r"shara?voy\s*kran|shar\s*kran|\bkran\b"),
     ("filtr",      "Filtr",                r"\bfiltr\b"),
     ("klipsa",     "Klipsa (mahkamlagich)", r"\bklipsa\b|\bklips\b"),
@@ -349,9 +350,11 @@ def parse(name: str) -> dict:
     length = length_of(name)
     if not kind and water == "pol":
         kind, kind_label = "turba", "Quvur (turba)"     # «Topliy pol» — o'ramdagi quvur
-    # Chuyan (chugun) o'tkazgich — har doim kanalizatsiya tarafi, nomi
-    # qaysi belgidan boshlanishidan qat'i nazar.
-    if re.search(r"chugun|chuyan", _norm(name)):
+    # Chuyan (chugun) o'tkazgich/manjet — kanalizatsiya tarafi, nomi qaysi
+    # belgidan boshlanishidan qat'i nazar. LEKIN faqat quvur qismi bo'lsa:
+    # «chugunniy skavarodka» (tova) yoki «paranit batare uchun» (radiator
+    # zichlagichi) ham «chugun» so'zini tutadi, ular quvurga aloqasiz.
+    if kind and re.search(r"chugun|chuyan", _norm(name)):
         sys_use = "kanalizatsiya"
     else:
         sys_use = _use_for(sys_key, sz["dn"])
