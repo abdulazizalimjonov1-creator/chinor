@@ -43,9 +43,10 @@ SYSTEMS = {
         "about": "Oq PPR quvur — payvandlab ulanadi, bosimli ichimlik/issiq suv uchun",
     },
     "rtp": {
-        "label": "Kanalizatsiya (RTP, PVX)",
+        "label": "Kanalizatsiya (RTP, polipropilen)",
         "category": "Kanalizatsiya quvurlari",
-        "about": "Kulrang PVX quvur — rezinka halqa bilan ulanadi, oqava (kanalizatsiya) uchun",
+        "about": "Kulrang polipropilen quvur — rezina halqa bilan ulanadi, oqava uchun. "
+                 "Qattiq PVX dan farqli, egiluvchan: urilganda va qishda yorilmaydi",
     },
 }
 
@@ -105,6 +106,70 @@ def note(name: str) -> str:
     foydalanadi: surat ayta olmaydigan narsani so'z aytib beradi."""
     d = parse(name)
     return NOTES.get((d["kind"], d["water"]), "")
+
+
+# ─── Zavod haqida ──────────────────────────────────────────────────────────
+# Manba: ishlab chiqaruvchining o'z sayti rtp.ru (rosturplast.ru shu yerga
+# yo'naltiradi) va texnik passportlar. Shu yerda YOZILGANI — tekshirilgan
+# ma'lumot; do'kon ustasining tajribasi alohida belgilangan.
+BRAND = {
+    "name": "РосТурПласт (RTP)",
+    "site": "rtp.ru",
+    "facts": [
+        "Rossiya ishlab chiqaruvchisi, muhandislik santexnikasini 2005 yildan chiqaradi",
+        "Rossiyada 4 ta zavodi bor: Yekaterinburg, Krasnodar, Novosibirsk va "
+        "Yegoryevsk (Moskva viloyati), 7 ta savdo ofisi",
+        "3500 dan ortiq mahsulot turi — quvur, fiting, latun armatura, issiq pol",
+        "Mahsulot liniyalari: ALPHA (PPR quvur va fitinglar — bizdagi «RTR»), "
+        "BETA va BETA ELITE (ichki kanalizatsiya — bizdagi «RTP»), "
+        "BETA ORANGE (ko'chadagi kanalizatsiya), SIGMA (latun), GAMMA (PND), "
+        "DELTA (PE-Xa), OMEGA (issiq pol)",
+        "Zavod kafolati 10 yil, xizmat muddati 50 yil deb ko'rsatiladi",
+        "GOST 53630-2009, 18899-2001 va 32415-2013 bo'yicha ishlab chiqariladi",
+    ],
+    # Do'kon ustasining o'z tajribasi (AI uni «zavod ma'lumoti» deb ko'rsatmasin)
+    "shop": [
+        "Kanalizatsiya quvurlari egiluvchan — shuning uchun urilganda yoki "
+        "qishda sinmaydi, yoriq ketmaydi",
+        "Toza suv quvurlarida: sovuq suvnikining ichi tekis, issiq suvnikining "
+        "ichida kulrang armatura qatlami bo'ladi",
+    ],
+}
+
+# Mahsulotning ICHKI tuzilishi — mijoz «nega qimmat / qaysi biri kerak» deb
+# so'raganda AI shuni tushuntiradi.
+STRUCTURE = {
+    "rtr": [
+        "Oq polipropilen (PP-R) quvur, maxsus payvandlagich bilan eritib "
+        "ulanadi — ulanish joyi quvurning o'zi kabi mustahkam, rezina yoki "
+        "gayka yo'q, ya'ni oqadigan joyi ham yo'q",
+        "Issiq suv va isitish uchun qatlamli (armaturali) turi ishlatiladi: "
+        "ikki qatlam polipropilen orasida shisha tolali qatlam bo'ladi. U "
+        "quvurni issiqdan cho'zilishiga yo'l qo'ymaydi — shuning uchun uzun "
+        "liniyada egilib-bukilib ketmaydi",
+        "Bosimga chidaydi (PN20/PN25), issiq suvda ham ishlaydi",
+    ],
+    "rtp": [
+        "Kulrang polipropilen quvur, rozetkasida rezina halqa bor — "
+        "payvandlash shart emas, bir-biriga kiritib ulanadi",
+        "Polipropilen qattiq PVX dan egiluvchanroq: ustiga bosilsa yoki "
+        "urilsa sinmaydi, qishda ham mo'rt bo'lib qolmaydi",
+        "Oqava issiq suvga ham chidaydi (mashina, idish yuvish suvi) va "
+        "suv oqimining shovqinini kamroq o'tkazadi",
+    ],
+}
+
+
+def brand_text(system: str = "") -> str:
+    """Zavod + tuzilish haqida qisqa ma'lumot (AI promptiga qo'shiladi)."""
+    out = [f"ISHLAB CHIQARUVCHI: {BRAND['name']} ({BRAND['site']})"]
+    out += [f"- {x}" for x in BRAND["facts"]]
+    if system in STRUCTURE:
+        out.append("MAHSULOT TUZILISHI:")
+        out += [f"- {x}" for x in STRUCTURE[system]]
+    out.append("DO'KON TAJRIBASI (zavod ma'lumoti emas):")
+    out += [f"- {x}" for x in BRAND["shop"]]
+    return "\n".join(out)
 
 
 def _norm(s: str) -> str:

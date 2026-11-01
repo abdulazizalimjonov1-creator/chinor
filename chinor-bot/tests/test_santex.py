@@ -89,6 +89,15 @@ check("sovuqda ichi tekis",
       "tekis" in R.note("Rtr 32 turba sovuq suv"), R.note("Rtr 32 turba sovuq suv"))
 check("fitingda izoh yo'q", R.note("RTR 25 Mufta") == "")
 
+print("\n6) Zavod ma'lumoti (AI promptiga ketadi):")
+bt = R.brand_text("rtp")
+check("zavod nomi", "РосТурПласт" in bt)
+check("2005 yil", "2005" in bt)
+check("4 zavod", "Yekaterinburg" in bt and "Krasnodar" in bt)
+check("kanalizatsiya tuzilishi", "egiluvchan" in bt.lower(), bt[-200:])
+check("do'kon tajribasi ajratilgan", "DO'KON TAJRIBASI" in bt)
+check("toza suvda armatura", "shisha tolali" in R.brand_text("rtr"))
+
 print()
 if _fail:
     print(f"❌ {len(_fail)} ta tekshiruv yiqildi")

@@ -50,8 +50,8 @@ HINTS = {
     "Santexnika": "kran, unitaz, smesitel, shlanka, sifon, rakovina",
     "Toza suv quvurlari": "RTR/PPR — OQ plastmas quvur va fitinglar, payvandlab ulanadi "
                           "(mufta, burchak, troynik, amerikanka, ushastik)",
-    "Kanalizatsiya quvurlari": "RTP/PVX — KULRANG quvur va fitinglar, rozetkasida rezina "
-                               "halqa bor (oqava: burchak, troynik, revizia)",
+    "Kanalizatsiya quvurlari": "RTP — KULRANG polipropilen quvur va fitinglar, rozetkasida "
+                               "rezina halqa bor (oqava: burchak, troynik, revizia)",
     "Bo'yoq va lak": "kraska, emal, lak, gruntovka, rastvoritel, valik, cho'tka",
     "Qurilish aralashmasi": "sement, gips, shpaklovka, ELIM/kley, plitka yelimi, penoplast, montaj penasi",
     "Sochma material": "qum, shag'al, g'isht, keramzit",
