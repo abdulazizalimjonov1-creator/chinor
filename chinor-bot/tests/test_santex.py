@@ -82,6 +82,13 @@ print("\n4) Rasm o'rniga NOM: bir xil surat — har xil o'lcham")
 o = [R.parse(f"Rtr {d} Polatvod")["dn"] for d in (20, 25, 40)]
 check("20/25/40 ajratildi", o == [20, 25, 40], str(o))
 
+print("\n5) Issiq/sovuq quvur izohi (surat ayta olmaydigan farq):")
+check("issiqda armatura qatlami",
+      "armatura" in R.note("RTR 32 Turba issiq suv"), R.note("RTR 32 Turba issiq suv"))
+check("sovuqda ichi tekis",
+      "tekis" in R.note("Rtr 32 turba sovuq suv"), R.note("Rtr 32 turba sovuq suv"))
+check("fitingda izoh yo'q", R.note("RTR 25 Mufta") == "")
+
 print()
 if _fail:
     print(f"❌ {len(_fail)} ta tekshiruv yiqildi")

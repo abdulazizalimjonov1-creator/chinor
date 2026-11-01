@@ -83,6 +83,30 @@ WATER = [
 ]
 
 
+# ─── Quvurni ajratish: issiq yoki sovuq ────────────────────────────────────
+# Do'kon egasining aytgani (01.11.2026): rossiya RTR quvurlarida SOVUQ
+# suvnikining ichi tekis, hech qanday chiziq yo'q; ISSIQ suvnikining esa
+# ICHIDA kulrang qatlam (shisha tolali armatura) bo'ladi. Tashqaridan
+# ikkalasi bir xil oq ko'rinadi — farq faqat quvurning KESIMIDA bilinadi.
+# Shuning uchun: ro'parasidan olingan surat issiq-sovuqni ko'rsatmaydi,
+# kesimi ko'ringan surat esa ko'rsatadi.
+NOTES = {
+    ("turba", "issiq"): "Kesimida ichkarida kulrang qatlam (shisha tolali armatura) "
+                        "ko'rinadi — issiq suv va isitish uchun",
+    ("turba", "sovuq"): "Ichi tekis, armatura qatlami yo'q — sovuq suv uchun",
+    ("turba", "pol"):   "Issiq pol konturi uchun, bobina (o'ram) bo'lib sotiladi",
+}
+
+
+def note(name: str) -> str:
+    """Tovarni ajratib turadigan qo'shimcha izoh ('' — izoh yo'q).
+
+    Mijoz kartochkasi, kanal posti va AI maslahatchi shu matndan
+    foydalanadi: surat ayta olmaydigan narsani so'z aytib beradi."""
+    d = parse(name)
+    return NOTES.get((d["kind"], d["water"]), "")
+
+
 def _norm(s: str) -> str:
     s = (s or "").lower()
     for ch in ("ʻ", "ʼ", "`", "’"):
