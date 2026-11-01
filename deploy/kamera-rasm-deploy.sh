@@ -15,7 +15,7 @@ API="${API:-https://kassa.chinorpos.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-BOT_FILES="bot/api_cams.py bot/api_photos.py bot/web_api.py bot/api_recommend.py"
+BOT_FILES="bot/api_cams.py bot/api_photos.py bot/web_api.py bot/api_recommend.py bot/santex_rules.py bot/ai_category.py bot/api_consult.py"
 
 echo "▶ 1/4  Bot fayllari → $SRV"
 # Ro'yxat TO'LIQ bo'lsin: yangi modul (api_photos.py) ko'chirilmay qolsa,
@@ -48,6 +48,8 @@ printf '   suratlar: %s  ·  rasmsizlar: %s  ·  kamera ovozi: %s  ·  sayt kata
   "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/cams/1/audio")" \
   "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/shop/catalog?limit=1")"
 echo "   (dastlabki uchtasi 401, oxirgisi 200 bo'lsa — hammasi joyida)"
+printf '   quvur qoidasi: %s\n' \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/admin/pipes/categorize")"
 echo
 echo "Qolgani telefonda:"
 echo "   • 📹 Kameralar → kamerani ochib 🔊 ni bosing, ikki barmoq bilan yaqinlashtiring"
