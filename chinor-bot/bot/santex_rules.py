@@ -42,6 +42,17 @@ SYSTEMS = {
         "category": "Toza suv quvurlari",
         "about": "Oq PPR quvur — payvandlab ulanadi, bosimli ichimlik/issiq suv uchun",
     },
+    # MPP — O'zbekiston mahsuloti (Miramax). RTR/RTP dan farqi: bitta belgi
+    # ostida HAM toza suv, HAM kanalizatsiya bor, ular DIAMETR bilan
+    # ajraladi (do'kon egasi aytgan qoida): 20/25/32/40 — suv, 50/75/100/150
+    # — kanalizatsiya. Shuning uchun MPP uchun bo'lim `category()` da
+    # o'lchamga qarab tanlanadi.
+    "mpp": {
+        "label": "Miramax (MPP, O'zbekiston)",
+        "category": "",          # o'lchamga qarab — category() hal qiladi
+        "about": "O'zbekistonda ishlab chiqarilgan (Miramax). 20–40 mm — toza suv, "
+                 "50–150 mm — kanalizatsiya",
+    },
     "rtp": {
         "label": "Kanalizatsiya (RTP, polipropilen)",
         "category": "Kanalizatsiya quvurlari",
@@ -56,13 +67,19 @@ SYSTEMS = {
 KINDS = [
     ("polotvod",   "Yarim burchak (45°)",  r"pol\s*-?\s*a[tv]+[o0]d|pol\s*-?\s*a[tv]+[o0]t|polot?vod"),
     ("otvod",      "Burchak (90°)",        r"\ba[tv]v?[o0]d\b|\ba[tv]v?[o0]t\b|\bo[tv]v?od\b"),
+    ("troynik_kos", "Troynik qiyshiq (45°)", r"tra?y?nik\s*kass?oy|kos[oy]y\s*tra?y?nik"),
     ("troynik",    "Troynik (uch tomonlama)", r"tra?y?nik|troynik|trayniq"),
+    ("reviziya",   "Reviziya (tozalash lyugi)", r"reviziya|revizia|reviz\b"),
+    ("sifon",      "Sifon",                r"\bsifon\b"),
+    ("radiator_kran", "Radiator krani",     r"radiat[ro]r?\s*kran|kran\s*radiator"),
     ("krestovina", "Krestovina (to'rt tomonlama)", r"krestovina"),
     ("amerikanka", "Amerikanka (razyomli ulagich)", r"amerika?nka|amerkanka"),
     ("ushastik",   "Ushastik (quloqli burchak)", r"ushastik|quloqli"),
     ("adapter",    "Adapter (rezbali o'tkazgich)", r"adapter|adaptor"),
     ("mufta",      "Mufta (to'g'ri ulagich)", r"\bmuftr?a\b|\bmufta\b"),
-    ("perexodnik", "Perexodnik (diametr o'tkazgich)", r"pere[xh]a?[o0]dnik|perexadnik|perehadnik"),
+    ("perexodnik", "Perexodnik (diametr o'tkazgich)",
+     r"pere[xh]a?[o0]dnik|perexadnik|perehadnik|pere[xh]a?[o0]d\b"),
+    ("klapan",     "Qaytarmas klapan (obratniy)", r"obratn\w*\s*klap\w*|klapan"),
     ("kran",       "Sharavoy kran",        r"shara?voy\s*kran|shar\s*kran|\bkran\b"),
     ("filtr",      "Filtr",                r"\bfiltr\b"),
     ("klipsa",     "Klipsa (mahkamlagich)", r"\bklipsa\b|\bklips\b"),
@@ -74,7 +91,7 @@ KINDS = [
 
 # Do'konda uchraydigan diametrlar (mm). Ro'yxat yopiq — "25/15 rezba" dagi
 # 15 ni diametr deb o'qib yubormaslik uchun.
-DIAMETERS = (16, 20, 25, 32, 40, 50, 63, 75, 90, 100, 110, 160)
+DIAMETERS = (16, 20, 25, 32, 40, 50, 63, 75, 90, 100, 110, 150, 160)
 
 # Suv turi — faqat RTR quvurlarida yoziladi.
 WATER = [
@@ -160,15 +177,48 @@ STRUCTURE = {
 }
 
 
+# MPP — O'zbekiston mahsuloti. Internetdan bu firma haqida ishonchli
+# ma'lumot topilmadi (sayt ham, katalog ham), shuning uchun bu yerda FAQAT
+# do'kon biladigan narsa yozilgan. AI o'zidan maqtov qo'shmasligi uchun
+# "tekshirilmagan" deb belgilab qo'yildi.
+BRAND_MPP = {
+    "name": "Miramax (MPP)",
+    "site": "",
+    "facts": [
+        "O'zbekistonda ishlab chiqariladi — mahalliy mahsulot",
+        "Do'konda «MPP» belgisi bilan yuritiladi",
+        "Toza suv: 20, 25, 32, 40 mm — oq PPR quvur va fitinglar",
+        "Kanalizatsiya: 50, 75, 100, 150 mm — kulrang quvur, bo'laklab "
+        "sotiladi (25, 50, 100, 200, 300 sm)",
+    ],
+    "shop": [
+        "Narxi import mahsulotdan arzonroq, shuning uchun ko'p oladilar",
+        "Sovuq suvga «Arzoni PN10» turi ham bor — bosimi pastroq, narxi arzon",
+    ],
+}
+
+
+def brand_of(system: str) -> dict:
+    return BRAND_MPP if system == "mpp" else BRAND
+
+
 def brand_text(system: str = "") -> str:
     """Zavod + tuzilish haqida qisqa ma'lumot (AI promptiga qo'shiladi)."""
-    out = [f"ISHLAB CHIQARUVCHI: {BRAND['name']} ({BRAND['site']})"]
-    out += [f"- {x}" for x in BRAND["facts"]]
-    if system in STRUCTURE:
+    b = brand_of(system)
+    nom = b["name"] + (f" ({b['site']})" if b.get("site") else "")
+    out = [f"ISHLAB CHIQARUVCHI: {nom}"]
+    out += [f"- {x}" for x in b["facts"]]
+    # MPP quvurining tuzilishi RTR/RTP niki bilan bir xil (PPR va
+    # polipropilen), shuning uchun tuzilish matni umumiy.
+    st = STRUCTURE.get(system if system in STRUCTURE else
+                       ("rtp" if system == "mpp_sewer" else "rtr"))
+    if system in ("rtr", "rtp"):
+        st = STRUCTURE[system]
+    if st and system:
         out.append("MAHSULOT TUZILISHI:")
-        out += [f"- {x}" for x in STRUCTURE[system]]
+        out += [f"- {x}" for x in st]
     out.append("DO'KON TAJRIBASI (zavod ma'lumoti emas):")
-    out += [f"- {x}" for x in BRAND["shop"]]
+    out += [f"- {x}" for x in b["shop"]]
     return "\n".join(out)
 
 
@@ -180,9 +230,9 @@ def _norm(s: str) -> str:
 
 
 def system_of(name: str) -> str:
-    """'rtr' | 'rtp' | '' — nomning boshidagi tizim belgisi."""
+    """'rtr' | 'rtp' | 'mpp' | '' — nomning boshidagi tizim belgisi."""
     n = _norm(name)
-    m = re.match(r"^(rtr|rtp)\b", n) or re.match(r"^(rtr|rtp)\+", n)
+    m = re.match(r"^(rtr|rtp|mpp)\b", n) or re.match(r"^(rtr|rtp|mpp)\+", n)
     return m.group(1) if m else ""
 
 
@@ -204,13 +254,38 @@ THREADED = {"adapter", "amerikanka", "ushastik", "zaglushka", "kran", "filtr", "
 MULTI_DIA = {"perexodnik", "troynik", "krestovina"}
 
 
+def length_of(name: str) -> str:
+    """Quvurning uzunligi: «200 sm», «1 metr» → '200 sm' / '100 sm'.
+
+    Kanalizatsiya quvuri bo'lak-bo'lak sotiladi (25/50/100/200/300 sm),
+    shuning uchun uzunlik — o'lchamning bir qismi. Diametrni hisoblashdan
+    OLDIN ajratib olinadi, aks holda «100 Turba 25 sm» dagi 25 diametr
+    bo'lib ketardi."""
+    n = _norm(name)
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:sm|см)\b|(\d+(?:[.,]\d+)?)\s*(?:metr|metrli|m)\b", n)
+    if not m:
+        return ""
+    if m.group(1):
+        return f"{int(float(m.group(1).replace(',', '.')))} sm"
+    metr = float(m.group(2).replace(",", "."))
+    return f"{int(metr * 100)} sm"
+
+
+def _strip_length(n: str) -> str:
+    """Uzunlik va devor qalinligini olib tashlaydi (diametr aralashmasin)."""
+    n = re.sub(r"\d+(?:[.,]\d+)?\s*(?:sm|см)\b", " ", n)
+    n = re.sub(r"\d+(?:[.,]\d+)?\s*(?:metr|metrli)\b", " ", n)
+    n = re.sub(r"\(\s*\d+\s*mm\s*\)", " ", n)          # «(3mm)» — devor qalinligi
+    return n
+
+
 def sizes_of(name: str, kind: str = "") -> dict:
     """Nomdagi o'lchamlar: {'dn': 25, 'all': [25, 20], 'thread': '15'}.
 
     `dn` — asosiy diametr (tizim belgisidan keyingi birinchi raqam).
     Ikkinchi raqam turga qarab o'qiladi: perexodnik/troynikda u ham
     diametr, adapter/amerikanka/ushastikda esa REZBA o'lchami."""
-    n = _norm(name)
+    n = _strip_length(_norm(name))
     thread = ""
     m = re.search(r"\b(\d)\s*/\s*(\d)\b", n)          # 1/2, 3/4 — dyuym
     if m:
@@ -271,11 +346,24 @@ def parse(name: str) -> dict:
     kind, kind_label = kind_of(name)
     sz = sizes_of(name, kind)
     water, water_label = water_of(name)
+    length = length_of(name)
+    if not kind and water == "pol":
+        kind, kind_label = "turba", "Quvur (turba)"     # «Topliy pol» — o'ramdagi quvur
+    # Chuyan (chugun) o'tkazgich — har doim kanalizatsiya tarafi, nomi
+    # qaysi belgidan boshlanishidan qat'i nazar.
+    if re.search(r"chugun|chuyan", _norm(name)):
+        sys_use = "kanalizatsiya"
+    else:
+        sys_use = _use_for(sys_key, sz["dn"])
     return {
         "system": sys_key,
         "system_label": SYSTEMS.get(sys_key, {}).get("label", ""),
         "about": SYSTEMS.get(sys_key, {}).get("about", ""),
-        "category": SYSTEMS.get(sys_key, {}).get("category", ""),
+        "category": ("Kanalizatsiya quvurlari" if sys_use == "kanalizatsiya"
+                     else ("Toza suv quvurlari" if sys_use == "suv" else "")),
+        "length": length,
+        # MPP da tizim bitta, ish turi esa diametr bilan ajraladi
+        "use": sys_use,
         "kind": kind,
         "kind_label": kind_label,
         "dn": sz["dn"],
@@ -286,6 +374,32 @@ def parse(name: str) -> dict:
         "water": water,
         "water_label": water_label,
     }
+
+
+SEWER_DN = (50, 75, 90, 100, 110, 150, 160)      # shu diametrlar — kanalizatsiya
+
+
+def _use_for(system: str, dn: int) -> str:
+    """'suv' | 'kanalizatsiya' | '' — tovar nima uchun ishlatiladi."""
+    if system == "rtr":
+        return "suv"
+    if system == "rtp":
+        return "kanalizatsiya"
+    if system == "mpp":
+        if dn in SEWER_DN:
+            return "kanalizatsiya"
+        if dn:
+            return "suv"
+        return "suv"                 # o'lchamsiz MPP (issiq pol) — suv tarafi
+    return ""
+
+
+def _category_for(system: str, dn: int) -> str:
+    use = _use_for(system, dn)
+    if not use:
+        return ""
+    return ("Kanalizatsiya quvurlari" if use == "kanalizatsiya"
+            else "Toza suv quvurlari")
 
 
 def category(name: str) -> str:
@@ -307,6 +421,8 @@ def facts(name: str) -> str:
         parts.append(d["kind_label"])
     if d["dn"]:
         parts.append(f"{d['dn']} mm")
+    if d.get("length"):
+        parts.append(d["length"])
     if d["thread"]:
         side = f" {d['thread_side']}" if d["thread_side"] else ""
         inch = f' ({d["thread_inch"]})' if d.get("thread_inch") else ""

@@ -65,6 +65,28 @@ for nom, sys_, kind, dn, thread in NAMUNA:
     check(nom[:44], ok,
           f'olindi: {d["system"]}/{d["kind"]}/{d["dn"]}/{d["thread"]!r}')
 
+print("\n1b) MPP (Miramax, O'zbekiston) — bo'lim DIAMETR bilan ajraladi:")
+# Do'kon egasining qoidasi: MPP 20/25/32/40 — toza suv, 50/75/100/150 —
+# kanalizatsiya. Bitta belgi ostida ikki xil tizim turadi.
+for nom, kutilgan in [("MPP 25 Mufta", "Toza suv quvurlari"),
+                      ("MPP 40 Zaglujka  payka", "Toza suv quvurlari"),
+                      ("MPP 50 Atvod", "Kanalizatsiya quvurlari"),
+                      ("MPP 100 Traynik kassoy", "Kanalizatsiya quvurlari"),
+                      ("MPP 150 Turba 200 sm   (3mm)", "Kanalizatsiya quvurlari")]:
+    check(nom[:38], R.category(nom) == kutilgan, R.category(nom))
+check("qiyshiq troynik ajratildi",
+      R.parse("MPP 100 Traynik kassoy")["kind"] == "troynik_kos")
+check("to'g'ri troynik ajratildi",
+      R.parse("MPP 100 traynik to'g'risi")["kind"] == "troynik")
+check("uzunlik o'qildi", R.parse("MPP 100 Turba 25 sm")["length"] == "25 sm")
+check("1 metr → 100 sm", R.parse("MPP 75 Turba  1 m")["length"] == "100 sm")
+check("uzunlik diametrni buzmadi", R.parse("MPP 100 Turba 25 sm")["dn"] == 100)
+check("devor qalinligi diametr emas",
+      R.parse("MPP 150 Turba 200 sm   (3mm)")["dn"] == 150)
+check("chuyan o'tkazgich — kanalizatsiya",
+      R.category("RTR perexod chugunniy 50/75") == "Kanalizatsiya quvurlari")
+check("Miramax ma'lumoti", "O'zbekistonda" in R.brand_text("mpp"))
+
 print("\n2) Bo'lim:")
 check("RTR → toza suv", R.category("RTR 25 Mufta") == "Toza suv quvurlari")
 check("RTP → kanalizatsiya", R.category("RTP 50 Atvot") == "Kanalizatsiya quvurlari")
