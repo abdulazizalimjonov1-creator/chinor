@@ -33,7 +33,7 @@ from datetime import date
 from pathlib import Path
 
 API = os.environ.get("CHINOR_API", "https://kassa.chinorpos.com")
-BASE_URL = os.environ.get("BASE_URL", "https://chinor-ag6.pages.dev").rstrip("/")
+BASE_URL = os.environ.get("BASE_URL", "https://chinor.chinorpos.com").rstrip("/")
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 TODAY = date.today().isoformat()
