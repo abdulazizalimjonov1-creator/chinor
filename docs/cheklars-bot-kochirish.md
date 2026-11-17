@@ -114,5 +114,38 @@ Faqat 1–6 bosqich tekshirilgandan KEYIN:
 | `marketplace/debt.py` | qarz hisobi, daftar, qarzdorlar, telefon bo'yicha bog'lash |
 | `marketplace/migrate_chekhisobot.py` | `hisobot.db` dan mijozlarni ko'chirish |
 | `chinor-bot/bot/api_debt.py` | `/api/my/*` (mijoz) va `/api/debt/*` (admin) |
-| `chinor-bot/bot/debt_export.py` | guruhlangan Excel (chek → «+» → tovarlar) |
+| `chinor-bot/bot/debt_export.py` | guruhlangan Excel, rasm va PDF |
+| `chinor-bot/bot/tg_out.py` | mijozga xabar/fayl — ikkala bot tokeni bilan |
+| `chinor-bot/handlers/qarz.py` | botning o'zidagi tugmali «📕 Qarzdorlar» |
 | `app/app.js`, `app/index.html` | Mini App ekranlari |
+
+## Botdagi tugmali bo'lim (Mini App'siz)
+
+Hamma ish Mini App'da bo'lishi shart emas: `handlers/qarz.py` xuddi shu
+bo'limni suhbatning ichida beradi.
+
+```
+📕 Qarzdorlar              → ro'yxat (sahifalab, 8 tadan)
+  └ mijoz                  → qarzi, telefoni, oxirgi xaridi
+      ├ 🧾 Cheklarni tanlash  → har chek yonida ⬜/✅
+      │     ├ 📄 PDF / 🖼 Rasm — MIJOZGA
+      │     ├ 📄 PDF / 🖼 Rasm / 📥 Excel — O'ZIGA
+      │     └ 🧾 Matn — mijozga
+      ├ 📄 Daftar PDF / 🖼 rasm / 📥 Excel
+      └ 📨 Qarz eslatmasi
+```
+
+Belgilash XUDDI SHU xabarni tahrirlaydi (`edit_text`) — ro'yxat qaytadan
+yuklanmaydi. Tanlov xotirada, admin bo'yicha turadi: bot qayta ishga
+tushsa yo'qoladi va eski tugma «qaytadan oching» deydi.
+
+Mini App tomonida ham fayl endi **brauzerga emas, Telegramga** ketadi:
+`POST /api/debt/deliver` (admin) va `POST /api/my/deliver` (mijoz).
+
+## Ikki bot — bitta mijoz
+
+Mijozlarning ko'pi `@cheklars_bot` ga `/start` bosgan, qolgani asosiy
+Chinor botiga. Telegram botga faqat O'ZIGA `/start` bosgan odamga yozishga
+ruxsat beradi, shuning uchun bitta token bilan yuborilgan xabarning yarmi
+«403» bo'lib JIM yo'qolardi. `bot/tg_out.py` har yuborishni ikkala tokenda
+sinab ko'radi va qaysi biri ishlaganini eslab qoladi.

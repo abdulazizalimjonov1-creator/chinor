@@ -216,7 +216,8 @@ def xlsx_to_text(rows: List[List[str]]) -> str:
                     continue          # son — nom emas
                 if len(c) > len(name):
                     name = c
-            out.append(f"{r[col]};{re.sub(r'\s+', ' ', name).strip()}")
+            toza = re.sub(r"\s+", " ", name).strip()
+            out.append(f"{r[col]};{toza}")
         return "\n".join(out)
     else:
         # Artikul ustuni yo'q — oddiy nomlar ro'yxati.

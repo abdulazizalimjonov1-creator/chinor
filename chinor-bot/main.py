@@ -17,7 +17,7 @@ from database.channel_db import db, DB_PATH
 from database._helpers import now_local
 from handlers import (
     glavniy, admin_products, admin_clients, admin_stats, sale, client, catalog,
-    ai_analytics, auth_setup, client_ai, discussion, kabinet, kanal_aniq,
+    ai_analytics, auth_setup, client_ai, discussion, kabinet, kanal_aniq, qarz,
 )
 
 logging.basicConfig(
@@ -208,6 +208,9 @@ async def main():
     dp.include_router(auth_setup.router)      # 🔑 Mini App login/parol yaratish
     from handlers import reels_compare_admin
     dp.include_router(reels_compare_admin.router)  # 🎬 kunlik video tasdig'i
+    # Qarzdorlar — kabinetdan OLDIN: «📕 Qarzdorlar» tugmasi va
+    # /qarzdorlar shu yerda tutiladi (tugmali, Mini App'siz bo'lim).
+    dp.include_router(qarz.router)            # 📕 qarzdorlar (tugmalar bilan)
     dp.include_router(kabinet.router)         # 🧾 mijoz kabineti (/hisobim …)
     dp.include_router(kanal_aniq.router)      # 📢 kanal id sini aniqlash
     # ENG OXIRIDA: mijozning erkin matni → AI sotuvchi. Barcha aniq
@@ -289,6 +292,10 @@ async def main():
     from bot import yespos_local_import
     local_import_task = asyncio.create_task(yespos_local_import.loop())
 
+    # ── Tovarlarni kanalga SEKIN-ASTA chiqarish (kuniga bir nechta) ─────
+    from bot import channel_drip
+    drip_task = asyncio.create_task(channel_drip.loop())
+
     try:
         # Endi channel_post tinglash kerak emas — ma'lumot SQLite da
         await dp.start_polling(
@@ -315,6 +322,7 @@ async def main():
         enrich_task.cancel()
         yespos_task.cancel()
         local_import_task.cancel()
+        drip_task.cancel()
         await bot.session.close()
         if api_runner is not None:
             try:

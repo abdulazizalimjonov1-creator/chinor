@@ -700,8 +700,9 @@ def main(argv=None) -> int:
     if args.cmd == "relink":
         with MarketplaceDB() as db:
             res = relink(db, only_missing=not args.all)
+        bogi = res.get("bog'landi", 0)
         print(f"Tekshirilgan nom: {res['nomlar']}   "
-              f"bog'langan: {res["bog'landi"]}   "
+              f"bog'langan: {bogi}   "
               f"noto'g'ri bog'lanish tozalandi: {res.get('tozalandi', 0)}")
         return 0
 
@@ -724,7 +725,8 @@ def main(argv=None) -> int:
             db.conn.commit()
             print(f"«{args.name}»  →  {args.sku} {row[1]}")
             res = relink(db, only_missing=False)
-            print(f"Qayta bog'landi: {res["bog'landi"]} qator")
+            bogi = res.get("bog'landi", 0)
+            print(f"Qayta bog'landi: {bogi} qator")
         return 0
 
     if args.cmd == "fix-totals":

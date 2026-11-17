@@ -71,9 +71,9 @@ def _kabinet_kb(excel: bool = True) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="🛒 Do'kon", web_app=WebAppInfo(url=_app_url()))])
     if excel:
-        # Android'da .xlsx ko'pincha ochilmaydi, shuning uchun RASM ham
-        # beriladi — u har qanday telefonda darrov ochiladi.
-        rows.append([InlineKeyboardButton(text="🖼 Rasm qilib olish",
+        # Android'da .xlsx ko'pincha ochilmaydi, shuning uchun RASM va PDF
+        # ham beriladi — ikkalasi har qanday telefonda darrov ochiladi.
+        rows.append([InlineKeyboardButton(text="🖼 Rasm / 📄 PDF",
                                           callback_data="kab:rasm"),
                      InlineKeyboardButton(text="📥 Excel",
                                           callback_data="kab:excel")])
@@ -171,18 +171,28 @@ async def cb_excel(call: CallbackQuery):
 
 
 def _rasm_kb() -> InlineKeyboardMarkup:
-    """Nechta chek kerakligini so'raymiz.
+    """Qaysi hisobot va qaysi shaklda.
 
     Ilgari «rasm» tugmasi butun daftarni chizardi va qaysi davr ekani
     noaniq edi. Endi mijoz o'zi tanlaydi: oxirgi bir nechta chek
-    (tovarlari bilan) yoki butun hisob-kitob.
+    (tovarlari bilan) yoki butun hisob-kitob — rasm yoki PDF.
+
+    NEGA IKKI SHAKL. Rasmni telefon darrov ko'rsatadi, lekin chop etish
+    yoki hujjatga ilova qilish noqulay; PDF esa chop etilsa chek
+    ko'rinishini saqlaydi va har qanday qurilmada ochiladi.
     """
+    def juft(n):
+        return [InlineKeyboardButton(text=f"🖼 {n} chek",
+                                     callback_data=f"kab:ch:{n}"),
+                InlineKeyboardButton(text=f"📄 {n} chek PDF",
+                                     callback_data=f"kab:chp:{n}")]
+
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧾 Oxirgi 3 chek", callback_data="kab:ch:3"),
-         InlineKeyboardButton(text="🧾 10 chek", callback_data="kab:ch:10")],
-        [InlineKeyboardButton(text="🧾 30 chek", callback_data="kab:ch:30")],
-        [InlineKeyboardButton(text="💰 Hisob-kitob (butun)",
-                              callback_data="kab:png")],
+        juft(3), juft(10), juft(30),
+        [InlineKeyboardButton(text="🖼 Hisob-kitob", callback_data="kab:png"),
+         InlineKeyboardButton(text="📄 Hisob-kitob PDF",
+                              callback_data="kab:lpdf")],
+        [InlineKeyboardButton(text="📥 Excel", callback_data="kab:excel")],
     ])
 
 
@@ -213,6 +223,12 @@ async def cb_png(call: CallbackQuery):
     await _send_excel(call.from_user.id, call.message, rasm=True)
 
 
+@router.callback_query(F.data == "kab:lpdf")
+async def cb_ledger_pdf(call: CallbackQuery):
+    await call.answer("Tayyorlanmoqda…")
+    await _send_excel(call.from_user.id, call.message, pdf=True)
+
+
 @router.callback_query(F.data.startswith("kab:ch:"))
 async def cb_cheklar(call: CallbackQuery):
     try:
@@ -223,8 +239,19 @@ async def cb_cheklar(call: CallbackQuery):
     await _send_cheklar(call.from_user.id, call.message, soni)
 
 
-async def _send_cheklar(tg_id: int, target: Message, soni: int) -> None:
-    """Oxirgi `soni` ta chekni bitta rasmga chizib yuboradi."""
+@router.callback_query(F.data.startswith("kab:chp:"))
+async def cb_cheklar_pdf(call: CallbackQuery):
+    try:
+        soni = int(call.data.split(":")[-1])
+    except ValueError:
+        soni = 10
+    await call.answer("Tayyorlanmoqda…")
+    await _send_cheklar(call.from_user.id, call.message, soni, pdf=True)
+
+
+async def _send_cheklar(tg_id: int, target: Message, soni: int,
+                        pdf: bool = False) -> None:
+    """Oxirgi `soni` ta chekni bitta rasm yoki PDF qilib yuboradi."""
     names, _q, _n, _o = await _hisob(tg_id)
     if not names:
         await target.answer("Kassada hisobingiz topilmadi.")
@@ -239,18 +266,25 @@ async def _send_cheklar(tg_id: int, target: Message, soni: int) -> None:
         if not recs:
             await target.answer("Chek topilmadi.")
             return
-        path = debt_export.receipts_png(names[0], recs)
+        path = (debt_export.receipts_pdf(names[0], recs) if pdf
+                else debt_export.receipts_png(names[0], recs))
         with open(path, "rb") as f:
             data = f.read()
-        await target.answer_photo(
-            BufferedInputFile(data, filename=os.path.basename(path)),
-            caption=f"🧾 Oxirgi {len(recs)} ta xaridingiz")
+        fayl = BufferedInputFile(data, filename=os.path.basename(path))
+        sarlavha = f"🧾 Oxirgi {len(recs)} ta xaridingiz"
+        # 30 ta chek chizilgan rasm Telegram «photo» chegarasidan oshadi —
+        # unday paytda hujjat bo'lib ketadi.
+        if pdf or not debt_export.photo_yaroqli(path):
+            await target.answer_document(fayl, caption=sarlavha)
+        else:
+            await target.answer_photo(fayl, caption=sarlavha)
     except Exception as e:
         logger.warning("Cheklar rasmi yuborilmadi (%s): %s", tg_id, e)
         await target.answer("Rasm tayyorlanmadi. Birozdan keyin urinib ko'ring.")
 
 
-async def _send_excel(tg_id: int, target: Message, rasm: bool = False) -> None:
+async def _send_excel(tg_id: int, target: Message, rasm: bool = False,
+                      pdf: bool = False) -> None:
     names, _qarz, _n, _o = await _hisob(tg_id)
     if not names:
         await target.answer("Kassada hisobingiz topilmadi.")
@@ -265,8 +299,12 @@ async def _send_excel(tg_id: int, target: Message, rasm: bool = False) -> None:
                 rows += D.ledger(mdb.conn, n)
                 jami += D.debt(mdb.conn, n)
             rows.sort(key=lambda r: r["at"] or "")
-            path = (debt_export.ledger_png(names[0], rows, jami) if rasm
-                    else debt_export.ledger_xlsx(names[0], rows, jami))
+            if rasm:
+                path = debt_export.ledger_png(names[0], rows, jami)
+            elif pdf:
+                path = debt_export.ledger_pdf(names[0], rows, jami)
+            else:
+                path = debt_export.ledger_xlsx(names[0], rows, jami)
         with open(path, "rb") as f:
             data = f.read()
         fayl = BufferedInputFile(data, filename=os.path.basename(path))
@@ -310,28 +348,9 @@ async def cmd_yordam(message: Message):
 
 # ─── Admin uchun qisqa yo'l ─────────────────────────────────────────────────
 
-@router.message(Command("qarzdorlar"))
-async def cmd_qarzdorlar(message: Message):
-    uid = message.from_user.id
-    if not await db.is_admin(uid):
-        return
-    D, MarketplaceDB = _mk()
-    with MarketplaceDB() as mdb:
-        D.ensure_schema(mdb.conn)
-        rows = D.clients_with_debt(mdb.conn, 1)
-    jami = sum(r["debt"] for r in rows)
-    satr = [f"📕 <b>Qarzdorlar:</b> {len(rows)} ta",
-            f"💰 Jami: <b>{_pul(jami)}</b> so'm", ""]
-    for r in rows[:10]:
-        satr.append(f"🔴 {r['name']} — <b>{_pul(r['debt'])}</b>")
-    if len(rows) > 10:
-        satr.append(f"… yana {len(rows) - 10} ta")
-    kb = None
-    if _app_url():
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-            text="📕 Qarzdorlar bo'limi",
-            web_app=WebAppInfo(url=_app_url("qarzdorlar")))]])
-    await message.answer("\n".join(satr), reply_markup=kb, parse_mode="HTML")
+# «📕 Qarzdorlar» va /qarzdorlar — `handlers/qarz.py` da. U bo'limni
+# TUGMALAR bilan ochadi: mijozni bosib cheklarini tanlash, PDF/rasm/Excel
+# qilib o'ziga yoki mijozga yuborish — hammasi suhbat ichida.
 
 
 @router.message(Command("reels"))
@@ -385,11 +404,6 @@ async def btn_yordam(message: Message):
 # uchun alohida yozilgan; «💰 Hisobim» esa mijoznikining AYNAN o'zi, shuning
 # uchun yuqoridagi `btn_hisob` uni ham tutadi.
 
-@router.message(F.text == ADMIN_BTN_QARZ)
-async def btn_qarzdorlar(message: Message):
-    await cmd_qarzdorlar(message)
-
-
 @router.message(F.text == ADMIN_BTN_REELS)
 async def btn_reels(message: Message):
     await cmd_reels(message)
@@ -403,7 +417,8 @@ async def btn_admin_yordam(message: Message):
         return
     await message.answer(
         "ℹ️ <b>Admin yordami</b>\n\n"
-        f"{ADMIN_BTN_QARZ} — kim qancha qarzdor\n"
+        f"{ADMIN_BTN_QARZ} — kim qancha qarzdor; mijozni bosib "
+        f"chekini tanlab PDF/rasm qilib yuborasiz (botdan chiqmasdan)\n"
         f"{ADMIN_BTN_REELS} — Instagram natijalari\n"
         f"{ADMIN_BTN_HISOB} — o'z xaridlaringiz\n\n"
         "Boshqaruvning qolgani — matn maydoni yonidagi "
