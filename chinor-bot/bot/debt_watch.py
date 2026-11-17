@@ -39,6 +39,11 @@ MAX_PER_RUN = int(os.getenv("DEBT_WATCH_MAX", "25") or 25)
 # Xabarda ko'rsatiladigan tovar qatorlari (Telegram chegarasi 4096 belgi).
 MAX_ITEMS = int(os.getenv("DEBT_WATCH_ITEMS", "20") or 20)
 
+# Xarid chekining oxiridagi Google sharh havolasi — sharh soni Google
+# Xaritada do'konni yuqoriga ko'taradigan asosiy omil. Bo'sh qilsa — o'chadi.
+REVIEW_URL = os.getenv("GOOGLE_REVIEW_URL",
+                       "https://g.page/r/CXIllexutNtiEBM/review").strip()
+
 _STATE = """
 CREATE TABLE IF NOT EXISTS notify_state (
     key   TEXT PRIMARY KEY,
@@ -215,7 +220,7 @@ def _mijoz_matni(e: dict) -> str:
     jami = float(e.get("jami") or 0)
     # Aralash to'lovda chekning bir qismi naqd ketgan bo'lishi mumkin —
     # shunda ikkala raqam ham ko'rsatiladi, aks holda bittasi yetarli.
-    if jami > 0 and abs(jami - float(e["summa"])) > 1:
+    if jami > 0 and float(e["summa"]) > 0 and abs(jami - float(e["summa"])) > 1:
         satrlar.append(f"💵 Chek jami: <b>{_pul(jami)}</b> so'm")
     if float(e.get("summa") or 0) > 0:
         satrlar.append(f"🤝 Qarzga yozildi: <b>{_pul(e['summa'])}</b> so'm")
@@ -223,6 +228,9 @@ def _mijoz_matni(e: dict) -> str:
     elif jami > 0:
         satrlar.append(f"💵 Jami: <b>{_pul(jami)}</b> so'm")
     satrlar += ["", "Batafsil — «🛒 Do'kon va hisobim» tugmasi yoki /hisobim"]
+    if REVIEW_URL:
+        satrlar += ["", f'⭐ Xizmatimiz yoqdimi? <a href="{html.escape(REVIEW_URL)}">'
+                        f"Google'da baho bering</a> — 10 soniya, bizga katta yordam."]
     matn = "\n".join(satrlar)
     return matn if len(matn) <= 4000 else matn[:3900] + "\n…"
 
