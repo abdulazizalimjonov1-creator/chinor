@@ -189,12 +189,14 @@ def render_label(lb: dict, size_key: str):
     # nuqta surilib bosishi odatiy hol, o'shanda yozuvning cheti kesilib
     # ketmasin (60×40 da aynan shunday bo'lgan edi).
     pad = max(10, W // 20)
+    # Yuqori-past chekka torroq: bo'shatilgan joy NARXGA ketadi, u esa
+    # uzoqdan o'qilishi kerak.
+    vpad = max(7, pad // 2 + 2)
     x0, x1 = pad, W - pad
-    # Kichik sennikda mazmun yuqori chekkaga tiqilib qolgandi — pastroqqa
-    y = pad + (6 if small else 2)
+    y = vpad + (4 if small else 2)
 
     # 1) Sarlavha: logotip + do'kon nomi
-    logo_h = int(H * (0.14 if small else 0.16))
+    logo_h = int(H * (0.12 if small else 0.13))
     try:
         raw = api_pricetag._logo_bytes()
         if raw:
@@ -212,11 +214,14 @@ def render_label(lb: dict, size_key: str):
     d.line((x0, y, x1, y), fill=0, width=2)
     y += 4 if small else 7
 
-    # 2) Pastdan yuqoriga: shtrix-kod joyi (modul eni butun nuqta bo'lsin)
+    # 2) Pastdan yuqoriga: shtrix-kod joyi (modul eni butun nuqta bo'lsin).
+    # Chiziqlar PAST: kodni baribir skanerga yaqin olib kelib o'qishadi,
+    # balandligi o'qilishiga ta'sir qilmaydi — eni va chetidagi sokin
+    # zona muhim. Bo'shagan joy narxga beriladi.
     code, kind = barcode_gen.for_product(lb.get("barcode", ""), lb.get("sku") or 0)
-    bar_h = int(H * (0.17 if small else 0.15))
-    txt_h = int(H * (0.07 if small else 0.055))
-    bottom = H - pad
+    bar_h = int(H * (0.13 if small else 0.11))
+    txt_h = int(H * (0.06 if small else 0.05))
+    bottom = H - vpad
     bc_top = bottom - bar_h - txt_h - (0 if small else 2)
 
     # 3) Kichik qator (SKU va birlik) — faqat kattaroq sennikda joy bor
@@ -230,22 +235,35 @@ def render_label(lb: dict, size_key: str):
             d.text((x1 - _text_w(d, unit, foot_f), foot_y), unit, font=foot_f, fill=0)
         foot_bottom = foot_y - 2
 
-    # 4) Nomi — 2 (kichik sennikda) yoki 3 qator
-    name_f = _font(int(H * (0.085 if small else 0.09)), True)
-    lines = _wrap(d, lb["name"], name_f, x1 - x0, 2 if small else 3)
+    # 4) Narx — eng muhim yozuv, shuning uchun BIRINCHI bo'lib joy oladi.
+    # Ilgari u nomdan ortgan joyga moslashardi: nom bir qator bo'lsa
+    # yirik, ikki qator bo'lsa ikki barobar mayda chiqardi va bir
+    # javondagi senniklar har xil ko'rinardi. Endi o'lchami yorliq
+    # balandligidan olinadi, nom esa qolgan joyga sig'diriladi.
+    price = api_pricetag._fmt_sum(lb["price"])
+    cur = " so'm"
+    price_f = _fit_font(d, price + cur, x1 - x0, int(H * (0.22 if small else 0.24)))
+    price_h = int(price_f.size * 1.12)
+    price_top = foot_bottom - price_h
+
+    # 5) Nomi — narx blokigacha bo'lgan joyga (2 qator). Sig'masa shrift
+    # kichrayadi: nom o'qilmay qolgandan ko'ra mayda bo'lgani ma'qul.
+    name_space = price_top - 4 - y
+    name_size = int(H * (0.085 if small else 0.09))
+    while name_size > 9:
+        name_f = _font(name_size, True)
+        lines = _wrap(d, lb["name"], name_f, x1 - x0, 2)
+        if len(lines) * int(name_f.size * 1.15) <= name_space:
+            break
+        name_size -= 2
     for ln in lines:
         d.text((x0, y), ln, font=name_f, fill=0)
         y += int(name_f.size * 1.15)
 
-    # 5) Narx — nom bilan shtrix-kod orasidagi bo'sh joyni to'ldiradi
-    price = api_pricetag._fmt_sum(lb["price"])
-    cur = " so'm"
-    space_h = foot_bottom - 4 - y
-    price_f = _fit_font(d, price + cur, x1 - x0, max(12, int(space_h * 0.95)))
     cur_f = _font(max(8, int(price_f.size * 0.36)), False)
     pw = _text_w(d, price, price_f) + _text_w(d, cur, cur_f)
     px = x1 - pw
-    py = y + max(0, (space_h - price_f.size) // 2)
+    py = price_top + max(0, (price_h - price_f.size) // 2)
     d.text((px, py), price, font=price_f, fill=0)
     d.text((px + _text_w(d, price, price_f),
             py + price_f.size - cur_f.size - int(cur_f.size * 0.15)),

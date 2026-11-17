@@ -94,6 +94,27 @@
             }
         } catch (_) { /* eski mijoz — oddiy holatda qolaveradi */ }
 
+        // SAHIFA KATTALASHIB QOLMASIN.
+        // Yozuvi kichik maydonga bosilganda iPhone sahifani o'zi
+        // kattalashtiradi va klaviatura yopilgach qaytarmaydi — ilova
+        // shu holda qolib ketadi. Asosiy yechim uslubda (barmoqli
+        // ekranlarda maydonlar 16px), bu esa zaxira: agar eski WebView
+        // baribir kattalashtirsa, maydon yopilgach o'lchamni qaytaramiz.
+        // viewport'ni bir zumga o'zgartirish WebView'ni qayta
+        // hisoblashga majburlaydi — boshqa yo'li yo'q.
+        (function () {
+            const vp = document.querySelector('meta[name=viewport]');
+            if (!vp) return;
+            const asl = vp.getAttribute('content');
+            document.addEventListener('focusout', () => {
+                const vv = window.visualViewport;
+                if (!vv || vv.scale <= 1.01) return;
+                vp.setAttribute('content',
+                    'width=device-width, initial-scale=1.0, maximum-scale=0.99, user-scalable=no');
+                setTimeout(() => vp.setAttribute('content', asl), 80);
+            });
+        })();
+
         // ----- DOM refs -----
         const $ = (id) => document.getElementById(id);
 
@@ -138,11 +159,68 @@
         const clientName   = $('clientName');
 
         // ===== Screen switcher (barcha .screen larni boshqaradi) =====
-        function showScreen(id) {
-            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        // Ekran qaysi tomondan kirishini belgilaydi: ichkariga o'tilsa
+        // o'ngdan, orqaga qaytilsa chapdan. `navBack` shu bayroqni
+        // ko'taradi — oradagi funksiya zanjiri uzun bo'lgani uchun
+        // yo'nalishni argument qilib uzatib bo'lmaydi.
+        let _ortgaQadam = false;
+
+        function showScreen(id, ortga) {
+            document.querySelectorAll('.screen').forEach(s => {
+                s.classList.remove('active', 'ortga');
+                s.style.transform = ''; s.style.opacity = '';
+            });
             const el = (typeof id === 'string') ? $(id) : id;
-            if (el) el.classList.add('active');
+            if (el) {
+                if (ortga || _ortgaQadam) el.classList.add('ortga');
+                el.classList.add('active');
+                // Yangi bo'lim tepasidan boshlansin: aks holda oldingi
+                // ro'yxatning o'rtasida ochilib qoladi.
+                try { window.scrollTo(0, 0); } catch (_) {}
+            }
+            _ortgaQadam = false;
             _navTelegramTugma(typeof id === 'string' ? id : (el && el.id) || '');
+        }
+
+        // ── Cheksiz ro'yxat: pastga yetganda keyingisi O'ZI yuklanadi ───
+        // Ilgari har 20 tadan keyin «Yana yuklash» tugmasini bosish kerak
+        // edi — 7000 tovarli katalogda bu charchatadi. Endi ro'yxat oxiriga
+        // yaqinlashganda keyingi sahifa o'zi so'raladi; tugma esa joyida
+        // qoladi (internet sekin bo'lsa yoki surish ishlamasa — zaxira).
+        const _cheksiz = [];
+        let _cheksizT = null;
+
+        function cheksizRoyxat(el, yukla) {
+            if (!el || el.dataset.cheksiz === '1') return;
+            el.dataset.cheksiz = '1';
+            _cheksiz.push({ el, yukla });
+        }
+
+        function cheksizTekshir() {
+            // Ekrandan ketgan (qayta chizilgan) tugmalarni ro'yxatdan chiqaramiz
+            for (let i = _cheksiz.length - 1; i >= 0; i--) {
+                const x = _cheksiz[i];
+                if (!x.el.isConnected) { _cheksiz.splice(i, 1); continue; }
+                if (x.el.style.display === 'none' || !x.el.offsetParent) continue;
+                // Tugma ekranning tagiga 500px qolganda — oldindan yuklaymiz
+                if (x.el.getBoundingClientRect().top < window.innerHeight + 500) {
+                    try { x.yukla(); } catch (_) {}
+                }
+            }
+        }
+
+        window.addEventListener('scroll', () => {
+            clearTimeout(_cheksizT);
+            _cheksizT = setTimeout(cheksizTekshir, 80);
+        }, { passive: true });
+
+        // Bitta ekranga chiziladigan bo'limlar (#screenTool) uchun:
+        // ekran almashmaydi, shuning uchun mazmunning o'zini suramiz.
+        function animKirish(el) {
+            if (!el) return;
+            el.classList.remove('kirish');
+            void el.offsetWidth;          // animatsiya qaytadan boshlansin
+            el.classList.add('kirish');
         }
 
         // ===== ORQAGA QAYTISH ZANJIRI =====
@@ -184,6 +262,10 @@
         }
 
         window.navBack = function (zaxira) {
+            _ortgaQadam = true;
+            // Zanjirdagi funksiya ma'lumot kutib turishi mumkin — bayroq
+            // bir necha soniya kutadi, keyin o'zi so'nadi.
+            setTimeout(() => { _ortgaQadam = false; }, 2000);
             const oldin = _navZanjir.pop();
             if (oldin) {
                 _navJoy = oldin;
@@ -216,6 +298,126 @@
                 });
             }
         } catch (_) {}
+
+        // «← Orqaga» bosilganda ham ekran ORQAGA yo'nalishda kirsin.
+        // Tugmalarning bir qismi `navBack` emas, to'g'ridan-to'g'ri
+        // `showScreen` chaqiradi — bayroqni shu yerda, bosilish
+        // handler'idan oldin (capture bosqichida) ko'taramiz.
+        document.addEventListener('click', (e) => {
+            const t = e.target;
+            if (t && t.closest && t.closest('.list-back')) _ortgaQadam = true;
+        }, true);
+
+        // ===== CHETDAN SURIB ORQAGA QAYTISH =====
+        // iPhone'dagi odat: chap chetdan o'ngga tortilsa — orqaga. Mini
+        // App'da buni brauzer bermaydi, shuning uchun o'zimiz qilamiz.
+        // Barmoq harakatiga ekranning o'zi ergashadi, qo'l uzilganda esa
+        // yo orqaga o'tadi, yo joyiga qaytadi — shunda ishora «ushlanmay
+        // qolgan»dek tuyulmaydi.
+        (function () {
+            const CHET = 30;              // chap chetdan shuncha piksel
+            let x0 = 0, y0 = 0, dx = 0, faol = null;
+
+            function bekor() {
+                if (faol) {
+                    faol.classList.remove('sudralmoqda');
+                    faol.style.transform = '';
+                    faol.style.opacity = '';
+                }
+                faol = null; dx = 0;
+            }
+
+            function ortga() {
+                // Har bo'limning o'z «← Orqaga» tugmasi bor va qayerga
+                // qaytishni aynan o'sha biladi — zanjirni bu yerda
+                // qaytadan yozgandan ko'ra tugmani bosgan ma'qul.
+                const sc = document.querySelector('.screen.active');
+                // Mijoz ekranida «orqaga» tugmasi yo'q: u yerda qaytish —
+                // ochiq bo'limdan (Katalog / AI / Hisob) asosiysiga.
+                if (sc && sc.id === 'screenClient') {
+                    const tablar = [...document.querySelectorAll('.cl-tab')];
+                    const faol = tablar.find(t => t.classList.contains('active'));
+                    if (faol && tablar[0] && faol !== tablar[0]) {
+                        clientTab(tablar[0], 'home');
+                    }
+                    return;
+                }
+                const tugma = sc && [...sc.querySelectorAll('.list-back')]
+                    .find(b => b.offsetParent !== null);
+                if (tugma) { tugma.click(); return; }
+                if (_navZaxira) navBack(_navZaxira);
+            }
+
+            // Kamera to'liq ekranda bo'lsa — o'sha ishora qo'shni
+            // kameraga o'tkazadi: nazoratchi har safar ro'yxatga
+            // qaytmasin. Chetidan boshlash shart emas, ekranning
+            // istalgan joyidan surilaveradi.
+            let kamera = false;
+
+            function ovOchiq() {
+                const ov = $('camOverlay');
+                return !!(ov && ov.style.display === 'flex');
+            }
+
+            function kameraBekor() {
+                const b = $('camOvBody');
+                if (b) b.style.transform = '';
+            }
+
+            document.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                const t = e.touches[0];
+                kamera = false;
+                if (ovOchiq()) {
+                    // Yaqinlashtirilgan bo'lsa — surish tasvirni suradi,
+                    // qo'shni kameraga o'tmaydi (aks holda zoom ishlamasdi).
+                    if (typeof camZoomed === 'function' && camZoomed()) return;
+                    if (camKorinadiganlar().length < 2) return;
+                    kamera = true; x0 = t.clientX; y0 = t.clientY; dx = 0;
+                    return;
+                }
+                if (t.clientX > CHET) return;
+                x0 = t.clientX; y0 = t.clientY; dx = 0;
+                faol = document.querySelector('.screen.active');
+            }, { passive: true });
+
+            document.addEventListener('touchmove', (e) => {
+                const t = e.touches[0];
+                if (kamera) {
+                    if (Math.abs(t.clientY - y0) > 70) { kamera = false; kameraBekor(); return; }
+                    dx = t.clientX - x0;
+                    const b = $('camOvBody');
+                    if (b) b.style.transform = 'translateX(' + (dx * 0.6) + 'px)';
+                    return;
+                }
+                if (!faol) return;
+                const ddx = t.clientX - x0;
+                if (ddx < 0 || Math.abs(t.clientY - y0) > 60) { bekor(); return; }
+                dx = ddx;
+                faol.classList.add('sudralmoqda');
+                faol.style.transform = 'translateX(' + dx + 'px)';
+                faol.style.opacity = String(Math.max(0.35, 1 - dx / 420));
+            }, { passive: true });
+
+            document.addEventListener('touchend', () => {
+                if (kamera) {
+                    kamera = false;
+                    const yon = Math.abs(dx) > Math.min(90, window.innerWidth * 0.22)
+                        ? (dx < 0 ? 1 : -1) : 0;
+                    kameraBekor(); dx = 0;
+                    if (yon) camGoto(yon);
+                    return;
+                }
+                if (!faol) return;
+                const yetarli = dx > Math.min(110, window.innerWidth * 0.28);
+                bekor();
+                if (yetarli) ortga();
+            }, { passive: true });
+
+            document.addEventListener('touchcancel', () => {
+                kamera = false; kameraBekor(); bekor();
+            }, { passive: true });
+        })();
 
         // ===== Error helpers =====
         function showError(el, msg) {
@@ -410,6 +612,11 @@
                 _sessionToken = data.session_token;
                 try { localStorage.setItem('chinor_session', _sessionToken); } catch(_) {}
             }
+            // Qaysi bo'limlar ochiq — server aytadi. Ruxsati yo'q
+            // bo'limning tugmasi umuman chizilmaydi: ilgari hamma tugma
+            // turardi-yu, bosilganda «ruxsat yo'q» chiqardi.
+            if (data && Array.isArray(data.perms)) _myPerms = new Set(data.perms);
+            _isGlavniy = !!(data && data.is_glavniy);
             const u = (data && data.user) || {};
             const letter = (u.name || 'U').charAt(0).toUpperCase();
             if (data && data.role === 'admin') _isAdminUser = true;
@@ -420,6 +627,7 @@
             if (data && data.role === 'admin') {
                 adminAvatar.textContent = letter;
                 adminName.textContent = `Xush kelibsiz, ${u.name}!`;
+                perimsniQolla();
                 showScreen(screenAdmin);
                 loadDashboardStats();
             } else {
@@ -450,6 +658,29 @@
 
         // ── Admin: mijoz ko'rinishiga o'tish / qaytish ──────────────────
         let _isAdminUser = false;
+
+        // Shu foydalanuvchining ruxsatlari (login javobidan). Bo'sh
+        // to'plam — hali kelmagan: u holda hech narsa yashirilmaydi,
+        // aks holda tarmoq sekin bo'lsa panel bo'm-bo'sh ko'rinardi.
+        let _myPerms = null;
+        let _isGlavniy = false;
+
+        // Panel tugmalarini ruxsatga qarab yashiradi. Tugmaning kaliti
+        // HTML'da `data-perm` da turadi (bir nechta kalit — vergul
+        // bilan: bittasi yetarli).
+        function perimsniQolla() {
+            if (!_myPerms) return;
+            document.querySelectorAll('[data-perm]').forEach(el => {
+                const kerak = (el.getAttribute('data-perm') || '')
+                    .split(',').map(x => x.trim()).filter(Boolean);
+                const bor = !kerak.length || kerak.some(k => _myPerms.has(k));
+                el.style.display = bor ? '' : 'none';
+            });
+            // Bosh adminning o'ziga atalgan joylar
+            document.querySelectorAll('[data-glavniy]').forEach(el => {
+                el.style.display = _isGlavniy ? '' : 'none';
+            });
+        }
 
         function _enterClientView() {
             clientAvatar.textContent = (_viewAs.name || 'M').charAt(0).toUpperCase();
@@ -680,6 +911,27 @@
         const productSearch  = $('productSearch');
         const productSearchClear = $('productSearchClear');
 
+        // Ro'yxat oxiriga yetganda keyingi 20 ta o'zi yuklanadi
+        cheksizRoyxat(productsMore, () => loadMoreProducts());
+
+        // Tovarni ochib qaytganda ro'yxat O'SHA JOYIDAN davom etsin:
+        // ilgari har safar boshiga qaytib, pastdagi tovarga yana surib
+        // tushishga to'g'ri kelardi.
+        let _prodScroll = 0;
+
+        function prodScrollTikla() {
+            const y = _prodScroll;
+            if (!y) return;
+            // showScreen har doim tepaga olib chiqadi — chizilgandan keyin qaytaramiz
+            requestAnimationFrame(() => { try { window.scrollTo(0, y); } catch (_) {} });
+        }
+
+        window.prodRoyxatga = function (qaytaYukla) {
+            showScreen('screenProducts');
+            if (qaytaYukla) loadProducts('qayta');      // o'zgargan tovar yangilansin
+            else prodScrollTikla();
+        };
+
         window.openProducts = function (role) {
             _prodRole = role || 'client';
             _prevScreen = (role === 'admin') ? 'screenAdmin' : 'screenClient';
@@ -717,17 +969,23 @@
         async function loadProducts(reset) {
             if (_prodLoading) return;
             _prodLoading = true;
+            // 'qayta' — tovarni tahrirlab qaytdik: sahifa raqami saqlanadi va
+            // shu paytgacha ochilgan hamma tovar BITTA so'rovda qayta olinadi
+            // (20 talab ketma-ket so'rash sekin bo'lardi).
+            const qayta = (reset === 'qayta');
             if (reset) {
-                _prodPage = 0;
+                if (!qayta) _prodPage = 0;
                 productsList.innerHTML = '';
                 productsMore.style.display = 'none';
             }
             productsStatus.textContent = 'Yuklanmoqda...';
             try {
-                const qs = new URLSearchParams({
-                    page: String(_prodPage),
-                    q: _prodQuery
-                }).toString();
+                const par = { page: qayta ? '0' : String(_prodPage), q: _prodQuery };
+                // Server limitni 500 tagacha beradi — undan nariga o'tsak
+                // qolgani odatdagidek surish bilan yuklanadi.
+                if (qayta && _prodPage > 0)
+                    par.limit = String(Math.min(500, (_prodPage + 1) * 20));
+                const qs = new URLSearchParams(par).toString();
                 const { ok, status, data } = await apiFetch('/api/products?' + qs);
                 if (!ok || !data.ok) {
                     productsStatus.textContent =
@@ -753,14 +1011,18 @@
                         `Jami: ${data.total} ta` + (_prodQuery ? ` («${_prodQuery}»)` : '');
                 }
                 productsMore.style.display = data.has_more ? 'block' : 'none';
+                if (qayta) prodScrollTikla();
             } catch (err) {
                 productsStatus.textContent =
                     'Tarmoq xatosi. API: ' + API_BASE_URL + ' — ' + (err.message || err);
             }
             _prodLoading = false;
+            // Ekran hali to'lmagan bo'lsa (uzun telefon) — davomini ham olamiz
+            setTimeout(cheksizTekshir, 60);
         }
 
         window.loadMoreProducts = function () {
+            if (_prodLoading) return;       // surish paytida sahifa sakrab ketmasin
             _prodPage += 1;
             loadProducts(false);
         };
@@ -813,6 +1075,7 @@
         }
 
         function showProductDetail(p) {
+            _prodScroll = window.scrollY || 0;      // qaytganda shu joyga tushamiz
             _curProduct = p;
             const isAdmin = (_prodRole === 'admin');
             const low = p.qty <= 0;
@@ -1033,6 +1296,234 @@
             }).join('') || '<div class="list-status">Topilmadi</div>';
         };
 
+        // ── 🖼 RASMSIZ TOVARLAR ─────────────────────────────────────────
+        // Nega alohida bo'lim: katalogda 7 mingdan ortiq nom bor, lekin o'z
+        // surati borlari yuzga ham yetmaydi. Qolganiga internetdan olingan
+        // "turi bo'yicha" rasm qo'yilgan edi — bitta surat o'nta tovarda
+        // takrorlanib, sayt ham, mijoz ilovasi ham qalbaki ko'rinardi.
+        // Endi mijozga faqat O'ZIMIZ suratga olgan tovarlar chiqadi, bu
+        // ro'yxat esa "navbat" bo'lib turadi: eng ko'p sotiladigan rasmsiz
+        // tovar tepada — suratga olib borilsa ro'yxat qisqarib boradi.
+        //
+        // Ro'yxat JAMLANIB boradi (sahifalar bir-birining ustiga qo'shiladi)
+        // va xotirada saqlanadi: tovarga surat qo'yib qaytganda o'sha joyidan
+        // davom etadi, boshiga qaytib ketmaydi.
+        let _npQ = '', _npStock = true, _npTotal = 0;
+        let _npPage = 0, _npItems = [], _npMore = false, _npYuk = false;
+        let _npXul = null;          // suratlar xulosasi (raqamlar)
+        let _npScroll = 0, _npOchilgan = 0;
+
+        window.openNoPhoto = async function (yangidan) {
+            navMark('openNoPhoto');
+            if (yangidan !== false) {
+                _npPage = 0; _npItems = []; _npMore = false;
+                _npScroll = 0; _npOchilgan = 0; _npXul = null;
+            }
+            npChiz();
+            if (yangidan !== false) await npYukla(true);
+        };
+
+        // Ekran qobig'i — ro'yxat ichidagi #npList ga qo'shib boriladi.
+        function npChiz() {
+            const x = _npXul || {};
+            let html = '';
+            if (x.total) html += npXulosaHtml(x);
+            html += '<div id="npMsg" class="list-status"></div>' +
+                '<div class="search-bar" style="margin:12px 0">' +
+                '<span class="search-ic">🔍</span>' +
+                '<input type="text" id="npSearch" placeholder="Tovar nomi..." autocomplete="off" ' +
+                'value="' + escapeHtml(_npQ) + '">' +
+                '</div>' +
+                '<label class="np-switch"><input type="checkbox" ' + (_npStock ? 'checked' : '') +
+                ' onchange="npStock(this.checked)"><span>Faqat qoldig\'i borlari</span></label>' +
+                '<div class="list-status" id="npJami"></div>' +
+                '<div id="npList"></div>' +
+                '<div class="list-status" id="npHolat"></div>' +
+                '<button class="more-btn" id="npMoreBtn" style="display:none" ' +
+                'onclick="npYanaBos()">Yana ko\'rsatish ↓</button>';
+            openTool('🖼 Rasmsiz tovarlar', html);
+            npQatorlar(_npItems);
+            npJamiYoz();
+            npTugma();
+            const inp = $('npSearch');
+            if (inp) {
+                let t;
+                inp.addEventListener('input', e => {
+                    clearTimeout(t);
+                    t = setTimeout(() => { _npQ = e.target.value.trim(); npYukla(true); }, 400);
+                });
+            }
+            // Pastga yetganda keyingi sahifa o'zi yuklansin
+            cheksizRoyxat($('npMoreBtn'), () => npYanaBos());
+        }
+
+        function npXulosaHtml(x) {
+            return '<div class="np-xul">' +
+                '<div><b id="npOwn">' + x.own + '</b><span>o\'z surati bor</span></div>' +
+                '<div><b id="npGen">' + x.generic + '</b><span>umumiy rasm</span></div>' +
+                '<div><b id="npMiss">' + x.missing + '</b><span>rasmsiz</span></div>' +
+                '</div>' +
+                '<label class="np-switch"><input type="checkbox" ' +
+                (x.client_photo_only ? 'checked' : '') +
+                ' onchange="npMode(this.checked)">' +
+                '<span>Mijozga va saytga faqat <b>o\'z suratli</b> tovarlar ko\'rinsin</span></label>' +
+                (x.generic ? '<button class="cam-btn wide" onclick="npClean()">🧹 Umumiy rasmlarni tozalash (' +
+                    x.generic + ' ta)</button>' +
+                    '<div class="np-hint">Takrorlanadigan va internetdan olingan rasmlar ' +
+                    'tovarlardan uziladi, fayllari diskdan o\'chadi. Tovarning o\'zi, narxi va ' +
+                    'qoldig\'i tegilmaydi.</div>' : '');
+        }
+
+        function npJamiYoz() {
+            const el = $('npJami');
+            if (!el) return;
+            if (_npTotal) {
+                el.textContent = _npTotal +
+                    ' ta tovarda o\'z surati yo\'q — ustidan bosib surat qo\'ying';
+            } else {
+                el.innerHTML = _npYuk ? '' : '✅ Ro\'yxat bo\'sh';
+            }
+        }
+
+        function npTugma() {
+            const b = $('npMoreBtn');
+            if (b) b.style.display = _npMore ? 'block' : 'none';
+        }
+
+        // Tovar qatorlarini #npList ga QO'SHADI (qayta chizmaydi — surilgan
+        // joy saqlanib qolsin).
+        function npQatorlar(items) {
+            const box = $('npList');
+            if (!box || !items.length) return;
+            box.insertAdjacentHTML('beforeend', items.map(p => {
+                const rasm = p.generic_image
+                    ? '<img class="np-img" src="' + escapeHtml(fullImg(p.generic_image)) +
+                      '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
+                    : '<span class="np-img yoq">📷</span>';
+                const sotuv = p.sold > 0
+                    ? '<span style="color:var(--ok-text)">🔥 ' + p.sold + ' ta sotilgan</span>'
+                    : '<span>sotuv yo\'q</span>';
+                return '<div class="g-row" id="npR' + p.id + '" onclick="npOpen(' + p.id + ')">' + rasm +
+                    '<div><b>' + escapeHtml(p.name) + '</b>' +
+                    '<div class="g-meta">' + fmtSum(p.price_sum) + ' so\'m · qoldiq ' + p.qty +
+                    ' ' + escapeHtml(p.unit) + '</div>' +
+                    '<div class="g-meta">' + sotuv +
+                    (p.generic_image ? ' · <span style="color:var(--err-text)">umumiy rasm</span>' : '') +
+                    '</div></div><span>›</span></div>';
+            }).join(''));
+        }
+
+        async function npYukla(reset) {
+            if (_npYuk) return;
+            _npYuk = true;
+            if (reset) {
+                _npPage = 0; _npItems = [];
+                const l = $('npList'); if (l) l.innerHTML = '';
+            }
+            const h = $('npHolat'); if (h) h.textContent = 'Yuklanmoqda…';
+            const yol = '/api/products/no-photo?page=' + _npPage +
+                         '&stock=' + (_npStock ? 1 : 0) +
+                         '&q=' + encodeURIComponent(_npQ);
+            const [ro, xul] = await Promise.all([
+                apiFetch(yol),
+                (reset || !_npXul) ? apiFetch('/api/photos/summary') : Promise.resolve(null)
+            ]);
+            if (h) h.textContent = '';
+            if (!ro.ok || !ro.data.ok) {
+                if (h) h.innerHTML = toolError(ro.status, ro.data);
+                _npYuk = false;
+                return;
+            }
+            if (xul && xul.ok && xul.data.ok) {
+                const eski = !_npXul;
+                _npXul = xul.data;
+                if (eski) { npChiz(); }        // raqamlar birinchi marta keldi
+            }
+            const d = ro.data;
+            _npTotal = d.total || 0;
+            _npMore = !!d.has_more;
+            _npItems = _npItems.concat(d.items || []);
+            npQatorlar(d.items || []);
+            npJamiYoz();
+            npTugma();
+            _npYuk = false;
+            setTimeout(cheksizTekshir, 60);    // ekran to'lmagan bo'lsa davomi
+        }
+
+        window.npYanaBos = function () {
+            if (_npYuk || !_npMore) return;
+            _npPage += 1;
+            npYukla(false);
+        };
+
+        window.npOpen = function (id) {
+            _npScroll = window.scrollY || 0;   // qaytganda shu joyga tushamiz
+            _npOchilgan = id;
+            _qeArm = true; _qeQayer = 'nophoto';
+            openProductForm(id);
+        };
+
+        // Tovardan qaytish: ro'yxat QAYTA so'ralmaydi — xotiradagi holat
+        // chiziladi va o'sha joyga tushamiz. Suratini qo'ygan bo'lsak,
+        // tovar ro'yxatdan olinadi (endi u "rasmsiz" emas).
+        async function npQayt(id) {
+            npChiz();
+            const y = _npScroll;
+            requestAnimationFrame(() => { try { window.scrollTo(0, y); } catch (_) {} });
+            if (!id) return;
+            // Surat qo'yildimi — tovarning o'zidan so'raymiz (bitta so'rov).
+            const { ok, data } = await apiFetch('/api/product/' + id);
+            if (!(ok && data.ok && data.product && data.product.own_photo)) return;
+            _npItems = _npItems.filter(p => p.id !== id);
+            _npTotal = Math.max(0, _npTotal - 1);
+            const row = $('npR' + id);
+            if (row) row.remove();          // faqat shu qator ketadi — ro'yxat sakramaydi
+            npJamiYoz();
+            const m = $('npMsg');
+            if (m) m.innerHTML = '<span class="val-green">✅ Surat qo\'yildi — ro\'yxatdan olindi</span>';
+            // Tepadagi raqamlar ham jonli bo'lsin
+            const sum = await apiFetch('/api/photos/summary');
+            if (sum.ok && sum.data.ok) {
+                _npXul = sum.data;
+                const o = $('npOwn'), g = $('npGen'), ms = $('npMiss');
+                if (o) o.textContent = sum.data.own;
+                if (g) g.textContent = sum.data.generic;
+                if (ms) ms.textContent = sum.data.missing;
+            }
+        }
+
+        window.npStock = function (on) { _npStock = !!on; npYukla(true); };
+
+        window.npMode = async function (on) {
+            const { ok, data } = await apiFetch('/api/photos/mode', {
+                method: 'POST', body: JSON.stringify({ on: !!on })
+            });
+            const m = $('npMsg');
+            if (m) m.innerHTML = (ok && data.ok)
+                ? '<span class="val-green">✅ ' + (on
+                    ? 'Mijozga faqat o\'z suratli tovarlar ko\'rinadi'
+                    : 'Mijozga barcha tovarlar ko\'rinadi') + '</span>'
+                : '<span class="val-red">' + escapeHtml((data || {}).error || 'Xato') + '</span>';
+        };
+
+        window.npClean = async function () {
+            if (!confirm('Takrorlanadigan va internetdan olingan rasmlar tovarlardan ' +
+                         'uzilib, fayllari o\'chiriladi. Davom etamizmi?')) return;
+            const m = $('npMsg');
+            if (m) m.textContent = '⏳ Tozalanmoqda…';
+            const { ok, status, data } = await apiFetch('/api/photos/clean', {
+                method: 'POST', body: JSON.stringify({ delete_files: true })
+            });
+            if (!ok || !data.ok) {
+                if (m) m.innerHTML = '<span class="val-red">' +
+                    escapeHtml((data || {}).error || ('Xato ' + status)) + '</span>';
+                return;
+            }
+            if (m) m.innerHTML = '<span class="val-green">✅ ' + data.products +
+                ' ta tovardan rasm uzildi, ' + data.files + ' ta fayl o\'chirildi</span>';
+            setTimeout(() => openNoPhoto(), 900);
+        };
+
         // ── Noma'lum shtrix-kodni tovarga biriktirish ────────────────────
         // Kassa eksportida tovarlarning yarmidan ko'pining kodi yo'q, shuning
         // uchun skanerda «topilmadi» chiqishi odatiy hol. Har bir shunday
@@ -1107,10 +1598,17 @@
             setTimeout(() => loadProducts(true), 600);
         };
 
-        window.qeOpen = function (id) { _qeArm = true; openProductForm(id); };
+        window.qeOpen = function (id) { _qeArm = true; _qeQayer = 'quick'; openProductForm(id); };
+
+        // Tovar formasidan qaysi ro'yxatga qaytamiz
+        let _qeQayer = 'quick';
+        function qeQaytish() {
+            if (_qeQayer === 'nophoto') { npQayt(_npOchilgan); return; }
+            openQuickEdit();
+        }
 
         window.prodFormBack = function () {
-            if (_qeReturn) { _qeReturn = false; openQuickEdit(); return; }
+            if (_qeReturn) { _qeReturn = false; qeQaytish(); return; }
             showScreen(_editingId ? 'screenProdDetail' : 'screenProducts');
         };
 
@@ -1177,9 +1675,8 @@
                 if (tg && tg.HapticFeedback) { try{tg.HapticFeedback.notificationOccurred('success');}catch(_){} }
                 setTimeout(() => {
                     _editingId = 0;
-                    if (_qeReturn) { _qeReturn = false; openQuickEdit(); return; }
-                    showScreen('screenProducts');
-                    loadProducts(true);
+                    if (_qeReturn) { _qeReturn = false; qeQaytish(); return; }
+                    prodRoyxatga(true);
                 }, 800);
             } catch (err) {
                 $('pfStatus').textContent = 'Tarmoq xatosi: ' + (err.message||err);
@@ -1461,8 +1958,7 @@
                 });
                 if (ok && data.ok) {
                     toast('🗑 O\'chirildi');
-                    showScreen('screenProducts');
-                    loadProducts(true);
+                    prodRoyxatga(true);
                 } else {
                     toast('❌ ' + (data.error || 'Xato'));
                 }
@@ -3454,7 +3950,10 @@
             navYangiEkran(title);
             const t = $('toolTitle'), b = $('toolBody');
             if (t) t.textContent = title;
-            if (b) b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+            if (b) {
+                b.innerHTML = html || '<div class="list-status">Yuklanmoqda...</div>';
+                animKirish(b);
+            }
             showScreen('screenTool');
         }
 
@@ -4752,6 +5251,18 @@
                 </div>`);
         };
 
+        // Admin uchun alohida ekran: «🔑 Login/parol».
+        // Ilgari bu faqat mijozning «Hisobim» ekrani ichida turardi va
+        // adminda unga yo'l yo'q edi — login esdan chiqsa botga aynan
+        // «🔑 Login/parol» deb YOZISH kerak bo'lardi. Endi tugma bor.
+        window.openCreds = function () {
+            navMark('openCreds');
+            openTool('🔑 Login/parol',
+                '<div class="stat-block" id="credBlock">' +
+                '<div class="list-status">Yuklanmoqda...</div></div>');
+            renderCredentials();
+        };
+
         // ================================================================
         // KASSA/ADMIN ILOVASI UCHUN LOGIN-PAROL
         // ================================================================
@@ -4846,8 +5357,13 @@
                 posStatus.textContent = 'Tarmoq xatosi: ' + (err.message||err);
             }
             _posLoading = false;
+            setTimeout(cheksizTekshir, 60);
         }
-        window.loadMorePOS = function () { _posPage += 1; loadPOS(false); };
+        window.loadMorePOS = function () {
+            if (_posLoading) return;
+            _posPage += 1; loadPOS(false);
+        };
+        cheksizRoyxat(posMore, () => loadMorePOS());
 
         function renderPOS(items) {
             const frag = document.createDocumentFragment();
@@ -5886,6 +6402,10 @@
             ['products', '📦 Mahsulotlar'],
             ['cashier',  '💵 Kassir'],
             ['stats',    '📊 Hisobotlar'],
+            // «Maxsus» — bo'limlar qo'lda tanlangan holat. Ro'yxatda
+            // turishi kerak, aks holda shunday xodimning roli
+            // ko'rsatkichda noto'g'ri chiqardi.
+            ['custom',   '⚙️ Maxsus (qo\'lda)'],
         ];
         const _roleLabel = r =>
             (STAFF_ROLES.find(x => x[0] === r) || ['', '🔰 Cheklangan'])[1];
@@ -5967,6 +6487,11 @@
                                 style="border:none;background:#fee;color:#c00;border-radius:8px;padding:6px 10px;margin-left:6px;cursor:pointer;">🗑</button>
                     </span></div>`;
                 }
+                // Bo'lim-bo'lim ruxsat — faqat do'kon egasi uchun.
+                if (data.can_perms && !a.is_glavniy && a.telegram_id) {
+                    html += `<button class="cam-btn wide" onclick="openStaffPerms(${a.telegram_id})">
+                        ⚙️ Bo'limlarni sozlash</button>`;
+                }
                 html += '</div>';
             });
             if (!active.length) html += '<div class="list-status">Xodimlar yo\'q</div>';
@@ -6002,6 +6527,70 @@
                 'bad_phone':     'Telefon raqami noto\'g\'ri'
             }[kod] || kod || 'Qo\'shilmadi';
             toast('❌ ' + izoh);
+        };
+
+        // ── Xodim uchun bo'lim-bo'lim ruxsat (faqat bosh admin) ────────
+        // Tayyor rollar (Kassir, Mahsulotchi...) tezkor tanlov uchun
+        // qoladi; bu yerda esa har bir bo'limni alohida yoqib-o'chirish
+        // mumkin — shunda rol «Maxsus» ga o'tadi.
+        let _permsFor = 0;
+
+        window.openStaffPerms = async function (tgId) {
+            navMark('openStaffPerms', tgId);
+            openTool('\u2699\ufe0f Bo\'lim ruxsatlari');
+            const { ok, status, data } = await apiFetch(
+                '/api/staff/perms?telegram_id=' + encodeURIComponent(tgId));
+            if (!ok || !data.ok) return openTool('\u2699\ufe0f Bo\'lim ruxsatlari', toolError(status, data));
+            _permsFor = tgId;
+            const bor = new Set(data.perms || []);
+            const rollar = data.roles || [];
+            let html = '<div class="perm-head"><b>' + escapeHtml(data.name || ('ID ' + tgId)) +
+                       '</b><span>Hozirgi rol: ' +
+                       escapeHtml((rollar.find(r => r.k === data.role) || {}).label || data.role) +
+                       '</span></div>';
+            html += '<div class="perm-roles">';
+            rollar.forEach(r => {
+                html += '<button class="cam-chip" onclick="permRole(\'' + r.k + '\')">' +
+                        escapeHtml(r.label) + '</button>';
+            });
+            html += '<button class="cam-chip" onclick="permHammasi(1)">Hammasi</button>' +
+                    '<button class="cam-chip" onclick="permHammasi(0)">Hech biri</button></div>';
+            html += '<div class="perm-list">';
+            (data.all || []).forEach(x => {
+                html += '<label class="perm-row"><span>' + escapeHtml(x.label) + '</span>' +
+                        '<input type="checkbox" value="' + x.k + '"' +
+                        (bor.has(x.k) ? ' checked' : '') + '></label>';
+            });
+            html += '</div>';
+            html += '<button class="cam-btn primary wide" onclick="saveStaffPerms()">\ud83d\udcbe Saqlash</button>';
+            html += '<button class="cam-btn wide" onclick="openStaff()">\u2190 Xodimlarga qaytish</button>';
+            html += '<div class="cam-hint">Belgilangan bo\'limlargina ko\'rinadi. ' +
+                    'Bu sozlamani faqat siz o\'zgartira olasiz.</div>';
+            // Tayyor rollarning tarkibi — tugma bosilganda shundan olinadi
+            window._permRoles = {};
+            rollar.forEach(r => { window._permRoles[r.k] = r.perms || []; });
+            openTool('\u2699\ufe0f Bo\'lim ruxsatlari', html);
+        };
+
+        function permQutilar() {
+            return [...document.querySelectorAll('.perm-list input[type=checkbox]')];
+        }
+        window.permHammasi = function (yoq) {
+            permQutilar().forEach(c => { c.checked = !!yoq; });
+        };
+        window.permRole = function (rol) {
+            const ro = new Set((window._permRoles || {})[rol] || []);
+            permQutilar().forEach(c => { c.checked = ro.has(c.value); });
+        };
+
+        window.saveStaffPerms = async function () {
+            const perms = permQutilar().filter(c => c.checked).map(c => c.value);
+            const { ok, status, data } = await apiFetch('/api/staff/perms', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ telegram_id: _permsFor, perms: perms })
+            });
+            if (ok && data.ok) { toast('\u2705 Saqlandi (' + perms.length + ' ta bo\'lim)'); openStaff(); }
+            else toast('\u274c ' + ((data && data.error) || ('Xato ' + status)));
         };
 
         window.setStaffRole = async function (tgId, role) {
@@ -6102,8 +6691,589 @@
         };
 
         // ================================================================
+        // 📹 KAMERALAR — do'kondagi IP kameralarni ko'rish
+        // ================================================================
+        // Kameralar do'kon tarmog'ida turadi, telefon esa tashqarida —
+        // shuning uchun tasvirni SERVER olib beradi (bot/api_cams.py).
+        // Bu yerda ikki ko'rinish bor:
+        //   • to'r      — har kameradan 2 soniyada bitta kadr (trafik kam);
+        //   • to'liq    — uzluksiz oqim (MJPEG), kechikish ~1 soniya.
+        // Oqim manzili `<img src=...>` ga yoziladi, unga header qo'shib
+        // bo'lmaydi — shuning uchun server bergan qisqa muddatli token
+        // manzilning o'zida ketadi.
+        let _camList   = [];
+        let _camToken  = '';
+        let _camSubnet = '';
+        let _camTimer  = null;
+        let _camFullId = 0;       // to'liq ekranda turgan kamera
+        let _camFullTimer = null; // oqim ishlamasa — kadrma-kadr zaxira
+        let _camZ = { k: 1, x: 0, y: 0 };   // yaqinlashtirish va surish
+        let _camProfile = 'full'; // 'hi' — yaqinlashtirilganda to'liq aniqlik
+        let _camHiTimer = null;
+        let _camAudio = null;     // ovoz oqimi (<audio>)
+
+        function camUrl(id, file, profile) {
+            return API_BASE_URL + '/api/cams/' + id + '/' + file +
+                   '?t=' + encodeURIComponent(_camToken) + '&p=' + profile;
+        }
+
+        // Oqim tokeni server XOTIRASIDA turadi — bot qayta ishga tushsa
+        // yo'qoladi va telefonda ochiq turgan to'r jimgina «ulanmadi»
+        // bo'lib qoladi (serverda 401 lar ko'rinadi). Kadr kelmaganda
+        // tokenni o'zimiz yangilaymiz: odam bo'limni qayta ochmasin.
+        let _camTokenAt = 0;
+        async function camTokenYangila() {
+            if (Date.now() - _camTokenAt < 15000) return;   // har kadrda emas
+            _camTokenAt = Date.now();
+            const { ok, data } = await apiFetch('/api/cams');
+            if (ok && data.ok && data.token) _camToken = data.token;
+        }
+
+        function camStop() {
+            if (_camTimer) { clearInterval(_camTimer); _camTimer = null; }
+        }
+
+        // To'r ochiq turganini tekshiramiz: boshqa bo'limga o'tilsa
+        // kadrlarni so'rashdan to'xtaymiz (bekorga trafik ketmasin).
+        function camVisible() {
+            const sc = $('screenTool');
+            return sc && sc.classList.contains('active') &&
+                   ($('camGrid') || $('camSetup'));
+        }
+
+        window.openCams = async function () {
+            navMark('openCams');
+            camStop();
+            openTool('📹 Kameralar');
+            const { ok, status, data } = await apiFetch('/api/cams');
+            if (!ok || !data.ok) return openTool('📹 Kameralar', toolError(status, data));
+            _camList   = data.cams || [];
+            _camToken  = data.token || '';
+            _camSubnet = data.subnet || '';
+            camRenderGrid(data.ffmpeg === false);
+        };
+
+        function camRenderGrid(noFfmpeg) {
+            const on = _camList.filter(c => c.enabled && (c.main_path || c.sub_path));
+            let html = '';
+            if (noFfmpeg) {
+                html += '<div class="cam-warn">⚠️ Serverda <b>ffmpeg</b> o\'rnatilmagan — ' +
+                        'tasvir ko\'rsatib bo\'lmaydi.</div>';
+            }
+            html += '<div class="cam-top">' +
+                    '<button class="cam-btn" onclick="openCamsSetup()">⚙️ Sozlash</button>' +
+                    '<button class="cam-btn" onclick="openCams()">🔄 Yangilash</button>' +
+                    '</div>';
+            if (!on.length) {
+                html += '<div class="cam-empty"><span>📹</span>' +
+                        '<h3>Kamera qo\'shilmagan</h3>' +
+                        '<p>Do\'kon tarmog\'idagi kameralarni topib, ro\'yxatga qo\'shing.</p>' +
+                        '<button class="cam-btn primary" onclick="openCamsSetup()">⚙️ Sozlashni ochish</button></div>';
+            } else {
+                html += '<div class="cam-grid" id="camGrid">';
+                on.forEach(c => {
+                    html += '<div class="cam-card" onclick="camOpen(' + c.id + ')">' +
+                            '<div class="cam-shot"><img id="camImg' + c.id + '" alt="" ' +
+                            'onerror="camImgErr(' + c.id + ')" onload="camImgOk(' + c.id + ')">' +
+                            '<div class="cam-state" id="camSt' + c.id + '">ulanmoqda…</div></div>' +
+                            '<div class="cam-name">' + escapeHtml(c.name) + '</div></div>';
+                });
+                html += '</div>';
+            }
+            openTool('📹 Kameralar', html);
+            if (on.length) {
+                camTick();                                  // birinchi kadr darrov
+                _camTimer = setInterval(camTick, 2500);
+            }
+        }
+
+        function camTick() {
+            if (!camVisible() || !$('camGrid')) return camStop();
+            if (_camFullId) return;                 // to'liq ekranda — to'r kutib turadi
+            const t = Date.now();
+            _camList.forEach(c => {
+                const img = $('camImg' + c.id);
+                if (img) img.src = camUrl(c.id, 'snap.jpg', 'grid') + '&_=' + t;
+            });
+        }
+
+        window.camImgOk = function (id) {
+            const st = $('camSt' + id); if (st) st.style.display = 'none';
+            const img = $('camImg' + id); if (img) img.classList.add('on');
+        };
+        window.camImgErr = function (id) {
+            const st = $('camSt' + id);
+            if (st) { st.style.display = 'block'; st.textContent = 'ulanmadi'; }
+            camTokenYangila();        // sabab eskirgan token bo'lsa — o'zi tuzaladi
+        };
+
+        // ── To'liq ekran ────────────────────────────────────────────────
+        // To'liq ekranda ko'rsatiladigan kameralar — to'rdagi tartibda.
+        // Bittasini ochib, chap-o'ngga surib qolganlariga o'tiladi:
+        // nazoratchi har safar ro'yxatga qaytmasligi kerak.
+        function camKorinadiganlar() {
+            return _camList.filter(c => c.enabled && (c.main_path || c.sub_path));
+        }
+
+        window.camOpen = function (id) {
+            const cam = _camList.find(c => c.id === id);
+            if (!cam) return;
+            _camFullId = id;
+            camAudioStop();                 // boshqa kameraning ovozi qolmasin
+            _camZ = { k: 1, x: 0, y: 0 };   // har kamera 1× dan ochiladi
+            _camProfile = 'full';
+            clearTimeout(_camHiTimer);
+            let ov = $('camOverlay');
+            if (!ov) {
+                ov = document.createElement('div');
+                ov.id = 'camOverlay'; ov.className = 'cam-overlay';
+                document.body.appendChild(ov);
+            }
+            const ro = camKorinadiganlar();
+            const idx = ro.findIndex(c => c.id === id);
+            const kop = ro.length > 1;
+            ov.innerHTML =
+                '<div class="cam-ov-bar"><b id="camOvName">' + escapeHtml(cam.name) +
+                (kop ? ' <span class="cam-ov-num">' + (idx + 1) + '/' + ro.length + '</span>' : '') +
+                '</b>' +
+                '<div class="cam-ov-acts">' +
+                '<button class="cam-ov-act" id="camSound" onclick="camSound()" title="Ovoz">🔇</button>' +
+                '<button class="cam-ov-act" onclick="camZoom(-1)" title="Uzoqlashtirish">−</button>' +
+                '<span class="cam-ov-zk" id="camZk">1.0×</span>' +
+                '<button class="cam-ov-act" onclick="camZoom(1)" title="Yaqinlashtirish">+</button>' +
+                '<button onclick="camClose()">✕</button>' +
+                '</div></div>' +
+                '<div class="cam-ov-body" id="camOvBody">' +
+                (kop ? '<button class="cam-ov-nav chap" onclick="camGoto(-1)">‹</button>' : '') +
+                '<img id="camOvImg" alt="" onerror="camOvFallback()">' +
+                (kop ? '<button class="cam-ov-nav ong" onclick="camGoto(1)">›</button>' : '') +
+                '<div class="cam-ov-wait" id="camOvWait">Ulanmoqda…</div></div>' +
+                '<div class="cam-ov-foot" id="camOvFoot">' +
+                'Ikki barmoq bilan yaqinlashtiring · surib ko\'ring' +
+                (kop ? ' · chapga-o\'ngga — qo\'shni kamera' : '') + '</div>';
+            ov.style.display = 'flex';
+            const img = $('camOvImg');
+            img.onload = () => { const w = $('camOvWait'); if (w) w.style.display = 'none'; };
+            img.src = camUrl(id, 'live.mjpg', _camProfile);
+            camZApply();
+            camIshoralar();
+        };
+
+        // ── Yaqinlashtirish (zoom) va surish (pan) ──────────────────────
+        // Kamera tasviri — oddiy rasm, shuning uchun yaqinlashtirishni
+        // o'zimiz chizamiz: transform bilan kattalashtirib, chetga chiqib
+        // ketmasin deb chegaralab turamiz. 1.5× dan oshsa server KATTA
+        // (1920px) oqimga o'tadi — aks holda kattalashtirilgan 960px kadr
+        // xira bo'lib, yaqinlashtirishdan ma'no qolmaydi.
+        function camZClamp() {
+            const img = $('camOvImg');
+            if (!img) return;
+            if (_camZ.k <= 1.001) { _camZ.k = 1; _camZ.x = 0; _camZ.y = 0; return; }
+            const w = img.clientWidth, h = img.clientHeight;
+            const mx = (w * _camZ.k - w) / 2, my = (h * _camZ.k - h) / 2;
+            _camZ.x = Math.max(-mx, Math.min(mx, _camZ.x));
+            _camZ.y = Math.max(-my, Math.min(my, _camZ.y));
+        }
+
+        function camZApply() {
+            const img = $('camOvImg');
+            if (!img) return;
+            camZClamp();
+            img.style.transform = 'translate(' + _camZ.x.toFixed(1) + 'px,' +
+                _camZ.y.toFixed(1) + 'px) scale(' + _camZ.k.toFixed(3) + ')';
+            const z = $('camZk'); if (z) z.textContent = _camZ.k.toFixed(1) + '×';
+            const b = $('camOvBody');
+            if (b) b.classList.toggle('kattalashgan', camZoomed());
+            camSifat();
+        }
+
+        window.camZoomed = function () { return _camZ.k > 1.02; };
+
+        window.camZoom = function (yon) {
+            const eski = _camZ.k;
+            const k = Math.max(1, Math.min(4, Math.round((eski + yon * 0.5) * 100) / 100));
+            _camZ.x *= k / eski; _camZ.y *= k / eski; _camZ.k = k;
+            camZApply();
+        };
+
+        // Yaqinlashtirilgan bo'lsa — kattaroq oqimga o'tamiz (va aksincha).
+        function camSifat() {
+            if (!_camFullId) return;
+            const kerak = _camZ.k > 1.5 ? 'hi' : 'full';
+            if (kerak === _camProfile) return;
+            clearTimeout(_camHiTimer);
+            // Barmoq hali qimirlab turganda oqimni qayta ulamaymiz — avval
+            // masshtab tinchisin (aks holda har harakatda uziladi).
+            _camHiTimer = setTimeout(() => {
+                const yangi = _camZ.k > 1.5 ? 'hi' : 'full';
+                if (!_camFullId || yangi === _camProfile) return;
+                _camProfile = yangi;
+                // Kadrma-kadr rejimda src ni o'zi keyingi kadrda yangilaydi
+                if (_camFullTimer) return;
+                const img = $('camOvImg');
+                if (img) img.src = camUrl(_camFullId, 'live.mjpg', _camProfile);
+                const foot = $('camOvFoot');
+                if (foot) foot.textContent = yangi === 'hi'
+                    ? 'Yaqin ko\'rinish — to\'liq aniqlik'
+                    : 'Ikki barmoq bilan yaqinlashtiring · surib ko\'ring';
+            }, 450);
+        }
+
+        // Barmoq ishoralari: ikki barmoq — masshtab, bitta barmoq
+        // (yaqinlashtirilganda) — surish, ikki marta tegish — 2.5× / 1×.
+        function camIshoralar() {
+            const body = $('camOvBody');
+            if (!body || body.dataset.ishora === '1') return;
+            body.dataset.ishora = '1';
+            let rejim = 0, sx = 0, sy = 0, bx = 0, by = 0, d0 = 0, k0 = 1;
+            let mx0 = 0, my0 = 0, tegish = 0, qimir = 0;
+            const masofa = t => Math.hypot(t[0].clientX - t[1].clientX,
+                                           t[0].clientY - t[1].clientY);
+
+            body.addEventListener('touchstart', e => {
+                if (e.touches.length === 2) {
+                    rejim = 2; d0 = masofa(e.touches) || 1; k0 = _camZ.k;
+                    bx = _camZ.x; by = _camZ.y;
+                    const r = body.getBoundingClientRect();
+                    mx0 = (e.touches[0].clientX + e.touches[1].clientX) / 2 - (r.left + r.width / 2);
+                    my0 = (e.touches[0].clientY + e.touches[1].clientY) / 2 - (r.top + r.height / 2);
+                    e.preventDefault(); e.stopPropagation();
+                } else if (e.touches.length === 1 && camZoomed()) {
+                    rejim = 1; qimir = 0;
+                    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+                    bx = _camZ.x; by = _camZ.y;
+                    e.stopPropagation();        // qo'shni kameraga o'tmasin
+                } else {
+                    rejim = 0;
+                }
+            }, { passive: false });
+
+            body.addEventListener('touchmove', e => {
+                if (rejim === 2 && e.touches.length === 2) {
+                    const k = Math.max(1, Math.min(4, k0 * masofa(e.touches) / d0));
+                    // Barmoqlar orasidagi nuqta joyida qolsin
+                    _camZ.x = mx0 - (mx0 - bx) * k / k0;
+                    _camZ.y = my0 - (my0 - by) * k / k0;
+                    _camZ.k = k;
+                    camZApply();
+                    e.preventDefault(); e.stopPropagation();
+                } else if (rejim === 1 && e.touches.length === 1) {
+                    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+                    qimir = Math.max(qimir, Math.abs(dx) + Math.abs(dy));
+                    _camZ.x = bx + dx; _camZ.y = by + dy;
+                    camZApply();
+                    e.preventDefault(); e.stopPropagation();
+                }
+            }, { passive: false });
+
+            body.addEventListener('touchend', e => {
+                if (rejim) e.stopPropagation();
+                if (rejim === 0 || (rejim === 1 && qimir < 8)) {
+                    const hozir = Date.now();
+                    if (hozir - tegish < 320) {        // ikki marta tegish
+                        _camZ = _camZ.k > 1.02 ? { k: 1, x: 0, y: 0 }
+                                               : { k: 2.5, x: 0, y: 0 };
+                        camZApply();
+                        e.preventDefault(); e.stopPropagation();
+                    }
+                    tegish = hozir;
+                }
+                if (!e.touches.length) rejim = 0;
+            }, { passive: false });
+
+            // Kompyuterda: g'ildirak — masshtab, sichqoncha bilan surish
+            body.addEventListener('wheel', e => {
+                e.preventDefault();
+                camZoom(e.deltaY < 0 ? 1 : -1);
+            }, { passive: false });
+            body.addEventListener('mousedown', e => {
+                if (!camZoomed()) return;
+                const ax = e.clientX, ay = e.clientY, px = _camZ.x, py = _camZ.y;
+                const yur = ev => { _camZ.x = px + ev.clientX - ax; _camZ.y = py + ev.clientY - ay; camZApply(); };
+                const tin = () => { document.removeEventListener('mousemove', yur);
+                                    document.removeEventListener('mouseup', tin); };
+                document.addEventListener('mousemove', yur);
+                document.addEventListener('mouseup', tin);
+                e.preventDefault();
+            });
+        }
+
+        // ── Ovoz ────────────────────────────────────────────────────────
+        // Ovoz tasvirdan ALOHIDA oqim bo'lib keladi (<img> ovoz chiqarmaydi).
+        // Brauzer o'z-o'zidan ovoz yoqishga ruxsat bermaydi — shuning uchun
+        // faqat tugma bosilganda yoqamiz.
+        function camAudioStop() {
+            if (_camAudio) {
+                try { _camAudio.pause(); } catch (_) {}
+                try { _camAudio.src = ''; _camAudio.load(); } catch (_) {}
+                _camAudio = null;
+            }
+            const b = $('camSound');
+            if (b) { b.textContent = '🔇'; b.classList.remove('on'); }
+        }
+
+        window.camSound = async function () {
+            const btn = $('camSound');
+            if (_camAudio) { camAudioStop(); return; }
+            if (!_camFullId) return;
+            if (btn) btn.textContent = '⏳';
+            const url = camUrl(_camFullId, 'audio', 'full');
+            const a = new Audio(url);
+            a.preload = 'none';
+            _camAudio = a;
+            a.onerror = () => { if (_camAudio === a) camAudioXato(url); };
+            try {
+                await a.play();
+                if (_camAudio === a && btn) { btn.textContent = '🔊'; btn.classList.add('on'); }
+            } catch (e) {
+                if (_camAudio === a) camAudioXato(url);
+            }
+        };
+
+        // Nega ovoz chiqmadi: kamerada mikrofon yo'qmi yoki token eskirganmi —
+        // serverning o'zi aytib beradi (503 javobida sabab bor).
+        async function camAudioXato(url) {
+            camAudioStop();
+            let sabab = 'ovozni ochib bo\'lmadi';
+            try {
+                const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                if (!r.ok) {
+                    const d = await r.json().catch(() => ({}));
+                    sabab = d.error || ('xato ' + r.status);
+                    if (r.status === 401) { camTokenYangila(); sabab = 'ulanish yangilandi — qayta bosing'; }
+                }
+            } catch (_) {}
+            const foot = $('camOvFoot');
+            if (foot) foot.textContent = '🔇 ' + sabab;
+        }
+
+        // Qo'shni kameraga o'tish (-1 chapga, +1 o'ngga; ro'yxat aylanma).
+        window.camGoto = function (yon) {
+            const ro = camKorinadiganlar();
+            if (ro.length < 2 || !_camFullId) return;
+            const i = ro.findIndex(c => c.id === _camFullId);
+            const keyingi = ro[(i + yon + ro.length) % ro.length];
+            // Eski oqimni uzamiz, aks holda u fonda ishlab turaveradi
+            // va server bekorga ikkita kamerani dekodlaydi.
+            const eski = $('camOvImg');
+            if (eski) eski.src = '';
+            if (_camFullTimer) { clearInterval(_camFullTimer); _camFullTimer = null; }
+            camOpen(keyingi.id);
+            const body = $('camOvBody');
+            if (body) {
+                body.classList.remove('surildi-chap', 'surildi-ong');
+                void body.offsetWidth;
+                body.classList.add(yon > 0 ? 'surildi-ong' : 'surildi-chap');
+            }
+        };
+
+        // Uzluksiz oqim o'tmasa (tarmoq yoki tunnel yo'l qo'ymasa) —
+        // kadrma-kadr so'raymiz: sifati o'sha, faqat biroz uzuq-yuluq.
+        window.camOvFallback = function () {
+            if (!_camFullId || _camFullTimer) return;
+            camTokenYangila();
+            const foot = $('camOvFoot');
+            if (foot) foot.textContent = 'Kadrma-kadr rejim';
+            const step = () => {
+                const img = $('camOvImg');
+                if (!img || !_camFullId) return;
+                img.src = camUrl(_camFullId, 'snap.jpg', _camProfile) + '&_=' + Date.now();
+            };
+            const img = $('camOvImg');
+            if (img) img.onerror = null;
+            step();
+            _camFullTimer = setInterval(step, 900);
+        };
+
+        window.camClose = function () {
+            _camFullId = 0;
+            camAudioStop();
+            clearTimeout(_camHiTimer);
+            _camZ = { k: 1, x: 0, y: 0 };
+            if (_camFullTimer) { clearInterval(_camFullTimer); _camFullTimer = null; }
+            const img = $('camOvImg');
+            if (img) img.src = '';           // oqimni uzamiz, aks holda fonda davom etadi
+            const ov = $('camOverlay');
+            if (ov) { ov.style.display = 'none'; ov.innerHTML = ''; }
+        };
+
+        // ── Sozlash: ro'yxat, topish, qo'shish ──────────────────────────
+        window.openCamsSetup = function (found) {
+            navMark('openCamsSetup');
+            camStop();
+            let html = '<div id="camSetup">' +
+                '<div class="cam-top">' +
+                '<button class="cam-btn" onclick="openCams()">👁 Ko\'rish</button>' +
+                '<button class="cam-btn" onclick="camDiscover()">🔍 Tarmoqdan topish</button>' +
+                '</div>' +
+                '<div id="camFound">' + (found || '') + '</div>';
+            if (_camList.length) {
+                html += '<div class="cam-rows">';
+                _camList.forEach(c => {
+                    const sozlangan = c.main_path || c.sub_path;
+                    html += '<div class="cam-row">' +
+                        '<div class="cam-row-main"><b>' + escapeHtml(c.name) + '</b>' +
+                        '<span>' + escapeHtml(c.host) + (c.port !== 554 ? ':' + c.port : '') +
+                        (sozlangan ? '' : ' · <i>yo\'li aniqlanmagan</i>') +
+                        (c.enabled ? '' : ' · <i>o\'chiq</i>') + '</span></div>' +
+                        '<div class="cam-row-btns">' +
+                        '<button class="cam-mini" onclick="camForm(' + c.id + ')">✏️</button>' +
+                        '<button class="cam-mini" onclick="camDelete(' + c.id + ')">🗑</button>' +
+                        '</div></div>';
+                });
+                html += '</div>';
+            }
+            html += '<button class="cam-btn primary wide" onclick="camForm(0)">➕ Kamera qo\'shish</button>';
+            html += '<div class="cam-hint">Kameralar server bilan bitta tarmoqda bo\'lishi kerak ' +
+                    '(' + escapeHtml(_camSubnet || '192.168.x') + '.x). Parol kameraning ' +
+                    'o\'z sozlamasidan olinadi — odatda <b>admin</b>.</div>';
+            html += '</div>';
+            openTool('📹 Kameralar — sozlash', html);
+        };
+
+        window.camDiscover = async function () {
+            const box = $('camFound');
+            if (box) box.innerHTML = '<div class="cam-hint">🔍 Tarmoq tekshirilmoqda…</div>';
+            const { ok, status, data } = await apiFetch('/api/admin/cams/discover', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (!ok || !data.ok) {
+                if (box) box.innerHTML = toolError(status, data);
+                return;
+            }
+            const yangi = (data.found || []).filter(f => !f.added);
+            let html = '<div class="cam-found"><b>Topildi: ' + (data.found || []).length +
+                       ' ta qurilma</b> (' + escapeHtml(data.subnet) + '.x)';
+            if (!yangi.length) {
+                html += '<p>Yangi kamera yo\'q — topilganlarning hammasi ro\'yxatda.</p>';
+            } else {
+                html += '<p>Qo\'shish uchun bosing:</p><div class="cam-chips">';
+                yangi.forEach(f => {
+                    html += '<button class="cam-chip" onclick="camForm(0,\'' +
+                            escapeHtml(f.host) + '\')">' + escapeHtml(f.host) + '</button>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+            if (box) box.innerHTML = html;
+        };
+
+        window.camForm = function (id, host) {
+            const c = _camList.find(x => x.id === id) || {};
+            navMark('camForm', id, host);
+            openTool(id ? '✏️ Kamerani tahrirlash' : '➕ Yangi kamera',
+                '<div class="cam-form">' +
+                '<label>Nomi</label>' +
+                '<input id="cfName" type="text" placeholder="Masalan: Kirish eshigi" value="' +
+                    escapeHtml(c.name || '') + '">' +
+                '<label>IP manzil *</label>' +
+                '<input id="cfHost" type="text" inputmode="decimal" placeholder="192.168.1.10" value="' +
+                    escapeHtml(c.host || host || '') + '">' +
+                '<label>RTSP port</label>' +
+                '<input id="cfPort" type="number" inputmode="numeric" value="' + (c.port || 554) + '">' +
+                '<label>Login</label>' +
+                '<input id="cfUser" type="text" autocomplete="off" placeholder="admin" value="' +
+                    escapeHtml(c.username || '') + '">' +
+                '<label>Parol' + (c.has_password ? ' (saqlangan — o\'zgartirmasangiz bo\'sh qoldiring)' : '') + '</label>' +
+                '<input id="cfPass" type="password" autocomplete="new-password" placeholder="' +
+                    (c.has_password ? '••••••••' : 'kamera paroli') + '">' +
+                '<div class="cam-paths">' +
+                '<label>Oqim yo\'li (bo\'sh qoldiring — o\'zi aniqlaydi)</label>' +
+                '<input id="cfMain" type="text" placeholder="/Streaming/Channels/101" value="' +
+                    escapeHtml(c.main_path || '') + '">' +
+                '<input id="cfSub" type="text" placeholder="/Streaming/Channels/102 (kichik oqim)" value="' +
+                    escapeHtml(c.sub_path || '') + '">' +
+                '</div>' +
+                '<div id="cfStatus" class="cam-hint"></div>' +
+                '<button class="cam-btn primary wide" onclick="camSave(' + (id || 0) + ')">💾 Saqlash</button>' +
+                (id ? '<button class="cam-btn wide" onclick="camProbe(' + id + ')">🔎 Oqim yo\'lini aniqlash</button>' : '') +
+                '<button class="cam-btn wide" onclick="openCamsSetup()">← Bekor qilish</button>' +
+                '</div>');
+        };
+
+        function camStatus(msg) {
+            const s = $('cfStatus'); if (s) s.innerHTML = msg;
+        }
+
+        window.camSave = async function (id) {
+            const host = ($('cfHost').value || '').trim();
+            if (!host) return camStatus('⚠️ IP manzil kiriting.');
+            const body = {
+                id: id,
+                name: ($('cfName').value || '').trim(),
+                host: host,
+                port: parseInt($('cfPort').value || '554', 10) || 554,
+                username: ($('cfUser').value || '').trim(),
+                main_path: ($('cfMain').value || '').trim(),
+                sub_path: ($('cfSub').value || '').trim(),
+                enabled: true
+            };
+            // Parol bo'sh bo'lsa YUBORMAYMIZ — serverda eskisi saqlanib qoladi
+            const pass = $('cfPass').value;
+            if (pass) body.password = pass;
+            else if (!id) body.password = '';
+            camStatus('💾 Saqlanmoqda…');
+            const { ok, status, data } = await apiFetch('/api/admin/cams/save', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!ok || !data.ok) return camStatus(toolError(status, data));
+            const yangi = data.cam;
+            const i = _camList.findIndex(x => x.id === yangi.id);
+            if (i >= 0) _camList[i] = yangi; else _camList.push(yangi);
+            // Yo'l hali noma'lum bo'lsa — darrov aniqlab beramiz, odam
+            // kamera modelini qidirib o'tirmasin.
+            if (!yangi.main_path) return camProbe(yangi.id, true);
+            openCamsSetup();
+        };
+
+        window.camProbe = async function (id, saqlandi) {
+            camStatus('🔎 Kamera tekshirilmoqda… (yarim daqiqagacha ketishi mumkin)');
+            const body = { id: id };
+            const pass = $('cfPass') ? $('cfPass').value : '';
+            if (pass) body.password = pass;
+            const user = $('cfUser') ? ($('cfUser').value || '').trim() : '';
+            if (user) body.username = user;
+            const { ok, status, data } = await apiFetch('/api/admin/cams/probe', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!ok) return camStatus(toolError(status, data));
+            if (!data.ok) {
+                return camStatus('❌ Ulanmadi: ' + escapeHtml(data.error || '') +
+                    '<br>Login/parolni tekshiring' +
+                    (saqlandi ? ' — kamera ro\'yxatga qo\'shildi, keyin qayta urinib ko\'ring.' : '.'));
+            }
+            const c = _camList.find(x => x.id === id);
+            if (c) { c.main_path = data.main_path; c.sub_path = data.sub_path; }
+            camStatus('✅ Topildi: <code>' + escapeHtml(data.main_path) + '</code>');
+            setTimeout(openCams, 900);
+        };
+
+        window.camDelete = async function (id) {
+            const c = _camList.find(x => x.id === id);
+            if (!confirm('«' + ((c && c.name) || id) + '» kamerasi ro\'yxatdan o\'chirilsinmi?')) return;
+            const { ok, data } = await apiFetch('/api/admin/cams/delete', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            });
+            if (ok && data.ok) _camList = _camList.filter(x => x.id !== id);
+            openCamsSetup();
+        };
+
+        // ================================================================
         // ESC KEY
         // ================================================================
+        // Kamera to'liq ekranda: strelkalar bilan qo'shnisiga, Esc bilan chiqish
+        document.addEventListener('keydown', (e) => {
+            const ov = $('camOverlay');
+            if (!ov || ov.style.display !== 'flex') return;
+            if (e.key === 'ArrowRight') camGoto(1);
+            else if (e.key === 'ArrowLeft') camGoto(-1);
+            else if (e.key === 'Escape') camClose();
+        });
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && screenLogin.classList.contains('active')) {
                 loginInput.blur();

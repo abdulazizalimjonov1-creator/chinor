@@ -63,6 +63,8 @@ module.exports = {
   // Yangi tovar (id=0 → avtomat SKU) yoki mavjudini tahrirlash.
   productSave: (base, token, prod) =>
     req(base, '/api/product/save', { method: 'POST', token, body: prod, timeout: 20000 }),
+  productDelete: (base, token, id) =>
+    req(base, '/api/product/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
   clients: (base, token) =>
     req(base, '/api/clients', { token, timeout: 20000 }),
   admins: (base, token) =>
@@ -135,6 +137,164 @@ module.exports = {
     req(base, `/api/client/detail?client_id=${Number(client_id) || 0}`, { token, timeout: 20000 }),
   clientsTop: (base, token, days = 30) =>
     req(base, `/api/clients/top?days=${Number(days) || 0}`, { token, timeout: 20000 }),
+  // ── Tovar suratlari ─────────────────────────────────────────────────────────
+  // Mini App'dagi «Rasmsiz tovarlar» bo'limi bilan BIR XIL endpointlar:
+  // qoida serverda (bot/api_photos.py), shuning uchun telefon va kompyuter
+  // bir narsani ko'rsatadi.
+  photosSummary: (base, token) =>
+    req(base, '/api/photos/summary', { token, timeout: 30000 }),
+  noPhoto: (base, token, page = 0, q = '', stock = true, limit = 100) =>
+    req(base, `/api/products/no-photo?page=${page}&stock=${stock ? 1 : 0}` +
+              `&q=${encodeURIComponent(q)}&limit=${limit}`, { token, timeout: 30000 }),
+  // Tozalash minglab qatorni yangilaydi va fayllarni o'chiradi — sekin.
+  photosClean: (base, token) =>
+    req(base, '/api/photos/clean', { method: 'POST', token,
+        body: { delete_files: true }, timeout: 180000 }),
+  photosMode: (base, token, on) =>
+    req(base, '/api/photos/mode', { method: 'POST', token, body: { on: !!on }, timeout: 15000 }),
+  // Tovarga surat yuklash (multipart). Server fonni kesib brendlaydi —
+  // bu 10-60 soniya olishi mumkin, shuning uchun timeout uzun.
+  productImage: async (base, token, id, bytes, filename = 'photo.jpg') => {
+    const url = String(base).replace(/\/+$/, '') + '/api/product/image';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 180000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const fd = new FormData();
+      fd.append('id', String(Number(id) || 0));
+      fd.append('photo', new Blob([u8]), filename);
+      const res = await fetch(url, { method: 'POST', headers, body: fd, signal: ctrl.signal });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { data = { ok: false, error: 'Serverdan noto\'g\'ri javob', raw: text.slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi (rasm katta yoki server band)' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // ── Moliya: naqd kirim/chiqim jurnali ───────────────────────────────────────
+  cashMovements: (base, token, from = '', to = '', limit = 300) => {
+    const qs = [`limit=${Number(limit) || 300}`];
+    if (from) qs.push('from=' + encodeURIComponent(from));
+    if (to) qs.push('to=' + encodeURIComponent(to));
+    return req(base, '/api/cash-movements?' + qs.join('&'), { token, timeout: 25000 });
+  },
+
+  // ── Past qoldiq ─────────────────────────────────────────────────────────────
+  lowStock: (base, token, threshold = 0) =>
+    req(base, '/api/low-stock' + (threshold ? `?threshold=${Number(threshold)}` : ''),
+        { token, timeout: 25000 }),
+
+  // ── Kategoriyalar ───────────────────────────────────────────────────────────
+  categories: (base, token) =>
+    req(base, '/api/categories', { token, timeout: 20000 }),
+  categorySave: (base, token, payload) =>
+    req(base, '/api/category/save', { method: 'POST', token, body: payload, timeout: 15000 }),
+  categoryDelete: (base, token, id) =>
+    req(base, '/api/category/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
+
+  // ── Buyurtma ro'yxati (yetkazib beruvchiga nima kerak) ──────────────────────
+  // Hisob og'ir (qoldiq tarixi bo'yicha ketish tezligi) — timeout uzun.
+  reorderSuppliers: (base, token, days = 0) =>
+    req(base, '/api/reorder/suppliers' + (days ? `?days=${Number(days)}` : ''),
+        { token, timeout: 90000 }),
+  reorder: (base, token, supplier_id, days = 0) =>
+    req(base, `/api/reorder?supplier_id=${Number(supplier_id) || 0}` +
+              (days ? `&days=${Number(days)}` : ''), { token, timeout: 90000 }),
+
+  // ── AI analitika ────────────────────────────────────────────────────────────
+  aiAnalyze: (base, token, payload) =>
+    req(base, '/api/ai/analyze', { method: 'POST', token, body: payload, timeout: 90000 }),
+
+  // ── Excel eksport ───────────────────────────────────────────────────────────
+  // Javob — faylning o'zi (JSON emas), shuning uchun `req` ishlatilmaydi.
+  exportFile: async (base, token, kind = 'sales', month = '') => {
+    const url = String(base).replace(/\/+$/, '') +
+      `/api/export?type=${encodeURIComponent(kind)}` + (month ? `&month=${encodeURIComponent(month)}` : '');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const res = await fetch(url, { headers, signal: ctrl.signal });
+      if (!res.ok) {
+        let err = 'Xato ' + res.status;
+        try { err = (await res.json()).error || err; } catch { /* fayl emas */ }
+        return { ok: false, status: res.status, data: { ok: false, error: err } };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      // Fayl nomi serverdan (Content-Disposition) yoki turiga qarab
+      const cd = res.headers.get('content-disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const name = (m && decodeURIComponent(m[1])) || `${kind}.xlsx`;
+      return { ok: true, status: 200, data: { ok: true, name, bytes: buf } };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // ── Maslahatlar (mijozlar uchun savol-javob) ────────────────────────────────
+  guides: (base, token) =>
+    req(base, '/api/admin/guides', { token, timeout: 20000 }),
+  guideSave: (base, token, payload) =>
+    req(base, '/api/admin/guide/save', { method: 'POST', token, body: payload, timeout: 20000 }),
+  guideDelete: (base, token, id) =>
+    req(base, '/api/admin/guide/delete', { method: 'POST', token, body: { id }, timeout: 15000 }),
+  // AI qoralama — internetdan ham qaraydi, sekin bo'lishi mumkin.
+  guideDraft: (base, token, payload) =>
+    req(base, '/api/admin/guide/draft', { method: 'POST', token, body: payload, timeout: 120000 }),
+
+  // ── Yorliq o'qitish (zavod yo'riqnomasi → kartochka) ────────────────────────
+  labels: (base, token) =>
+    req(base, '/api/admin/labels', { token, timeout: 25000 }),
+  label: (base, token, pid) =>
+    req(base, `/api/admin/label?pid=${Number(pid) || 0}`, { token, timeout: 25000 }),
+  labelSave: (base, token, payload) =>
+    req(base, '/api/admin/label/save', { method: 'POST', token, body: payload, timeout: 30000 }),
+  // Yorliq suratlari → AI o'qiydi. Bir nechta rasm, OCR + tarjima — sekin.
+  labelRead: async (base, token, pid, files) => {
+    const url = String(base).replace(/\/+$/, '') + '/api/admin/label/read';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 300000);
+    try {
+      const headers = { ...COMMON_HEADERS };
+      if (token) headers['X-Session-Token'] = token;
+      const fd = new FormData();
+      fd.append('pid', String(Number(pid) || 0));
+      (files || []).forEach((f, i) => {
+        const u8 = f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes);
+        fd.append('photo', new Blob([u8]), f.name || `yorliq${i}.jpg`);
+      });
+      const res = await fetch(url, { method: 'POST', headers, body: fd, signal: ctrl.signal });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { data = { ok: false, error: 'Serverdan noto\'g\'ri javob', raw: text.slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      return { ok: false, status: 0, data: { ok: false,
+        error: e.name === 'AbortError' ? 'Vaqt tugadi (AI sekin javob berdi)' : String(e.message || e) } };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // ── Kameralar ───────────────────────────────────────────────────────────────
+  // Ro'yxat bilan birga OQIM TOKENI keladi: tasvir <img src> bilan olinadi,
+  // unga header qo'yib bo'lmaydi (bot/api_cams.py).
+  cams: (base, token) =>
+    req(base, '/api/cams', { token, timeout: 20000 }),
+
   // ── Xodimlar boshqaruvi + KPI ───────────────────────────────────────────────
   staff: (base, token) =>
     req(base, '/api/staff', { token, timeout: 20000 }),

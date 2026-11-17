@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -72,6 +72,8 @@ ipcMain.handle('state:get', () => ({
   serverUrl: store.get('serverUrl'),
   token: store.get('token'),
   admin: store.get('admin'),
+  perms: store.get('perms'),
+  glavniy: store.get('glavniy'),
   usdRate: store.get('usdRate'),
   loggedOut: store.get('loggedOut'),
   labelPrinter: store.get('labelPrinter') || '',
@@ -94,8 +96,14 @@ ipcMain.handle('auth:login', async (_e, { server, login, password }) => {
     token: r.data.session_token,
     admin: r.data.cashier,
     usdRate: r.data.usd_rate,
+    // Eski serverda bu maydonlar yo'q — o'shanda null qoladi va
+    // ilova hamma bo'limni ko'rsatadi (ilgarigidek).
+    perms: Array.isArray(r.data.permissions) ? r.data.permissions : null,
+    glavniy: !!r.data.is_glavniy,
   });
-  return { ok: true, admin: r.data.cashier, usdRate: r.data.usd_rate };
+  return { ok: true, admin: r.data.cashier, usdRate: r.data.usd_rate,
+           perms: Array.isArray(r.data.permissions) ? r.data.permissions : null,
+           glavniy: !!r.data.is_glavniy };
 });
 
 ipcMain.handle('auth:logout', () => { store.clearSession(); return { ok: true }; });
@@ -126,6 +134,7 @@ ipcMain.handle('data:products', withAuth((base, token, arg) => {
 }));
 ipcMain.handle('data:productQty', withAuth((base, token, arg) => api.productQty(base, token, arg.id, arg.delta)));
 ipcMain.handle('data:productSave', withAuth((base, token, arg) => api.productSave(base, token, arg)));
+ipcMain.handle('data:productDelete', withAuth((base, token, arg) => api.productDelete(base, token, arg.id)));
 ipcMain.handle('data:prixodScan', withAuth((base, token, arg) => api.prixodScan(base, token, arg.bytes, arg.filename)));
 ipcMain.handle('data:prixodList', withAuth((base, token, arg) => api.prixodList(base, token, (arg && arg.from) || '', (arg && arg.to) || '')));
 ipcMain.handle('data:prixodSave', withAuth((base, token, arg) => api.prixodSave(base, token, arg)));
@@ -147,6 +156,58 @@ ipcMain.handle('data:clientBonus', withAuth((base, token, arg) => api.clientBonu
 ipcMain.handle('data:clientDetail', withAuth((base, token, arg) => api.clientDetail(base, token, arg.client_id)));
 ipcMain.handle('data:clientsTop', withAuth((base, token, arg) => api.clientsTop(base, token, (arg && arg.days) || 0)));
 // Xodimlar boshqaruvi + KPI
+// Moliya, ombor, kategoriya, AI — Mini App'dagi bo'limlarning shu yerdagi varianti
+ipcMain.handle('data:cashMovements', withAuth((base, token, arg) => api.cashMovements(
+  base, token, (arg && arg.from) || '', (arg && arg.to) || '', (arg && arg.limit) || 300)));
+ipcMain.handle('data:lowStock', withAuth((base, token, arg) =>
+  api.lowStock(base, token, (arg && arg.threshold) || 0)));
+ipcMain.handle('data:categories', withAuth((base, token) => api.categories(base, token)));
+ipcMain.handle('data:categorySave', withAuth((base, token, arg) => api.categorySave(base, token, arg)));
+ipcMain.handle('data:categoryDelete', withAuth((base, token, arg) => api.categoryDelete(base, token, arg.id)));
+ipcMain.handle('data:reorderSuppliers', withAuth((base, token, arg) =>
+  api.reorderSuppliers(base, token, (arg && arg.days) || 0)));
+ipcMain.handle('data:reorder', withAuth((base, token, arg) =>
+  api.reorder(base, token, arg.supplier_id, (arg && arg.days) || 0)));
+ipcMain.handle('data:aiAnalyze', withAuth((base, token, arg) => api.aiAnalyze(base, token, arg)));
+
+// Excel eksport: serverdan fayl olinadi va foydalanuvchi tanlagan joyga
+// saqlanadi (brauzerdagidek "yuklab olish" yo'q — bu desktop ilova).
+ipcMain.handle('data:export', withAuth(async (base, token, arg) => {
+  const r = await api.exportFile(base, token, (arg && arg.kind) || 'sales', (arg && arg.month) || '');
+  if (!r.ok) return r;
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Hisobotni saqlash',
+    defaultPath: path.join(app.getPath('downloads'), r.data.name),
+    filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+  });
+  if (canceled || !filePath) return { ok: true, status: 200, data: { ok: true, canceled: true } };
+  fs.writeFileSync(filePath, r.data.bytes);
+  return { ok: true, status: 200, data: { ok: true, path: filePath } };
+}));
+
+// Tovar suratlari (rasmsiz tovarlar ro'yxati, umumiy rasmlarni tozalash)
+ipcMain.handle('data:photosSummary', withAuth((base, token) => api.photosSummary(base, token)));
+ipcMain.handle('data:noPhoto', withAuth((base, token, arg) => api.noPhoto(
+  base, token, (arg && arg.page) || 0, (arg && arg.q) || '',
+  arg ? arg.stock !== false : true, (arg && arg.limit) || 100)));
+ipcMain.handle('data:photosClean', withAuth((base, token) => api.photosClean(base, token)));
+ipcMain.handle('data:photosMode', withAuth((base, token, arg) => api.photosMode(base, token, arg && arg.on)));
+ipcMain.handle('data:productImage', withAuth((base, token, arg) =>
+  api.productImage(base, token, arg.id, arg.bytes, arg.filename)));
+// Maslahatlar (mijoz Mini App'idagi savol-javob kartochkalari)
+ipcMain.handle('data:guides', withAuth((base, token) => api.guides(base, token)));
+ipcMain.handle('data:guideSave', withAuth((base, token, arg) => api.guideSave(base, token, arg)));
+ipcMain.handle('data:guideDelete', withAuth((base, token, arg) => api.guideDelete(base, token, arg.id)));
+ipcMain.handle('data:guideDraft', withAuth((base, token, arg) => api.guideDraft(base, token, arg)));
+// Yorliq o'qitish (zavod yo'riqnomasi → o'zbekcha kartochka)
+ipcMain.handle('data:labels', withAuth((base, token) => api.labels(base, token)));
+ipcMain.handle('data:label', withAuth((base, token, arg) => api.label(base, token, arg.pid)));
+ipcMain.handle('data:labelSave', withAuth((base, token, arg) => api.labelSave(base, token, arg)));
+ipcMain.handle('data:labelRead', withAuth((base, token, arg) =>
+  api.labelRead(base, token, arg.pid, arg.files)));
+// Kameralar — ro'yxat + oqim tokeni (tasvirni renderer to'g'ridan oladi)
+ipcMain.handle('data:cams', withAuth((base, token) => api.cams(base, token)));
+
 ipcMain.handle('data:staff', withAuth((base, token) => api.staff(base, token)));
 ipcMain.handle('data:staffAdd', withAuth((base, token, arg) => api.staffAdd(base, token, arg)));
 ipcMain.handle('data:staffRole', withAuth((base, token, arg) => api.staffRole(base, token, arg.telegram_id, arg.role)));

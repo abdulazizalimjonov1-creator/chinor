@@ -58,6 +58,7 @@ def _short(v: str, n: int = 140) -> str:
 
 def _cand_line(p: dict, info: dict, idx, price: float) -> str:
     from bot.api_guides import size_kg
+    from bot import santex_rules
     name = (p.get("display_name") or "").strip() or p.get("name", "")
     parts = [f"id={p['id']}", name, f"narx={price:,.0f} so'm"]
     kg = size_kg(p.get("name", ""))
@@ -76,6 +77,14 @@ def _cand_line(p: dict, info: dict, idx, price: float) -> str:
     f_txt = "; ".join(f"{f['k']}: {_short(f['v'], 90)}" for f in facts
                       if f["k"].startswith(keep))
     parts.append(f"zavod: {f_txt}" if f_txt else "zavod: (yorliq ma'lumoti kiritilmagan)")
+    # Quvur-fitinglar uchun: tur va o'lcham NOMDAN aniq olinadi (rasm emas),
+    # issiq/sovuq quvurning farqi esa suratda ko'rinmaydi — shuni yozib beramiz.
+    ruled = santex_rules.facts(p.get("name", ""))
+    if ruled:
+        parts.append(f"tur: {ruled}")
+    farq = santex_rules.note(p.get("name", ""))
+    if farq:
+        parts.append(f"farqi: {farq}")
     return " | ".join(parts)
 
 
@@ -133,7 +142,7 @@ async def _candidates(db, question: str) -> list:
 async def consult(request: web.Request) -> web.Response:
     from database.channel_db import db as _db
     from bot.web_api import _authenticate, _err, _read_json, _product_json, _price_pair
-    from bot import ai_engine, api_labels, api_recommend
+    from bot import ai_engine, api_labels, api_recommend, santex_rules
     auth = await _authenticate(request, _db)
     if not auth:
         return _err("Avtorizatsiya talab qilinadi", 401)
@@ -153,9 +162,19 @@ async def consult(request: web.Request) -> web.Response:
         infos[p["id"]] = info
         lines.append(_cand_line(p, info, idx, _price_pair(p, ctype)[1]))
 
+    # Nomzodlar orasida quvur-fiting bo'lsa — zavod va tuzilish ma'lumotini
+    # bir marta qo'shamiz (har qatorda takrorlash promptni shishiradi).
+    brand_blok = ""
+    systems = {santex_rules.system_of(p.get("name", "")) for p in cands}
+    systems.discard("")
+    if systems:
+        sys_one = "rtp" if systems == {"rtp"} else "rtr"
+        brand_blok = "\n\n" + santex_rules.brand_text(sys_one)
+
     prompt = (
         f"MIJOZ SAVOLI: {question}\n\n"
         f"NOMZOD TOVARLAR (faqat shulardan tanla):\n" + ("\n".join(lines) or "(mos tovar topilmadi)") +
+        brand_blok +
         "\n\nShu JSON'ni qaytar:\n"
         '{"answer": "2–4 gaplik javob, tovar ID raqamlarini YOZMA", '
         '"picks": [{"id": <id>, "tier": "sifatli|optimal|arzon", '

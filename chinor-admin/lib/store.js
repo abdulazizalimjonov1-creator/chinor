@@ -20,6 +20,11 @@ class Store {
       serverUrl: DEFAULT_SERVER,
       token: '',
       admin: null,       // {id, name}
+      // Bo'lim-bo'lim ruxsatlar (serverdan, login paytida) — xodim
+      // o'ziga berilmagan bo'limni ko'rmasin. null = eski server
+      // (ruxsat yubormaydi) → hamma bo'lim ochiq qoladi.
+      perms: null,
+      glavniy: false,
       usdRate: 12500,
       loggedOut: false,
       // Sennik (narx yorliqlari) chop etish sozlamalari
@@ -64,10 +69,12 @@ class Store {
     return this.data.serverUrl;
   }
 
-  setSession({ token, admin, usdRate }) {
+  setSession({ token, admin, usdRate, perms, glavniy }) {
     this.data.token = token || '';
     if (admin) this.data.admin = admin;
     if (usdRate) this.data.usdRate = usdRate;
+    if (perms !== undefined) this.data.perms = perms;
+    if (glavniy !== undefined) this.data.glavniy = !!glavniy;
     this.data.loggedOut = false;
     this.save();
   }

@@ -25,8 +25,11 @@ npx electron-builder --mac --publish never
 # Imzo muhri (_CodeSignature) yo'q/buzuq bo'lsa Apple Silicon'da macOS ilovani
 # ishga tushishi bilanoq o'ldiradi (SIGKILL) — "ochilmayapti" shundan.
 # Elektron build imzosiz chiqishi mumkin, shuning uchun o'zimiz imzolaymiz.
-# Updater sha512 ni tekshirmaydi (faqat version+url o'qiydi), shuning uchun
-# zipni qayta yasash latest-mac.yml ni buzmaydi.
+# DIQQAT: zipni qayta yasagach latest-mac.yml dagi sha512/size ESKI zipniki
+# bo'lib qoladi. electron-updater esa macOS'da yuklab olgan faylni AYNAN shu
+# sha512 bilan solishtiradi — mos kelmasa yangilanishni rad etadi va ilova
+# "yuklab olish ishlamayapti" holatida qoladi (31.10.2026 da aynan shu bo'ldi).
+# Shuning uchun imzolangan zipning yangi sha512/size si yml ga yoziladi.
 MACAPP=$(find dist -maxdepth 2 -name "Chinor.app" -type d | head -1)
 if [ -n "$MACAPP" ]; then
   echo "▶ macOS ilovasi imzolanmoqda: $MACAPP"
@@ -41,6 +44,21 @@ if [ -n "$MACAPP" ]; then
   rm -f "dist/Chinor-mac-$VER.zip"
   ( cd "$(dirname "$MACAPP")" && ditto -c -k --sequesterRsrc --keepParent \
       "$(basename "$MACAPP")" "$OLDPWD/dist/Chinor-mac-$VER.zip" )
+
+  echo "▶ latest-mac.yml ga yangi sha512/size yozilmoqda..."
+  ZIP="dist/Chinor-mac-$VER.zip"
+  NEWSHA="$(openssl dgst -sha512 -binary "$ZIP" | openssl base64 -A)"
+  NEWSIZE="$(stat -f%z "$ZIP")"
+  python3 - "$NEWSHA" "$NEWSIZE" <<'PYEOF'
+import re, sys
+sha, size = sys.argv[1], sys.argv[2]
+p = "dist/latest-mac.yml"
+s = open(p).read()
+s = re.sub(r"sha512: .*", "sha512: " + sha, s)
+s = re.sub(r"size: \d+", "size: " + size, s)
+open(p, "w").write(s)
+print("   ✓ sha512 va size yangilandi")
+PYEOF
 else
   echo "⚠ dist ichida Chinor.app topilmadi — imzolash o'tkazib yuborildi!"
 fi
@@ -59,19 +77,22 @@ cp -f dist/Chinor-Setup-"$VER".exe.blockmap "$UP"/ 2>/dev/null || true
 cp -f dist/latest-mac.yml "$UP"/
 cp -f dist/Chinor-mac-"$VER".zip "$UP"/
 
-# VPS'dagi bot shu papkani tarqatadi — fayllarni serverga yuklaymiz.
-HOST="${CHINOR_SSH:-root@46.101.111.198}"
-KEY="${CHINOR_SSH_KEY:-$HOME/.ssh/chinor_vps}"
-REMOTE="/opt/chinor/chinor-bot/updates/admin"
-echo "▶ VPS'ga yuklanmoqda ($HOST:$REMOTE)..."
-if rsync -avz -e "ssh -i $KEY -o ConnectTimeout=10" \
-    "$UP"/latest.yml "$UP"/latest-mac.yml \
-    "$UP"/Chinor-Setup-"$VER".exe "$UP"/Chinor-mac-"$VER".zip \
-    "$HOST:$REMOTE/" 2>/dev/null; then
-  echo "✅ VPS feed yangilandi."
+# Feed'ni BOT tarqatadi (/updates/admin/). Bot 2026-10-22 dan beri
+# ofisdagi WINDOWS serverda ishlaydi (Tailscale orqali) — ilgari bu yerda
+# eski DigitalOcean VPS manzili turardi va yangi versiya feed'ga
+# umuman yetib bormasdi.
+HOST="${CHINOR_SSH:-chino@100.124.35.18}"
+REMOTE="C:/chinor/chinor-bot/updates/admin"
+echo "▶ Serverga yuklanmoqda ($HOST:$REMOTE)..."
+if scp -q "$UP"/latest.yml "$UP"/latest-mac.yml \
+       "$UP"/Chinor-Setup-"$VER".exe "$UP"/Chinor-mac-"$VER".zip \
+       "$HOST:$REMOTE/"; then
+  echo "✅ Feed yangilandi."
+  echo -n "   serverdagi versiya: "
+  curl -s "${CHINOR_API:-https://kassa.chinorpos.com}/updates/admin/latest-mac.yml" | head -1
 else
-  echo "⚠ VPS'ga yuklab bo'lmadi — keyin qo'lda yuklang:"
-  echo "  rsync -avz -e 'ssh -i $KEY' $UP/ $HOST:$REMOTE/"
+  echo "⚠ Serverga yuklab bo'lmadi — keyin qo'lda yuklang:"
+  echo "  scp $UP/* $HOST:$REMOTE/"
 fi
 
 echo ""

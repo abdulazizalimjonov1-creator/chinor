@@ -39,6 +39,32 @@ PERMISSIONS: Dict[str, str] = {
     "low_stock":      "⚠️ Past qoldiq ro'yxati",
     "usd_rate":       "💱 USD kursini o'zgartirish",
     "ai_analytics":   "🤖 AI Analitika (Gemini)",
+    "cams":           "📹 Kameralar",
+    # Mini App'dagi qolgan bo'limlar. Har biri alohida kalit — bosh
+    # admin xodimga aynan kerakli bo'limni ochib, qolganini yopa olsin.
+    "receipts":       "🧾 Cheklar",
+    "sales_history":  "🧾 Savdo tarixi (kassa)",
+    "turnover":       "💰 Aylanma va foyda",
+    "cash":           "💸 Kassa harakati",
+    "debt":           "📕 Qarzdorlar",
+    "reorder":        "📋 Buyurtma ro'yxati",
+    "pricetags":      "🏷 Sennik chop etish",
+    "guides":         "🧐 Maslahatlar",
+    "staff":          "👔 Xodimlar",
+    "settings":       "⚙️ Sozlamalar",
+}
+
+# ── Taxalluslar (alias) ─────────────────────────────────────────────────────
+# Kod ba'zi joyda ruxsatni QISQA nom bilan so'ragan: `"clients"`, `"products"`.
+# Bunday kalit PERMISSIONS da yo'q edi — natijada `has_permission` har doim
+# False qaytarardi va TO'LIQ huquqli admin ham «Ruxsat yo'q» olardi (eng
+# ko'rinadigan joyi: Mini App'dagi «📕 Qarzdorlar» umuman ochilmasdi).
+# Endi qisqa nom aniq kalitga keltiriladi.
+PERMISSION_ALIASES: Dict[str, str] = {
+    "clients":  "clients_view",
+    "products": "products_view",
+    "client":   "clients_view",
+    "product":  "products_view",
 }
 
 # ── Taxalluslar (alias) ─────────────────────────────────────────────────────
@@ -64,6 +90,10 @@ PERMISSION_ORDER: List[str] = [
     "stats", "export", "low_stock",
     "usd_rate",
     "ai_analytics",
+    "cams",
+    "receipts", "sales_history", "turnover", "cash", "debt",
+    "reorder", "pricetags", "guides",
+    "staff", "settings",
 ]
 
 
@@ -81,13 +111,15 @@ ROLE_PRESETS: Dict[str, Set[str]] = {
     "products": {
         "products_view", "products_add", "products_edit", "products_del",
         "products_qty", "categories", "suppliers", "low_stock",
+        "reorder", "pricetags", "guides",
     },
     "cashier":  {
         "sale", "products_view", "clients_view", "clients_pay",
+        "receipts", "cash", "debt", "pricetags",
     },
     "stats":    {
         "stats", "export", "products_view", "clients_view", "low_stock",
-        "ai_analytics",
+        "ai_analytics", "sales_history", "turnover", "receipts",
     },
     # 'custom' uchun preset yo'q — admin.permissions JSON dan o'qiladi.
 }

@@ -92,12 +92,19 @@ class _Index:
                 self.by_tok[t].add(pid)
         self.sales = sales_rank
         self.co = co
+        # O'Z suratimiz bor tovarlar — mijozga faqat shular ko'rsatiladi
+        # (internetdan olingan umumiy rasm o'nlab tovarda takrorlanardi).
+        from bot import api_photos
+        shared = api_photos.shared_urls(list(self.items.values()))
+        self.own = {pid for pid, p in self.items.items()
+                    if api_photos.is_own(p, shared)}
 
     def price(self, p) -> float:
         return float(p.get("sell_price") or 0)
 
     def has_img(self, p) -> bool:
-        return bool(p.get("image_url"))
+        """O'ZIMIZ suratga olgan rasm bormi (umumiy rasm hisobga olinmaydi)."""
+        return (p.get("id") or 0) in self.own
 
 
 def _norm_name(s: str) -> str:
@@ -361,6 +368,12 @@ def _ids(raw: str) -> list:
 
 async def _respond(request, pids: list, idx: _Index, auth: dict, extra: dict = None):
     from bot.web_api import _product_json
+    from bot import api_photos
+    from database.channel_db import db as _db
+    # Lentada faqat o'z suratli tovarlar — rasmsiz yoki umumiy rasmli
+    # kartochka lentani bir xil qilib yuborardi.
+    if api_photos.client_photo_only(_db):
+        pids = [q for q in pids if q in idx.own]
     page = _page(request)
     chunk = pids[page * PAGE:(page + 1) * PAGE]
     u = auth.get("user") or {}

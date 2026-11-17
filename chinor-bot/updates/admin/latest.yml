@@ -1,8 +1,8 @@
-version: 1.2.1
+version: 1.4.0
 files:
-  - url: Chinor-Setup-1.2.1.exe
-    sha512: EPJVm1pE4jWVZvdqKiJXTC81qwuTtVZUGmJKmQ6b4vInjnB57JeaYwisEa/DsY1yykPJv+lZ/A5nJZuu5yaI+A==
-    size: 79368946
-path: Chinor-Setup-1.2.1.exe
-sha512: EPJVm1pE4jWVZvdqKiJXTC81qwuTtVZUGmJKmQ6b4vInjnB57JeaYwisEa/DsY1yykPJv+lZ/A5nJZuu5yaI+A==
-releaseDate: '2026-10-20T11:02:16.300Z'
+  - url: Chinor-Setup-1.4.0.exe
+    sha512: h0gG19jJUHB/tLY7x30V4ztiPwQkK9n22e5rzjnpmXCx8sleGIUn17H8F9jiqpjGAE95ozguwnixbBylT3XBNg==
+    size: 79385995
+path: Chinor-Setup-1.4.0.exe
+sha512: h0gG19jJUHB/tLY7x30V4ztiPwQkK9n22e5rzjnpmXCx8sleGIUn17H8F9jiqpjGAE95ozguwnixbBylT3XBNg==
+releaseDate: '2026-10-31T16:42:33.776Z'

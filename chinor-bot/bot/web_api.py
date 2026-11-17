@@ -668,6 +668,15 @@ def _plain(html_text: str) -> str:
     return _html.unescape(_re.sub(r"<[^>]+>", "", html_text or "")).strip()
 
 
+def _own_photo(p: dict) -> bool:
+    """Rasm AYNAN shu tovar uchun olinganmi (umumiy/internetdan emas)."""
+    try:
+        from bot import api_photos
+        return api_photos.is_own(p)
+    except Exception:                        # pragma: no cover
+        return bool(p.get("image_url"))
+
+
 def _product_json(p: dict, role: str, ctype: str) -> dict:
     usd, summ = _price_pair(p, ctype)
     # Mijozga CHIROYLI nom (display_name), adminga ASL nom + ikkalasi ham.
@@ -697,6 +706,9 @@ def _product_json(p: dict, role: str, ctype: str) -> dict:
         # shaklida saqlanadi; Mini App'ga oddiy matn bo'lib beriladi.
         "usage_info": _plain(p.get("usage_info") or ""),
         "has_image": bool(p.get("image_file_id") or p.get("image_url")),
+        # O'Z suratimizmi yoki internetdan olingan umumiy rasmmi —
+        # "rasmsiz tovarlar" ro'yxati va tahrir ekrani shuni ajratadi.
+        "own_photo": _own_photo(p),
         "category_id": int(p.get("category_id") or 0),
     }
     if role == "admin":
@@ -764,12 +776,15 @@ async def api_client_top(request: web.Request):
     Ilgari bo'sh joy qoldiq tovarlar bilan (alifbo tartibida) to'ldirilardi —
     mijozga "0 shina" ko'p sotilayotgandek ko'rinardi, bu yolg'on edi."""
     from database.channel_db import db as _db
-    from bot import api_recommend
+    from bot import api_recommend, api_photos
     auth = await _authenticate(request, _db)
     if not auth:
         return _err("Avtorizatsiya talab qilinadi", 401)
     idx = await api_recommend._index(_db)
-    top = api_recommend.recent_top(idx, limit=12)
+    # Bosh sahifaga ham faqat o'z suratli tovarlar chiqadi.
+    faqat_suratli = api_photos.client_photo_only(_db)
+    top = [p for p in api_recommend.recent_top(idx, limit=40)
+           if not faqat_suratli or p["id"] in idx.own][:12]
     import datetime
     cutoff = datetime.datetime.now() - datetime.timedelta(days=30)
     new_prods = []
@@ -780,7 +795,8 @@ async def api_client_top(request: web.Request):
             continue
         if dt.replace(tzinfo=None) > cutoff:
             new_prods.append((dt.replace(tzinfo=None), p))
-    new_prods = [p for _, p in sorted(new_prods, key=lambda x: x[0], reverse=True)[:12]]
+    new_prods = [p for _, p in sorted(new_prods, key=lambda x: x[0], reverse=True)
+                 if not faqat_suratli or p["id"] in idx.own][:12]
 
     u = auth.get("user") or {}
     ctype = (u.get("client_type") or "dona").lower() if auth["role"] == "client" else "dona"
@@ -849,6 +865,13 @@ async def api_products(request: web.Request):
         if role == "client":
             prods = [p for p in prods if (p.get("qty", 0) or 0) > 0]
 
+    # Mijozga FAQAT o'zimiz suratga olgan tovarlar ko'rinadi (qidiruvda
+    # ham): internetdan olingan umumiy rasm o'nlab tovarda takrorlanib,
+    # ilova qalbaki ko'rinardi. Sozlamadan o'chirish mumkin.
+    if role == "client":
+        from bot import api_photos
+        prods = api_photos.for_client(_db, prods)
+
     # Kategoriya bo'yicha saralash (qidiruvga ham qo'llanadi).
     # `category=none` — bo'limi BIRIKTIRILMAGAN tovarlar (0 ni filtr deb
     # qabul qilib bo'lmaydi: 0 «filtr yo'q» degani).
@@ -899,6 +922,7 @@ _SHOP_TTL = 60          # sekund: baza har so'rovda o'qilmasin
 
 async def _shop_data(db):
     """Katalogni tayyorlaydi va 60 soniya keshda saqlaydi."""
+    from bot import api_photos
     now = time.time()
     if now - _shop_cache["at"] < _SHOP_TTL and _shop_cache["items"]:
         return _shop_cache["items"], _shop_cache["cats"]
@@ -910,8 +934,12 @@ async def _shop_data(db):
     all_cats = [{"name": c["name"], "count": int(c.get("product_count") or 0)}
                 for c in cat_rows if int(c.get("product_count") or 0) > 0]
     all_cats.sort(key=lambda x: -x["count"])
+    # Saytga FAQAT o'zimiz suratga olgan tovarlar chiqadi. Rasmsizi ham,
+    # internetdan olingan "turi bo'yicha" umumiy rasmlisi ham tushmaydi —
+    # bitta surat o'nta tovarda takrorlansa do'kon qalbaki ko'rinardi.
+    shown = api_photos.for_client(db, prods)
     items = []
-    for p in prods:
+    for p in shown:
         if not (p.get("image_url") or ""):
             continue                      # rasmsiz tovar saytda ko'rinmaydi
         qty = float(p.get("qty", 0) or 0)
@@ -2060,6 +2088,76 @@ async def api_product_categorize(request: web.Request):
                               "image_sent": bool(img)})
 
 
+@ROUTES.post("/api/admin/pipes/categorize")
+async def api_pipes_categorize(request: web.Request):
+    """Quvur-fitinglarni bo'limga biriktiradi — AI'siz, qoida bo'yicha.
+
+    Nomi «RTR/RTP/MPP» bilan boshlangan har bir tovar `santex_rules` qoidasi
+    orqali «Toza suv quvurlari» yoki «Kanalizatsiya quvurlari» bo'limiga
+    tushadi (MPP da bo'lim diametr bilan aniqlanadi).
+
+    `dry: true` (standart) — hech narsa o'zgarmaydi, faqat REJA qaytadi:
+    nechta tovar, qaysi bo'limga. Haqiqatan biriktirish uchun
+    `{"dry": false}` yuboriladi. Qayta chaqirilsa zarar yo'q: allaqachon
+    to'g'ri turgan tovarlar o'tkazib yuboriladi."""
+    from database.channel_db import db as _db
+    from bot import santex_rules
+    auth, err = await _admin_guard(request, _db, "products_edit")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    dry = body.get("dry", True) is not False
+
+    prods = await _db.get_all_products(active_only=True)
+    rows = await _db.get_all_categories()
+    by_name = {(r.get("name") or "").strip().lower(): r["id"] for r in rows}
+
+    plan, skip = [], 0
+    for p in prods:
+        cat = santex_rules.category(p.get("name", "") or "")
+        if not cat:
+            continue
+        cid = by_name.get(cat.lower())
+        if cid and int(p.get("category_id") or 0) == cid:
+            skip += 1                      # allaqachon joyida
+            continue
+        plan.append({"id": p["id"], "name": (p.get("name") or "").strip(),
+                     "category": cat})
+
+    by_cat = {}
+    for x in plan:
+        by_cat[x["category"]] = by_cat.get(x["category"], 0) + 1
+
+    if dry:
+        return web.json_response({
+            "ok": True, "dry": True, "would_change": len(plan),
+            "already_ok": skip, "by_category": by_cat,
+            "sample": plan[:15],
+        })
+
+    done = 0
+    for x in plan:
+        cid = by_name.get(x["category"].lower())
+        if not cid:
+            cid = await _db.add_category(x["category"])
+            if not cid:
+                continue
+            by_name[x["category"].lower()] = cid
+        await _db.set_product_category(x["id"], cid)
+        done += 1
+
+    # Katalog keshlari yangilansin — sayt va mijoz ilovasi darrov ko'rsin
+    _shop_cache["at"] = 0.0
+    try:
+        from bot import api_recommend
+        api_recommend._cache["idx"] = None
+    except Exception:
+        pass
+    logger.info("🏷 Quvurlar bo'limga biriktirildi: %s ta (%s)", done, by_cat)
+    return web.json_response({"ok": True, "dry": False, "changed": done,
+                              "already_ok": skip, "by_category": by_cat})
+
+
 @ROUTES.post("/api/product/rebrand")
 async def api_product_rebrand(request: web.Request):
     """Mavjud rasmni qayta brendlaydi (fon kesish + och yashil fon + logotip).
@@ -2596,12 +2694,29 @@ async def login(request: web.Request):
         "ok": True,
         "role": role,
         "session_token": session_token,
+        "is_glavniy": 1 if tg_id == GLAVNIY_ADMIN_ID else 0,
+        "perms": _my_perms(role, tg_id, user),
         "user": {
             "id": int(user.get("telegram_id") or user.get("id") or 0),
             "name": display_name,
             "username": user.get("username", ""),
         }
     })
+
+
+def _my_perms(role: str, tg_id: int, user: dict) -> list:
+    """Foydalanuvchining o'z ruxsatlari — Mini App shunga qarab bo'lim
+    tugmalarini ko'rsatadi.
+
+    Ilgari panelda HAMMA tugma turardi va ruxsati yo'q xodim bo'limni
+    ochganda 403 olardi: tizim buzuqdek tuyulardi. Endi ro'yxat login
+    javobida keladi va mos kelmagan tugma umuman chizilmaydi."""
+    if role != "admin":
+        return []
+    from bot.permissions import PERMISSIONS, effective_permissions, is_glavniy
+    if is_glavniy(tg_id):
+        return sorted(PERMISSIONS.keys())
+    return sorted(effective_permissions(user or {}))
 
 
 @ROUTES.post("/api/auth/telegram")
@@ -2642,6 +2757,8 @@ async def auth_telegram(request: web.Request):
         "ok": True,
         "role": role,
         "session_token": _create_session(auth),
+        "is_glavniy": 1 if auth.get("is_glavniy") else 0,
+        "perms": _my_perms(role, auth.get("tg_id") or 0, user),
         "user": {
             "id": int(user.get("telegram_id") or user.get("id") or 0),
             "name": display_name,
@@ -3128,6 +3245,11 @@ async def api_desktop_login(request: web.Request):
             kassa_no = await _db.assign_kassa_no(device_id, name=cashier_name)
         except Exception as e:
             logger.warning(f"[desktop/login] kassa_no biriktirish xato: {e}")
+    # Ruxsatlar — kompyuterdagi ADMIN PANELI uchun: xodim o'ziga berilmagan
+    # bo'limni umuman ko'rmasin (Mini App allaqachon shunday ishlaydi).
+    # Kassa bu maydonlarni e'tiborsiz qoldiradi, qo'shimcha zarar yo'q.
+    from bot.permissions import effective_permissions, is_glavniy
+    perms = sorted(effective_permissions(user))
     return web.json_response({
         "ok": True,
         "session_token": token,
@@ -3135,6 +3257,9 @@ async def api_desktop_login(request: web.Request):
             "id": tg_id,
             "name": cashier_name,
         },
+        "role": (user.get("role") or "full"),
+        "is_glavniy": is_glavniy(tg_id),
+        "permissions": perms,
         "kassa_no": kassa_no,
         "usd_rate": _db.get_usd_rate(),
     })
@@ -4249,7 +4374,9 @@ async def api_staff(request: web.Request):
             "pending": 1,
         })
     return web.json_response({"ok": True, "items": items,
-                              "can_manage": 1 if _staff_can_manage(auth) else 0})
+                              "can_manage": 1 if _staff_can_manage(auth) else 0,
+                              # Bo'lim-bo'lim ruxsat — faqat bosh adminda
+                              "can_perms": 1 if auth.get("is_glavniy") else 0})
 
 
 @ROUTES.post("/api/staff/add")
@@ -4298,8 +4425,8 @@ async def api_staff_role(request: web.Request):
     except (TypeError, ValueError):
         tg_id = 0
     role = (body.get("role") or "").strip().lower()
-    if not tg_id or role not in ("full", "products", "cashier", "stats"):
-        return _err("telegram_id va rol (full/products/cashier/stats) kerak")
+    if not tg_id or role not in ("full", "products", "cashier", "stats", "custom"):
+        return _err("telegram_id va rol kerak (full/products/cashier/stats/custom)")
     if tg_id == GLAVNIY_ADMIN_ID:
         return _err("Glavniy adminning roli o'zgartirilmaydi")
     a = await _db.get_admin(tg_id)
@@ -4307,6 +4434,80 @@ async def api_staff_role(request: web.Request):
         return _err("Xodim topilmadi", 404)
     await _db.set_admin_role(tg_id, role)
     return web.json_response({"ok": True, "telegram_id": tg_id, "role": role})
+
+
+@ROUTES.get("/api/staff/perms")
+async def api_staff_perms_get(request: web.Request):
+    """Bitta xodimning bo'lim-bo'lim ruxsatlari.
+
+    FAQAT BOSH ADMIN. Kim nimani ko'rishini belgilash — do'kon egasining
+    ishi; «to'liq admin» rolidagi xodim ham buni o'zgartira olmaydi,
+    aks holda o'ziga istalgan huquqni yozib olardi.
+
+    Query: telegram_id. Javobda barcha kalitlar ro'yxati ham bor —
+    Mini App ularni qo'lda takrorlamasin (yangi bo'lim qo'shilganda
+    ro'yxat o'zi yangilanadi)."""
+    from database.channel_db import db as _db
+    from bot.permissions import (PERMISSIONS, PERMISSION_ORDER, ROLE_LABELS,
+                                 ROLE_PRESETS, effective_permissions)
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not auth.get("is_glavniy"):
+        return _err("Ruxsatlarni faqat bosh admin boshqaradi", 403)
+    try:
+        tg_id = int(request.query.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    if not tg_id:
+        return _err("telegram_id kerak")
+    admin = await _db.get_admin(tg_id)
+    if not admin:
+        return _err("Xodim topilmadi", 404)
+    return web.json_response({
+        "ok": True,
+        "telegram_id": tg_id,
+        "name": admin.get("full_name", "") or "",
+        "role": (admin.get("role") or "full").strip().lower(),
+        "perms": sorted(effective_permissions(admin)),
+        "all": [{"k": k, "label": PERMISSIONS[k]} for k in PERMISSION_ORDER
+                if k in PERMISSIONS],
+        "roles": [{"k": k, "label": ROLE_LABELS.get(k, k),
+                   "perms": sorted(ROLE_PRESETS.get(k, ()))}
+                  for k in ("full", "products", "cashier", "stats")],
+    })
+
+
+@ROUTES.post("/api/staff/perms")
+async def api_staff_perms_save(request: web.Request):
+    """Xodimga bo'lim-bo'lim ruxsat berish. FAQAT BOSH ADMIN.
+
+    Body: {telegram_id, perms: [...]}. Rol `custom` ga o'tadi —
+    tayyor rol (full/cashier/...) tanlansa ruxsatlar yana o'sha
+    roldan olinadi va bu ro'yxat e'tiborsiz qoladi."""
+    from database.channel_db import db as _db
+    from bot.permissions import PERMISSIONS, serialize_permissions
+    auth = await _authenticate(request, _db)
+    if not auth or auth["role"] != "admin":
+        return _err("Avtorizatsiya talab qilinadi", 401)
+    if not auth.get("is_glavniy"):
+        return _err("Ruxsatlarni faqat bosh admin boshqaradi", 403)
+    body = await _read_json(request)
+    try:
+        tg_id = int(body.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        tg_id = 0
+    if not tg_id:
+        return _err("telegram_id kerak")
+    if tg_id == GLAVNIY_ADMIN_ID:
+        return _err("Bosh adminning ruxsatlari cheklanmaydi")
+    if not await _db.get_admin(tg_id):
+        return _err("Xodim topilmadi", 404)
+    perms = {str(x) for x in (body.get("perms") or []) if x in PERMISSIONS}
+    await _db.set_admin_role(tg_id, "custom")
+    await _db.set_admin_permissions(tg_id, serialize_permissions(perms))
+    return web.json_response({"ok": True, "telegram_id": tg_id,
+                              "perms": sorted(perms)})
 
 
 @ROUTES.post("/api/staff/remove")
@@ -4628,6 +4829,12 @@ def create_app() -> web.Application:
     # Sennikni USB printerga to'g'ridan-to'g'ri yuborish (kompyuterdagi agent)
     from bot import print_agent
     print_agent.setup(app)
+    # Do'kondagi IP kameralar — server oqimni olib Mini App'ga uzatadi
+    from bot import api_cams
+    api_cams.setup(app)
+    # Tovar suratlari: rasmsiz tovarlar ro'yxati va umumiy rasmlarni tozalash
+    from bot import api_photos
+    api_photos.setup(app)
     # Desktop yangilanish fayllari (kassa: /updates/, admin: /updates/admin/)
     app.router.add_get("/api/reel/{name}", reel_static)
     app.router.add_get("/updates/admin/{name}", admin_updates_static)
