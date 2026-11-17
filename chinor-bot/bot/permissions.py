@@ -67,19 +67,6 @@ PERMISSION_ALIASES: Dict[str, str] = {
     "product":  "products_view",
 }
 
-# ── Taxalluslar (alias) ─────────────────────────────────────────────────────
-# Kod ba'zi joyda ruxsatni QISQA nom bilan so'ragan: `"clients"`, `"products"`.
-# Bunday kalit PERMISSIONS da yo'q edi — natijada `has_permission` har doim
-# False qaytarardi va TO'LIQ huquqli admin ham «Ruxsat yo'q» olardi (eng
-# ko'rinadigan joyi: Mini App'dagi «📕 Qarzdorlar» umuman ochilmasdi).
-# Endi qisqa nom aniq kalitga keltiriladi.
-PERMISSION_ALIASES: Dict[str, str] = {
-    "clients":  "clients_view",
-    "products": "products_view",
-    "client":   "clients_view",
-    "product":  "products_view",
-}
-
 # Tartibli ro'yxat — UI da shu tartibda ko'rsatamiz
 PERMISSION_ORDER: List[str] = [
     "products_view", "products_add", "products_edit", "products_del", "products_qty",
