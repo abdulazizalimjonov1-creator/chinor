@@ -227,7 +227,8 @@ def product_page(it, shop, same_cat):
     # Sarlavha — odam Google'da aynan shunday qidiradi: «<nom> narxi Toshkent»
     title = f"{it['name']} — narxi {price} | Chinor, Sergeli"
     desc = (f"{it['name']}. Narxi {price}. {cat} bo'limi. "
-            f"Chinor qurilish do'koni, Sergeli, Chinor bekati yoni. "
+            f"Chinor — qurilish va xo'jalik mollari (hoz tovarlar) do'koni, "
+            f"Sergeli, Chinor bekati yoni. "
             f"Har kuni 8:00–22:00, yetkazib berish bor.")
     tel = (shop.get("phones") or [""])[0]
     bot = shop.get("bot") or ""
