@@ -129,13 +129,18 @@ def collect() -> list:
         yangi_chek = oxirgi_chek
         # `debt_notify_all=1` bo'lsa — mijoz nomiga yozilgan HAR QANDAY chek
         # (naqd ham) mijozga ketadi; sukut bo'yicha faqat qarzga olingani.
-        faqat_qarz = "AND paid_debt > 0 " if not _hammasi() else ""
+        # VOZVRAT doim ketadi: unda paid_debt har doim 0 (summa manfiy),
+        # shuning uchun ilgari «paid_debt > 0» filtri uni BUTUNLAY tashlab
+        # yuborardi va mijoz qaytargan tovari haqida hech narsa olmasdi.
+        faqat_qarz = ("AND (paid_debt > 0 OR kind = 'return') "
+                      if not _hammasi() else "")
         for r in c.execute(
-                f"""SELECT msg_id, client, sold_at, payable, paid_debt, doc_no
+                f"""SELECT msg_id, client, sold_at, payable, paid_debt, doc_no, kind
                      FROM receipts
                     WHERE msg_id > ? {faqat_qarz}AND client <> ''
                     ORDER BY msg_id LIMIT ?""", (oxirgi_chek, MAX_PER_RUN)):
-            out.append({"tur": "qarz", "mijoz": r["client"],
+            out.append({"tur": "qaytarish" if r["kind"] == "return" else "qarz",
+                        "mijoz": r["client"],
                         "summa": float(r["paid_debt"] or 0), "qoldiq": None,
                         "izoh": (r["sold_at"] or "")[:16],
                         "msg_id": int(r["msg_id"]),
@@ -169,7 +174,7 @@ def collect() -> list:
             e["telefon"] = (((row["phone"] if row else "") or "")
                             or ((row["phone2"] if row else "") or ""))
             e["tovarlar"] = (_tovarlar(c, e["msg_id"])
-                             if e["tur"] == "qarz" else [])
+                             if e["tur"] != "tolov" else [])
 
         _set(c, "watch_receipt", yangi_chek)
         _set(c, "watch_payment", yangi_tolov)
@@ -185,6 +190,8 @@ def _mijoz_matni(e: dict) -> str:
                 + (f"📕 Qoldiq qarz: <b>{_pul(e['qoldiq'])}</b> so'm"
                    if e["qoldiq"] > 0 else "🟢 <b>Qarzingiz yopildi</b>")
                 + "\n\nRahmat! 🌳 Chinor")
+    if e["tur"] == "qaytarish":
+        return _qaytarish_matni(e)
     bosh = ("🤝 <b>Yangi xarid qarzga yozildi</b>" if float(e.get("summa") or 0) > 0
             else "🧾 <b>Xaridingiz uchun chek</b>")
     if e.get("doc_no"):
@@ -215,6 +222,33 @@ def _mijoz_matni(e: dict) -> str:
         satrlar.append(f"📕 Jami qarz: <b>{_pul(e['qoldiq'])}</b> so'm")
     elif jami > 0:
         satrlar.append(f"💵 Jami: <b>{_pul(jami)}</b> so'm")
+    satrlar += ["", "Batafsil — «🛒 Do'kon va hisobim» tugmasi yoki /hisobim"]
+    matn = "\n".join(satrlar)
+    return matn if len(matn) <= 4000 else matn[:3900] + "\n…"
+
+
+def _qaytarish_matni(e: dict) -> str:
+    """Vozvrat cheki: qatorlar va summa YesPOS'da manfiy — musbat ko'rsatamiz."""
+    bosh = "↩️ <b>Tovar qaytarildi</b>"
+    if e.get("doc_no"):
+        bosh += f"  №{html.escape(str(e['doc_no']))}"
+    satrlar = [bosh]
+    if e.get("izoh"):
+        satrlar.append(f"🗓 {html.escape(str(e['izoh']))}")
+    tovarlar = e.get("tovarlar") or []
+    if tovarlar:
+        satrlar.append("")
+        for i, it in enumerate(tovarlar[:MAX_ITEMS], 1):
+            nom = html.escape(str(it.get("name") or ""))[:60]
+            satrlar.append(f"{i}) {nom}\n"
+                           f"     {abs(float(it.get('qty') or 0)):g} × "
+                           f"{_pul(abs(float(it.get('price') or 0)))} = "
+                           f"{_pul(abs(float(it.get('amount') or 0)))}")
+        if len(tovarlar) > MAX_ITEMS:
+            satrlar.append(f"… va yana {len(tovarlar) - MAX_ITEMS} ta tovar")
+    satrlar += ["", f"💵 Qaytarilgan summa: <b>{_pul(abs(float(e.get('jami') or 0)))}</b> so'm"]
+    if float(e.get("qoldiq") or 0) > 0:
+        satrlar.append(f"📕 Jami qarz: <b>{_pul(e['qoldiq'])}</b> so'm")
     satrlar += ["", "Batafsil — «🛒 Do'kon va hisobim» tugmasi yoki /hisobim"]
     matn = "\n".join(satrlar)
     return matn if len(matn) <= 4000 else matn[:3900] + "\n…"
@@ -291,6 +325,10 @@ def _admin_matni(e: dict) -> str:
                 f"Summa: <b>{_pul(e['summa'])}</b>"
                 + (f"  ({e['izoh']})" if e["izoh"] else "") + "\n"
                 f"Qoldiq: <b>{_pul(e['qoldiq'])}</b>")
+    if e["tur"] == "qaytarish":
+        return (f"↩️ <b>Vozvrat</b> — {e['mijoz']}\n"
+                f"Summa: <b>{_pul(abs(float(e.get('jami') or 0)))}</b>\n"
+                f"Jami qarz: <b>{_pul(e['qoldiq'])}</b>")
     return (f"🤝 <b>Nasiya</b> — {e['mijoz']}\n"
             f"Summa: <b>{_pul(e['summa'])}</b>\n"
             f"Jami qarz: <b>{_pul(e['qoldiq'])}</b>")
