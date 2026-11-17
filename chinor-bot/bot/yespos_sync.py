@@ -7,9 +7,9 @@ daqiqada:
   2. `marketplace.pos_bridge --apply` — Chinor bazasiga yozadi: qoldiq,
      narx, yangi tovarlar (id = YesPOS sku). Tannarx/optomga tegilmaydi.
 
-HIMOYA: pos_bridge bir xil id ostida butunlay boshqa nomli tovarni
-("ID to'qnashuvi") ko'rsa, YOZMAYDI (chiqish kodi 3). Bunda bosh adminga
-kuniga bir marta xabar boradi — qo'lda tekshirib `--force` bilan yoziladi.
+HIMOYA: tovarlar `yespos_id` orqali bog'lanadi. Bir xil raqam ostida
+butunlay boshqa nomli tovar ("ID to'qnashuvi") bo'lsa, Chinor qatoriga
+tegilmaydi va YesPOS tovari yangi qator bo'lib qo'shiladi — sinxron to'xtamaydi.
 
 Alohida jarayonda ishlaydi (API sekin — qoldiq 1–2 daqiqa), bot yiqilmaydi.
 Kalit: `marketplace/.env` → YESPOS_API_KEY.
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 INTERVAL = int(os.getenv("YESPOS_SYNC_MINUTES", "15")) * 60
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_last_alert_day = ""
 _last_catalog_day = ""
 
 
@@ -48,7 +47,7 @@ async def _run(*args, timeout: int = 600) -> tuple:
 
 
 async def sync_once(bot=None) -> str:
-    global _last_alert_day, _last_catalog_day
+    global _last_catalog_day
     env = _env()
     if not env.get("YESPOS_API_KEY"):
         return "YESPOS_API_KEY yo'q"
@@ -62,21 +61,6 @@ async def sync_once(bot=None) -> str:
         # Katalog yangilandi (yangi tovar/nom) — cheklarni qayta bog'laymiz
         await _run("marketplace.receipts", "relink", timeout=300)
     rc, out = await _run("marketplace.pos_bridge", "--apply")
-    if rc == 3:
-        if bot and _last_alert_day != today:
-            _last_alert_day = today
-            from bot.config import GLAVNIY_ADMIN_ID
-            lines = [l for l in out.splitlines() if "≠" in l][:10]
-            try:
-                await bot.send_message(
-                    GLAVNIY_ADMIN_ID,
-                    "⚠️ YesPOS sinxroni TO'XTADI — ID to'qnashuvi:\n"
-                    + "\n".join(lines)
-                    + "\n\nBir xil raqam ostida YesPOS'da boshqa tovar. Tekshirib, "
-                      "tasdiqlang (qo'lda: pos_bridge --apply --force).")
-            except Exception:
-                pass
-        return "to'qnashuv — yozilmadi"
     if rc != 0:
         return f"bridge xatosi ({rc})"
     summary = [l.strip() for l in out.splitlines()

@@ -1,8 +1,9 @@
 """Ko'prik: YesPOS qoldiq/narxini Chinor POS bazasiga (`pos.db`) ko'chiradi.
 
-Ulash kaliti — **Chinor `products.id` == YesPOS `sku`**. Bu tasodif emas:
-Chinor bazasi o'sha do'kon artikullari asosida qurilgan (98.8% moslik,
-93.6% da nom ham bir xil).
+Ulash kaliti — **`products.yespos_id`** (YesPOS'ning o'zgarmas ichki id'si).
+Odatda `products.id` == YesPOS `sku` ham bo'ladi (Chinor bazasi o'sha do'kon
+artikullari asosida qurilgan), lekin raqam faqat BIRINCHI ulashda ishlatiladi
+— keyin sku qayta berilsa ham boshqa tovar ustidan yozilmaydi (`plan()`).
 
 Yo'nalish bir tomonlama: YesPOS — haqiqat manbai, Chinor — ko'zgu.
 
@@ -61,44 +62,96 @@ def _fetch_marketplace_rows(db: MarketplaceDB, day: str = None) -> dict:
     }, day
 
 
-def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
-    """Nima o'zgarishini hisoblaydi — hech narsa yozmaydi."""
+def _norm(x: str) -> str:
+    import re as _re
+    return _re.sub(r"\s+", " ", (x or "").lower().replace("’", "'")).strip()
+
+
+def _similar(a: str, b: str) -> float:
+    import difflib
+    return difflib.SequenceMatcher(None, _norm(a), _norm(b)).ratio()
+
+
+# Bog'lanmagan qatorni sku bo'yicha YesPOS tovariga ULASH uchun nomlar kamida
+# shuncha o'xshash bo'lishi kerak. Ulangandan keyin nom qanchalik o'zgarmasin,
+# bog'lanish `yespos_id` orqali saqlanadi.
+LINK_SIMILARITY = 0.5
+NEW_ID_FROM = 800001       # sku'si band bo'lgan YANGI YesPOS tovarlari uchun
+NEW_ID_TO = 899999         # (YesPOS 5 xonali, Chinor qo'lda 900001+)
+
+
+def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None,
+         force: bool = False) -> dict:
+    """Nima o'zgarishini hisoblaydi — hech narsa yozmaydi.
+
+    Bog'lash kaliti — `products.yespos_id` (YesPOS'ning o'zgarmas ichki id'si).
+    Ilgari faqat `id == sku` edi: YesPOS sotilmay qolgan tovar raqamini yangi
+    tovarga bersa yoki raqamlar to'qnashsa, Chinor'dagi BOSHQA tovarning nomi
+    va narxi ustidan yozilib ketardi. Endi:
+      • ulangan qator (yespos_id bor) — faqat o'sha YesPOS tovaridan yangilanadi;
+        YesPOS'da yo'qolsa (sotilmay qoldi/o'chdi) — tegilmaydi;
+      • ulanmagan qator — sku bo'yicha topiladi va nomi o'xshash bo'lsagina
+        ulanadi; o'xshamasa — TO'QNASHUV: qatorga tegilmaydi, YesPOS tovari
+        yangi qator bo'lib qo'shiladi.
+    """
     known_barcodes = known_barcodes or {}
     conn = sqlite3.connect(f"file:{pos_db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(products)")}
+        yid_col = "yespos_id" if "yespos_id" in cols else "0 AS yespos_id"
         local = conn.execute(
-            "SELECT id, name, qty, sell_price, barcode FROM products"
+            f"SELECT id, name, qty, sell_price, barcode, {yid_col} FROM products"
         ).fetchall()
     finally:
         conn.close()
 
-    # Shtrix-kod: pos.db dagilarni yig'amiz, saqlangan-u bu yerda yo'qlarini
-    # qaytarish uchun ajratamiz. Ustidan hech qachon yozilmaydi.
+    by_yid = {m["yespos_id"]: (sku, m) for sku, m in mp_rows.items()}
+    local_ids = {int(r["id"]) for r in local}
+
+    # 1) Har Chinor qatoriga YesPOS juftini topamiz. Avval ulanganlar —
+    #    ular o'z YesPOS tovarini "band" qiladi, sku bo'yicha ikkinchi marta
+    #    boshqa qatorga ulanib qolmasin.
+    pairs = []          # (chinor qatori, sku, mp)
+    claimed = set()
+    new_links, clashes = [], []
+    for r in local:
+        yid = int(r["yespos_id"] or 0)
+        if yid and yid in by_yid:
+            sku, m = by_yid[yid]
+            pairs.append((r, sku, m))
+            claimed.add(yid)
+    for r in local:
+        if int(r["yespos_id"] or 0):
+            continue
+        m = mp_rows.get(str(r["id"]))
+        if not m or m["yespos_id"] in claimed:
+            continue
+        sim = _similar(r["name"], m["name"])
+        if sim < LINK_SIMILARITY and not force:
+            clashes.append((r["id"], r["name"], m["name"], sim))
+            continue
+        pairs.append((r, str(r["id"]), m))
+        claimed.add(m["yespos_id"])
+        new_links.append((r["id"], m["yespos_id"]))
+
+    # Shtrix-kod: YesPOS sku bo'yicha saqlanadi. Ustidan hech qachon yozilmaydi.
+    sku_of = {r["id"]: sku for r, sku, _ in pairs}
     harvest = {
-        str(r["id"]): (r["barcode"] or "").strip()
+        str(sku_of.get(r["id"], r["id"])): (r["barcode"] or "").strip()
         for r in local
         if (r["barcode"] or "").strip()
     }
+    pid_of = {sku: r["id"] for r, sku, _ in pairs}
     barcode_restore = [
-        (int(sku), known_barcodes[sku])
+        (pid_of[sku], known_barcodes[sku])
         for sku in known_barcodes
-        if sku not in harvest and sku.isdigit()
+        if sku not in harvest and sku in pid_of
     ]
 
     qty_changes, price_changes, zero_price, negative = [], [], [], []
     name_changes = []
-    matched = 0
-    local_ids = set()
-
-    for r in local:
-        sku = str(r["id"])
-        local_ids.add(sku)
-        m = mp_rows.get(sku)
-        if not m:
-            continue
-        matched += 1
-
+    for r, _sku, m in pairs:
         if abs(float(r["qty"] or 0) - m["stock"]) > 1e-9:
             qty_changes.append((r["id"], r["name"], float(r["qty"] or 0), m["stock"]))
         if m["stock"] < 0:
@@ -106,9 +159,7 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
 
         # Nom ham YesPOS'niki — u yerda tovar qayta nomlansa, bizda eskisi
         # qolib ketardi (2026-08-20 da 512 ta shunday nom to'planib qolgandi).
-        # Eskirgan nom faqat ko'rinishga emas, YETKAZIB BERUVCHI ro'yxatini
-        # moslashtirishga ham xalaqit beradi — nakladnoy YesPOS nomi bilan
-        # keladi, bizniki esa boshqacha.
+        # Endi bu xavfsiz: qator shu YesPOS tovariga yespos_id bilan ulangan.
         if (m["name"] or "").strip() and (m["name"] or "").strip() != (r["name"] or "").strip():
             name_changes.append((r["id"], r["name"], m["name"]))
 
@@ -119,31 +170,40 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
                 (r["id"], r["name"], float(r["sell_price"] or 0), m["price"])
             )
 
-    # YesPOS'da bor, Chinor'da yo'q — YANGI TOVARLAR.
-    # Ilgari ular shunchaki sanalar edi va bazaga hech qachon tushmasdi:
-    # do'konda yangi tovar kiritilsa, u botda/Mini App'da UMUMAN ko'rinmasdi
-    # (2026-08-07 da 237 ta shunday tovar to'planib qolgan edi).
-    only_mp = sorted(set(mp_rows) - local_ids, key=lambda s: int(s) if s.isdigit() else 0)
+    # 2) Hech bir qatorga ulanmagan YesPOS tovarlari — YANGI TOVARLAR.
+    #    id = sku (bo'sh bo'lsa), aks holda 800001+ dan — Chinor'dagi boshqa
+    #    tovar o'sha raqamni egallagan.
+    only_mp = sorted(
+        (sku for sku, m in mp_rows.items() if m["yespos_id"] not in claimed),
+        key=lambda s: int(s) if s.isdigit() else 0,
+    )
+    next_id = max([NEW_ID_FROM - 1] + [i for i in local_ids
+                                       if NEW_ID_FROM <= i <= NEW_ID_TO]) + 1
     new_products, new_zero_price = [], []
     for sku in only_mp:
-        if not sku.isdigit():
-            continue           # id sifatida ishlatib bo'lmaydi
         m = mp_rows[sku]
         if m["price"] <= 0:
             # Narxsiz tovar mijozga "0 so'm" bo'lib ko'rinadi — qo'shmaymiz,
             # narxi qo'yilishi bilan keyingi aylanishda o'zi tushadi.
             new_zero_price.append((sku, m["name"]))
             continue
-        new_products.append((int(sku), m["name"], m["price"], m["stock"]))
+        if sku.isdigit() and int(sku) not in local_ids:
+            pid = int(sku)
+        else:
+            pid, next_id = next_id, next_id + 1
+        local_ids.add(pid)
+        new_products.append((pid, m["name"], m["price"], m["stock"], m["yespos_id"]))
 
     return {
         "harvest": harvest,
         "barcode_restore": barcode_restore,
-        "matched": matched,
+        "matched": len(pairs),
         "name_changes": name_changes,
+        "new_links": new_links,
+        "clashes": clashes,
         "local_total": len(local),
         "mp_total": len(mp_rows),
-        "only_local": sorted(local_ids - set(mp_rows)),
+        "only_local": sorted(set(int(r["id"]) for r in local) - set(sku_of)),
         "only_mp": only_mp,
         "new_products": new_products,
         "new_zero_price": new_zero_price,
@@ -189,6 +249,9 @@ def apply(pos_db_path: str, mp_rows: dict, p: dict) -> int:
     conn = sqlite3.connect(pos_db_path, timeout=30)
     touched = 0
     try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(products)")}
+        if "yespos_id" not in cols:
+            conn.execute("ALTER TABLE products ADD COLUMN yespos_id INTEGER DEFAULT 0")
         conn.execute("BEGIN")
         # YANGI TOVARLAR — id sifatida YesPOS sku'si qo'yiladi, chunki butun
         # ko'prik shu moslikka tayanadi (id == sku). Tannarx va optom narx
@@ -196,14 +259,17 @@ def apply(pos_db_path: str, mp_rows: dict, p: dict) -> int:
         # o'zi to'ldiradi. Rasm ham yo'q — shuning uchun bunday tovar
         # kanalga avtomatik e'lon QILINMAYDI (e'lon rasm talab qiladi).
         created = now_local().strftime("%Y-%m-%d %H:%M:%S")
-        for pid, name, price, stock in p.get("new_products") or []:
+        for pid, name, price, stock, yid in p.get("new_products") or []:
             conn.execute(
                 "INSERT OR IGNORE INTO products "
                 "(id, name, description, sell_price, wholesale_price, "
-                " cost_price, qty, unit, is_active, created_at, category_id) "
-                "VALUES (?, ?, '', ?, 0, 0, ?, 'dona', 1, ?, 0)",
-                (pid, name, round(price, 2), stock, created),
+                " cost_price, qty, unit, is_active, created_at, category_id, yespos_id) "
+                "VALUES (?, ?, '', ?, 0, 0, ?, 'dona', 1, ?, 0, ?)",
+                (pid, name, round(price, 2), stock, created, yid),
             )
+            touched += 1
+        for pid, yid in p.get("new_links") or []:
+            conn.execute("UPDATE products SET yespos_id = ? WHERE id = ?", (yid, pid))
             touched += 1
         for pid, _name, _old, new_qty in p["qty_changes"]:
             conn.execute("UPDATE products SET qty = ? WHERE id = ?", (new_qty, pid))
@@ -249,7 +315,7 @@ def _report(p: dict, pos_db_path: str, day: str) -> None:
     print(f"  YANGI qo'shiladi : {len(new):,}")
     if p.get("new_zero_price"):
         print(f"  Yangi, lekin narxi 0 (qo'shilmaydi) : {len(p['new_zero_price']):,}")
-    for pid, name, price, stock in new[:10]:
+    for pid, name, price, stock, _yid in new[:10]:
         print(f"    + [{pid}] {name[:34]:<34} {price:>10,.0f} so'm  {stock:>7,.1f}")
 
     print(f"  Qoldiq o'zgaradi : {len(p['qty_changes']):,}")
@@ -285,30 +351,12 @@ def _report(p: dict, pos_db_path: str, day: str) -> None:
             print(f"    [{pid}] {name[:34]:<34} {old:>10,.0f} → {new:>10,.0f}")
 
 
-CLASH_SIMILARITY = 0.3
-
-
-def _id_clashes(p: dict) -> list:
-    """Nomi o'zgargan, lekin eskisiga deyarli o'xshamaydigan qatorlar."""
-    import difflib
-    import re as _re
-
-    def norm(x):
-        return _re.sub(r"\s+", " ", (x or "").lower().replace("’", "'")).strip()
-    out = []
-    for pid, old, new in p.get("name_changes", []):
-        r = difflib.SequenceMatcher(None, norm(old), norm(new)).ratio()
-        if r < CLASH_SIMILARITY:
-            out.append((pid, old, new, r))
-    return out
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="YesPOS → Chinor POS ko'prigi")
     ap.add_argument("--apply", action="store_true", help="haqiqatan yozish")
     ap.add_argument("--pos-db", default=config.POS_DB)
     ap.add_argument("--force", action="store_true",
-                    help="id to'qnashuvi bo'lsa ham yozish (faqat qo'lda, tekshirib)")
+                    help="nomi o'xshamasa ham sku bo'yicha ulash (faqat qo'lda, tekshirib)")
     args = ap.parse_args(argv)
 
     if not os.path.exists(args.pos_db):
@@ -321,21 +369,21 @@ def main(argv=None) -> int:
             print("Marketplace bazasida qoldiq surati yo'q. Avval: python -m marketplace.sync all")
             return 1
 
-        p = plan(args.pos_db, mp_rows, db.get_barcodes())
+        p = plan(args.pos_db, mp_rows, db.get_barcodes(), force=args.force)
         _report(p, args.pos_db, day)
 
-        # HIMOYA: bir xil id ostida BUTUNLAY boshqa nomli tovar — bu nom
-        # o'zgarishi emas, id to'qnashuvi (2026-10-20: Chinor 16877 «parol»,
-        # YesPOS 16877 «Gel sovun idish»). Yozilsa ikki tovar bitta bo'lib
-        # ketadi va tarix aralashadi. Avtomatik rejimda yozmaymiz.
-        clash = _id_clashes(p)
+        # TO'QNASHUV: bir xil raqam ostida BUTUNLAY boshqa nomli tovar
+        # (2026-10-20: Chinor 16877 «parol», YesPOS 16877 «Gel sovun idish»).
+        # Endi sinxron to'xtamaydi: Chinor qatoriga tegilmaydi, YesPOS tovari
+        # yangi qator bo'lib qo'shiladi. Bir xil tovar ekani aniq bo'lsa —
+        # qo'lda `--force` bilan ulanadi.
+        clash = p["clashes"]
         if clash:
-            print(f"\n  ⚠ ID TO'QNASHUVI: {len(clash)} ta (nomlar umuman o'xshamaydi)")
+            print(f"\n  ⚠ ID TO'QNASHUVI: {len(clash)} ta — tegilmaydi (nomlar o'xshamaydi)")
             for pid, old, new, r in clash[:20]:
                 print(f"    [{pid}] «{old}» ≠ «{new}»  (o'xshashlik {r:.2f})")
-            if args.apply and not args.force:
-                print("\n[to'xtatildi] To'qnashuvni hal qiling yoki --force bilan yozing.")
-                return 3
+        if p["new_links"]:
+            print(f"  YesPOS'ga yangi ulangan: {len(p['new_links']):,}")
 
         if not args.apply:
             print("\n[dry-run] Hech narsa yozilmadi. Yozish uchun: --apply")
@@ -347,7 +395,7 @@ def main(argv=None) -> int:
         # ishlaganda o'zgarishsiz aylanishlar ko'p bo'ladi — har biriga nusxa
         # olish bekorga disk yeydi.
         if not (p["qty_changes"] or p["price_changes"] or p["barcode_restore"]
-                or p["new_products"] or p.get("name_changes")):
+                or p["new_products"] or p["name_changes"] or p["new_links"]):
             print("\n✓ O'zgarish yo'q — bazaga tegilmadi.")
             return 0
         n = apply(args.pos_db, mp_rows, p)
