@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://chinor-ag6.pages.dev/sitemap.xml
+Sitemap: https://chinor.chinorpos.com/sitemap.xml

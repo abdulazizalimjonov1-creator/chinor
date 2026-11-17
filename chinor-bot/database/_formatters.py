@@ -28,7 +28,7 @@ def _channel_footer() -> str:
         lines.append(f"📍 {SHOP_LOCATION}")
     # Sayt havolasi — mijoz do'kon haqida to'liq ma'lumotni ko'radi, qidiruv
     # tizimlari uchun esa bu ishonchli havola (saytning o'rni ko'tariladi).
-    site = os.getenv("SHOP_SITE", "https://chinor-ag6.pages.dev").strip()
+    site = os.getenv("SHOP_SITE", "https://chinor.chinorpos.com").strip()
     if site:
         lines.append(f"🌐 {site}")
     lines.append("#chinor #chinormarket")

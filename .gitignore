@@ -80,3 +80,10 @@ chinor-bot/updates/**/*.exe
 chinor-bot/updates/**/*.zip
 chinor-bot/updates/**/*.blockmap
 chinor-bot/updates/**/*.dmg
+
+# Sayt uchun avtomatik yasaladigan sahifalar (deploy/seo-build.py)
+site/t/
+site/b/
+site/tovarlar/
+site/img/
+site/assets/
