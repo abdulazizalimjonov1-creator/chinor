@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Saytni har kuni 06:30 da qayta yasab Cloudflare Pages'ga chiqaradi
+     (narx/qoldiq/yangi suratli tovarlar Google'ga yangi holda ko'rinsin).
+     O'rnatish (bir marta):
+       git clone git@github.com:abdulazizalimjonov1-creator/chinor.git ~/.chinor-site-build
+       cp deploy/mac/com.chinor.site-deploy.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.chinor.site-deploy.plist
+     Mac uxlab qolsa, uyg'ongach bir marta ishlaydi. Log: ~/Library/Logs/chinor-site-deploy.log -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.chinor.site-deploy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/prom1/.chinor-site-build/deploy/mac/site-daily.sh</string>
+    </array>
+    <key>WorkingDirectory</key><string>/Users/prom1/.chinor-site-build</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>6</integer>
+        <key>Minute</key><integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key><string>/Users/prom1/Library/Logs/chinor-site-deploy.log</string>
+    <key>StandardErrorPath</key><string>/Users/prom1/Library/Logs/chinor-site-deploy.log</string>
+</dict>
+</plist>
