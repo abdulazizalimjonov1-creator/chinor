@@ -419,12 +419,12 @@ function renderModuleMenu(mod) {
   } else if (mod === 'mijozlar') {
     c.innerHTML = tilesHtml([
       { key: 'list', perm: 'clients_view', label: "Mijozlar ro'yxati", icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
-      { key: 'top', perm: 'clients_view', label: 'Top mijozlar', icon: 'M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3' },
+      { key: 'top', perm: 'clients_view', label: 'Mijozlar tahlili', icon: 'M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3' },
       { key: 'qarz', perm: 'debt', label: 'Qarzdorlar', icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
     ]);
     bindTiles(c, {
       list: () => { renderClients._filter = ''; openTab('cli:list', 'Mijozlar', renderClients); },
-      top: () => openTab('cli:top', 'Top mijozlar', renderTopClients),
+      top: () => openTab('cli:top', 'Mijozlar tahlili', renderTopClients),
       qarz: () => { renderClients._filter = 'qarz'; openTab('cli:list', 'Mijozlar', renderClients); },
     });
   } else if (mod === 'xodimlar') {
@@ -1601,55 +1601,83 @@ function drawClientCard(c, cid) {
   }
 }
 
-// ── Top mijozlar (davr bo'yicha reyting) ─────────────────────────────────────
+// ── Mijozlar tahlili: YesPOS + Chinor + qarz daftari ─────────────────────────
+// Ilgari faqat Chinor kassasi sotuvlarini sanardi (deyarli bo'sh edi). Endi
+// asosiy savdo (YesPOS) va qarz harakati bilan: kim foydali, kim qarzini
+// o'stiryapti, kim kelmay qo'ydi.
+const SEG_PILL = { gold: 'gold', good: 'green', risk: 'red', watch: 'gold', sleep: 'gray', new: 'blue', idle: 'gray' };
+const SEG_ORDER = ['gold', 'good', 'risk', 'watch', 'sleep', 'new', 'idle'];
 async function renderTopClients(c) {
   const st = renderTopClients;
-  if (st._days == null) st._days = 30;
+  if (st._days == null) st._days = 90;
+  if (st._seg == null) st._seg = '';
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
-  const r = await api.clientsTop(st._days);
+  const r = await api.clientsInsights(st._days);
   if (!r.ok) {
     if (r.authRequired) return doLogout();
     c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
     return;
   }
-  const items = r.items || [];
+  const all = r.items || [];
+  const seg = r.segments || {};
+  const cnt = r.counts || {};
+  const sm = r.summary || {};
+  const y = (sm.yespos || {}).current || {};
+  let items = st._seg ? all.filter((x) => x.segment === st._seg) : all;
+  if (st._seg === 'risk' || st._seg === 'watch') items = [...items].sort((a, b) => b.debt_change - a.debt_change);
   const maxRev = Math.max(1, ...items.map((x) => x.revenue || 0));
-  const totalRev = items.reduce((a, x) => a + (x.revenue || 0), 0);
-  const chips = [[7, '7 kun'], [30, '30 kun'], [90, '90 kun'], [365, '1 yil'], [0, 'Barcha davr']];
-  const medal = (i) => (['🥇', '🥈', '🥉'][i] || `${i + 1}.`);
+  const pct = (a, b) => (b ? Math.round(((a - b) / b) * 100) : 0);
+  const dRev = pct(sm.total_revenue || 0, sm.total_revenue_prev || 0);
+  const chips = [[30, '30 kun'], [90, '90 kun'], [180, '6 oy'], [365, '1 yil']];
+  const change = (v) => v > 0 ? `<span class="debt-pos">+${money(v)}</span>`
+    : v < 0 ? `<span style="color:var(--green)">−${money(-v)}</span>` : '<span class="muted">0</span>';
 
   c.innerHTML = `
     <div class="rc-chips">${chips.map(([k, l]) =>
       `<button class="rc-chip${st._days === k ? ' active' : ''}" data-d="${k}">${l}</button>`).join('')}</div>
     <div class="sum-chips" style="margin:14px 0">
-      <div class="sum-chip"><div class="v">${int(items.length)}</div><div class="l">Xarid qilgan mijozlar</div></div>
-      <div class="sum-chip"><div class="v">${money(totalRev)}</div><div class="l">Umumiy tushum (mijozli)</div></div>
+      <div class="sum-chip"><div class="v">${money(sm.total_revenue)}</div>
+        <div class="l">Savdo (YesPOS + Chinor) · ${dRev >= 0 ? '▲' : '▼'} ${Math.abs(dRev)}% oldingi davrga</div></div>
+      <div class="sum-chip"><div class="v">${money(y.profit)}</div><div class="l">Taxminiy foyda (YesPOS)</div></div>
+      <div class="sum-chip"><div class="v">${money(y.debt)}</div><div class="l">Qarzga sotilgan</div></div>
+      <div class="sum-chip"><div class="v">${money(sm.debt_paid_period)}</div><div class="l">Qarz to'lovlari</div></div>
+      <div class="sum-chip"><div class="v debt-pos">${money(sm.debt_total)}</div><div class="l">Hozirgi qarz · ${int(sm.debtors)} qarzdor</div></div>
     </div>
+    <div class="rc-chips" style="margin-bottom:12px">
+      <button class="rc-chip${!st._seg ? ' active' : ''}" data-s="">Hammasi (${int(all.length)})</button>
+      ${SEG_ORDER.filter((k) => cnt[k]).map((k) =>
+        `<button class="rc-chip${st._seg === k ? ' active' : ''}" data-s="${k}">${esc(seg[k] || k)} (${int(cnt[k])})</button>`).join('')}
+    </div>
+    <div class="np-hint" style="margin-bottom:10px">⚠️ Xavfli — ko'p oladi, lekin qarzi o'sib boryapti va kam to'layapti.
+      🟡 Kuzatish — qarzi o'smoqda. 😴 Uxlab qolgan — 45 kundan beri kelmagan. Foyda joriy tannarx bo'yicha taxminiy.</div>
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th style="width:52px">O'rin</th><th>Mijoz</th><th>Turi</th>
-        <th style="min-width:220px">Tushum</th><th class="num">Cheklar</th><th class="num">O'rtacha chek</th>
-        <th class="num">Qarz</th><th class="num">🎁 Bonus</th><th>Oxirgi xarid</th></tr></thead>
-      <tbody>${items.length ? items.map((x, i) => `
-        <tr class="top-row" data-id="${x.id}" data-name="${esc(x.shop_name)}" title="Kartochkani ochish">
-          <td class="top-medal">${medal(i)}</td>
-          <td><b>${esc(x.shop_name || '—')}</b><br><small class="muted">${esc(x.phone || '')}</small></td>
-          <td>${clientTypePill(x)}</td>
-          <td><div class="paybar-track"><div class="paybar-fill" style="width:${(x.revenue / maxRev) * 100}%"></div></div>
+      <thead><tr><th>Mijoz</th><th>Holat</th><th style="min-width:180px">Savdo</th><th class="num">Foyda</th>
+        <th class="num">Cheklar</th><th class="num">O'rtacha chek</th><th class="num">Qarzga olgan</th>
+        <th class="num">To'lagan</th><th class="num">Qarz o'zgarishi</th><th class="num">Hozirgi qarz</th><th>Oxirgi xarid</th></tr></thead>
+      <tbody>${items.length ? items.map((x) => `
+        <tr>
+          <td><b>${esc(x.name || '—')}</b><br><small class="muted">${esc((x.sources || []).join(' + '))}</small></td>
+          <td><span class="pill ${SEG_PILL[x.segment] || 'gray'}">${esc(x.segment_label || '')}</span></td>
+          <td><div class="paybar-track"><div class="paybar-fill" style="width:${Math.max(0, (x.revenue / maxRev) * 100)}%"></div></div>
             <b>${money(x.revenue)}</b></td>
+          <td class="num">${money(x.profit)}</td>
           <td class="num">${int(x.checks)}</td>
           <td class="num">${money(x.avg_check)}</td>
-          <td class="num${(x.debt_sum || 0) > 0 ? ' debt-pos' : ''}">${money(x.debt_sum)}</td>
-          <td class="num${(x.bonus_balance || 0) > 0 ? ' bonus-pos' : ''}">${money(x.bonus_balance)}</td>
-          <td>${esc(x.last_sale_at || '')}</td>
+          <td class="num">${money(x.debt_taken)}</td>
+          <td class="num">${money(x.debt_paid)}</td>
+          <td class="num">${change(x.debt_change)}</td>
+          <td class="num${(x.debt_now || 0) > 0 ? ' debt-pos' : ''}"><b>${money(x.debt_now)}</b></td>
+          <td>${esc(x.last_at || '')}</td>
         </tr>`).join('')
-        : `<tr><td colspan="9"><div class="chart-empty">Bu davrda mijozga biriktirilgan sotuv yo'q. Kassada sotuvni mijozga biriktirsangiz, reyting shu yerda chiqadi.</div></td></tr>`}</tbody>
+        : `<tr><td colspan="11"><div class="chart-empty">Bu davrda mijozli savdo yo'q.</div></td></tr>`}</tbody>
     </table></div>`;
 
   c.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => {
     st._days = Number(b.dataset.d); renderTopClients(c);
   }));
-  c.querySelectorAll('.top-row').forEach((row) => row.addEventListener('click', () =>
-    openClientCard(Number(row.dataset.id), row.dataset.name)));
+  c.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => {
+    st._seg = b.dataset.s; renderTopClients(c);
+  }));
 }
 
 // ── XODIMLAR: boshqaruv + CRM (KPI) ─────────────────────────────────────────
@@ -3881,19 +3909,22 @@ async function reorderItems(c, sid, nom) {
 
 // ── 🤖 AI analitika ─────────────────────────────────────────────────────────
 const AI_SAVOLLAR = [
+  ['debt', '⚠️ Qarzdorlar xavfi'],
+  ['cash', '💰 Pul aylanmasi'],
+  ['clients', '👥 Mijozlar tahlili'],
+  ['profit', '📈 Foydani oshirish'],
   ['top', 'Eng foydali tovarlar'],
   ['slow', 'Sekin sotilayotganlar'],
   ['stock', 'Ombor holati'],
-  ['clients', 'Mijozlar tahlili'],
-  ['profit', 'Foydani qanday oshirish'],
+  ['general', 'Umumiy holat'],
 ];
 
 function renderAiAnalytics(c) {
   c.innerHTML = `
     <div class="card">
-      <div class="card-title">🤖 Biznes tahlili</div>
-      <div class="np-hint" style="margin-bottom:12px">Savol tanlang yoki o'zingiz yozing.
-        Serverga savdo, foyda va top tovarlar konteksti yuboriladi — javob 10–40 soniyada keladi.</div>
+      <div class="card-title">🤖 AI moliyaviy maslahatchi</div>
+      <div class="np-hint" style="margin-bottom:12px">Savol tanlang yoki o'zingiz yozing. AI YesPOS va Chinor
+        kassasi savdosini, foydani, mijozlar va qarzlar harakatini, omborni ko'radi — javob 10–60 soniyada keladi.</div>
       <div class="filters" style="margin-bottom:10px">
         ${AI_SAVOLLAR.map(([k, t]) => `<button class="btn-soft ghost" data-ai="${k}">${esc(t)}</button>`).join('')}
       </div>
@@ -3916,7 +3947,9 @@ function renderAiAnalytics(c) {
       return;
     }
     out.innerHTML = `<div class="card"><div class="card-title">${esc(tugma || 'Javob')}</div>
-      <div class="ai-answer">${esc(r.answer || '').replace(/\n/g, '<br>')}</div></div>`;
+      <div class="ai-answer">${esc(r.answer || '')
+        .replace(/&lt;(\/?)(b|i|code)&gt;/g, '<$1$2>')   // AI faqat shu teglarni ishlatadi
+        .replace(/\n/g, '<br>')}</div></div>`;
   };
   c.querySelectorAll('[data-ai]').forEach((b) =>
     b.addEventListener('click', () => sora({ preset: b.dataset.ai }, b.textContent)));

@@ -137,6 +137,9 @@ module.exports = {
     req(base, `/api/client/detail?client_id=${Number(client_id) || 0}`, { token, timeout: 20000 }),
   clientsTop: (base, token, days = 30) =>
     req(base, `/api/clients/top?days=${Number(days) || 0}`, { token, timeout: 20000 }),
+  // YesPOS + Chinor + qarz daftari birlashgan mijozlar tahlili (segmentlar)
+  clientsInsights: (base, token, days = 90) =>
+    req(base, `/api/clients/insights?days=${Number(days) || 90}`, { token, timeout: 30000 }),
   // ── Tovar suratlari ─────────────────────────────────────────────────────────
   // Mini App'dagi «Rasmsiz tovarlar» bo'limi bilan BIR XIL endpointlar:
   // qoida serverda (bot/api_photos.py), shuning uchun telefon va kompyuter

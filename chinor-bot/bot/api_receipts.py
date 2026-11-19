@@ -11,6 +11,7 @@ bo'lim yonida turadi.
 Endpointlar:
   GET /api/sales/history?days=1&limit=100   — cheklar ro'yxati + kunlik jami
   GET /api/sales/receipt?id=N               — bitta chekning tovarlari
+  GET /api/sales/rating?days=30             — reyting: mijoz / tovar / kassir
 """
 
 import os
@@ -165,6 +166,42 @@ async def api_sales_summary(request: web.Request):
             known += amount
         else:
             unknown += amount
+
+    # Chinor kassasi (pos.db) sotuvlari ham shu hisobotga — ikkala kassa bitta
+    # aylanma/foyda bo'lib ko'rinsin (YesPOS'dan Chinor'ga o'tish davri).
+    try:
+        import json as _json
+        import sqlite3 as _sq
+        from database._helpers import DB_PATH
+        by_day = {d["day"]: d for d in daily}
+        pos = _sq.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        try:
+            for day, total, is_ret, items in pos.execute(
+                    "SELECT date(created_at), total, COALESCE(is_return,0), items FROM sales "
+                    "WHERE COALESCE(is_internal,0)=0 AND date(created_at) >= date('now', ?)",
+                    (since,)):
+                sign = -1 if is_ret else 1
+                total = abs(float(total or 0))
+                d = by_day.setdefault(day, {"day": day, "n": 0, "summa": 0.0})
+                d["summa"] = float(d["summa"] or 0) + sign * total
+                d["n"] = int(d["n"] or 0) + (0 if is_ret else 1)
+                try:
+                    its = _json.loads(items or "[]")
+                except ValueError:
+                    its = []
+                cost = sum(float(i.get("cost_price") or 0) * abs(float(i.get("qty") or 0))
+                           for i in its if isinstance(i, dict))
+                if cost:
+                    profit_by_day[day] = profit_by_day.get(day, 0.0) + sign * (total - cost)
+                    known += total
+                else:
+                    unknown += total
+        finally:
+            pos.close()
+        daily = sorted(by_day.values(), key=lambda d: d["day"], reverse=True)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[sales/summary] Chinor sotuvlari qo'shilmadi: {e}")
 
     today = daily[0]["day"] if daily else ""
     total_sum = sum(float(d["summa"] or 0) for d in daily)
@@ -388,21 +425,28 @@ def _product_costs() -> dict:
         sys.path.insert(0, _REPO_ROOT)
     from marketplace import config
 
-    sku_cost = {}
+    sku_cost, out = {}, {}
     try:
         pos = sqlite3.connect(f"file:{config.POS_DB}?mode=ro", uri=True)
         sku_cost = {int(i): float(c or 0) for i, c in
                     pos.execute("SELECT id, cost_price FROM products") if c}
+        # Aniq bog'lanish: products.yespos_id == chek qatoridagi product_id
+        # (pos_bridge yozadi). sku to'qnashgan tovarlarda ham to'g'ri.
+        try:
+            out = {int(y): float(c) for y, c in pos.execute(
+                "SELECT yespos_id, cost_price FROM products "
+                "WHERE COALESCE(yespos_id,0) > 0 AND cost_price > 0")}
+        except sqlite3.OperationalError:
+            out = {}
         pos.close()
     except Exception:
         return {}
 
-    out = {}
     try:
         with _db() as mdb:
             for pid, sku in mdb.conn.execute(
                     "SELECT id, sku FROM products WHERE sku <> ''"):
-                if str(sku).isdigit() and int(sku) in sku_cost:
+                if int(pid) not in out and str(sku).isdigit() and int(sku) in sku_cost:
                     out[int(pid)] = sku_cost[int(sku)]
     except Exception:
         return {}
@@ -459,6 +503,166 @@ async def api_sales_receipt(request: web.Request):
             # 0 = katalogga bog'lanmagan (tahlilga tushmaydi) — ko'rinib tursin.
             "linked": bool(i["product_id"]),
         } for i in items],
+    })
+
+
+# ─── Reyting: kim ko'p mol olyapti, nima ko'p ketyapti ──────────────────────
+#
+# Manba HAQIQIY cheklar (`receipts`). Chinor `clients` jadvali bo'yicha
+# reyting («/api/clients/top») deyarli bo'sh chiqardi: savdo YesPOS
+# kassasida bo'ladi va chekda mijoz NOM bilan yoziladi, id bilan emas.
+# Shuning uchun guruhlash nom bo'yicha. Qarz va telefon — qarz daftaridan
+# (`debt_clients`), ya'ni reytingdagi mijozni darrov chaqirish mumkin.
+
+def _rating_window(days: int):
+    """(sql shart, parametrlar) — days=0 bo'lsa butun davr."""
+    if days <= 0:
+        return "", []
+    return " AND r.day >= date('now', ?)", [f"-{days - 1} day"]
+
+
+@SALES_ROUTES.get("/api/sales/rating")
+async def api_sales_rating(request: web.Request):
+    """Reyting: top mijozlar, top tovarlar, kassirlar. Ruxsat: 'stats'.
+
+    Query: ?days=30 (0 = butun davr), ?limit=20.
+    """
+    from database.channel_db import db as _db_pos
+    from bot.web_api import _need_admin, _err
+
+    auth, err = await _need_admin(request, _db_pos, "stats")
+    if err is not None:
+        return err
+
+    try:
+        days = max(0, min(730, int(request.query.get("days") or 30)))
+    except ValueError:
+        days = 30
+    try:
+        limit = max(3, min(100, int(request.query.get("limit") or 20)))
+    except ValueError:
+        limit = 20
+
+    cond, params = _rating_window(days)
+    try:
+        with _db() as mdb:
+            c = mdb.conn
+            # Umumiy holat — reytingning «qancha savdodan» olinganini
+            # ko'rsatish uchun (nomsiz cheklar ulushi ham muhim).
+            head = c.execute(
+                f"""SELECT COUNT(*) n,
+                           SUM(CASE WHEN r.kind='return' THEN -r.payable
+                                    ELSE r.payable END) revenue,
+                           SUM(CASE WHEN TRIM(COALESCE(r.client,'')) <> ''
+                                    THEN CASE WHEN r.kind='return' THEN -r.payable
+                                              ELSE r.payable END
+                                    ELSE 0 END) named_revenue,
+                           MIN(r.day) first_day, MAX(r.day) last_day
+                      FROM receipts r WHERE 1=1{cond}""", params).fetchone()
+
+            clients = [dict(x) for x in c.execute(
+                f"""SELECT TRIM(r.client) client,
+                           SUM(CASE WHEN r.kind='return' THEN -r.payable
+                                    ELSE r.payable END) revenue,
+                           SUM(CASE WHEN r.kind<>'return' THEN 1 ELSE 0 END) checks,
+                           SUM(CASE WHEN r.kind='return' THEN 1 ELSE 0 END) returns,
+                           SUM(COALESCE(r.paid_debt,0)) debt_added,
+                           MAX(r.sold_at) last_at, MIN(r.sold_at) first_at
+                      FROM receipts r
+                     WHERE TRIM(COALESCE(r.client,'')) <> ''{cond}
+                     GROUP BY TRIM(r.client)
+                     ORDER BY revenue DESC LIMIT ?""", params + [limit])]
+
+            names = [x["client"] for x in clients]
+            # Har mijozning eng ko'p olgan 3 tovari — «nima olyapti» savoliga.
+            fav = {}
+            if names:
+                marks = ",".join("?" * len(names))
+                for r in c.execute(
+                    f"""SELECT TRIM(r.client) client, i.name,
+                               SUM(i.qty) q, SUM(i.amount) s
+                          FROM receipt_items i JOIN receipts r ON r.msg_id = i.msg_id
+                         WHERE TRIM(r.client) IN ({marks}){cond}
+                         GROUP BY TRIM(r.client), i.name
+                         ORDER BY s DESC""", names + params):
+                    lst = fav.setdefault(r["client"], [])
+                    if len(lst) < 3:
+                        lst.append({"name": r["name"],
+                                    "qty": round(float(r["q"] or 0), 1),
+                                    "sum": round(float(r["s"] or 0))})
+
+            products = [dict(x) for x in c.execute(
+                f"""SELECT i.name, SUM(i.qty) q, SUM(i.amount) s,
+                           COUNT(DISTINCT r.msg_id) checks
+                      FROM receipt_items i JOIN receipts r ON r.msg_id = i.msg_id
+                     WHERE r.kind <> 'return'{cond}
+                     GROUP BY i.name ORDER BY s DESC LIMIT ?""", params + [limit])]
+
+            cashiers = [dict(x) for x in c.execute(
+                f"""SELECT r.cashier, COUNT(*) n,
+                           SUM(CASE WHEN r.kind='return' THEN -r.payable
+                                    ELSE r.payable END) s
+                      FROM receipts r
+                     WHERE TRIM(COALESCE(r.cashier,'')) <> ''{cond}
+                     GROUP BY r.cashier ORDER BY s DESC LIMIT ?""", params + [limit])]
+
+            # Telefon va joriy qarz — qarz daftaridan (bitta so'rov + nom
+            # bo'yicha qarz). Jadval bo'lmasa reyting baribir chiqadi.
+            phones, debts = {}, {}
+            try:
+                from marketplace import debt as _debt
+                _debt.ensure_schema(c)
+                for r in c.execute(
+                        "SELECT name, phone, phone2 FROM debt_clients"):
+                    phones[r["name"]] = (r["phone"] or r["phone2"] or "").strip()
+                for n in names:
+                    if n in phones:
+                        debts[n] = round(_debt.debt(c, n))
+            except Exception:
+                pass
+    except Exception as e:
+        return _err(f"Reyting o'qilmadi: {e}")
+
+    total_rev = float((head["revenue"] if head else 0) or 0)
+    named_rev = float((head["named_revenue"] if head else 0) or 0)
+    return web.json_response({
+        "ok": True,
+        "days": days,
+        "period": {
+            "checks": int((head["n"] if head else 0) or 0),
+            "revenue": round(total_rev),
+            "named_revenue": round(named_rev),
+            # Nomsiz (o'tkinchi) xaridlar ulushi — reyting savdoning qancha
+            # qismini qamrab olgani ko'rinib tursin.
+            "named_share": round(100 * named_rev / total_rev) if total_rev else 0,
+            "first_day": (head["first_day"] if head else "") or "",
+            "last_day": (head["last_day"] if head else "") or "",
+        },
+        "clients": [{
+            "name": x["client"],
+            "revenue": round(float(x["revenue"] or 0)),
+            "checks": int(x["checks"] or 0),
+            "returns": int(x["returns"] or 0),
+            "avg_check": (round(float(x["revenue"] or 0) / int(x["checks"]))
+                          if int(x["checks"] or 0) else 0),
+            "debt_added": round(float(x["debt_added"] or 0)),
+            "debt_now": debts.get(x["client"]),
+            "phone": phones.get(x["client"], ""),
+            "first_at": (x["first_at"] or "")[:16],
+            "last_at": (x["last_at"] or "")[:16],
+            "top": fav.get(x["client"], []),
+        } for x in clients],
+        "products": [{
+            "name": x["name"],
+            "qty": round(float(x["q"] or 0), 1),
+            "sum": round(float(x["s"] or 0)),
+            "checks": int(x["checks"] or 0),
+        } for x in products],
+        "cashiers": [{
+            "name": x["cashier"],
+            "checks": int(x["n"] or 0),
+            "sum": round(float(x["s"] or 0)),
+        } for x in cashiers],
     })
 
 

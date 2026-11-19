@@ -155,6 +155,7 @@ ipcMain.handle('data:clientPayment', withAuth((base, token, arg) => api.clientPa
 ipcMain.handle('data:clientBonus', withAuth((base, token, arg) => api.clientBonus(base, token, arg)));
 ipcMain.handle('data:clientDetail', withAuth((base, token, arg) => api.clientDetail(base, token, arg.client_id)));
 ipcMain.handle('data:clientsTop', withAuth((base, token, arg) => api.clientsTop(base, token, (arg && arg.days) || 0)));
+ipcMain.handle('data:clientsInsights', withAuth((base, token, arg) => api.clientsInsights(base, token, (arg && arg.days) || 90)));
 // Xodimlar boshqaruvi + KPI
 // Moliya, ombor, kategoriya, AI — Mini App'dagi bo'limlarning shu yerdagi varianti
 ipcMain.handle('data:cashMovements', withAuth((base, token, arg) => api.cashMovements(

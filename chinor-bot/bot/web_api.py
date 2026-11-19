@@ -3015,7 +3015,15 @@ async def api_ai_analyze(request: web.Request):
         return _err("Savol juda uzun (500 belgigacha)")
 
     ctx = await _db.gather_ai_context()
-    answer = await analyze(question, ctx)
+    # YesPOS + Chinor + qarz daftari — asosiy savdo YesPOS'da, gather_ai_context
+    # esa faqat Chinor bazasini ko'radi (u kam ishlatiladi).
+    try:
+        from bot import insights
+        ctx["extra_text"] = await asyncio.get_running_loop().run_in_executor(
+            None, insights.ai_context_text)
+    except Exception as e:
+        logger.warning(f"[ai] birlashgan kontekst yig'ilmadi: {e}")
+    answer = await analyze(question, ctx, timeout=60.0)
     return web.json_response({"ok": True, "answer": answer,
                               "presets": list(QUICK_QUESTIONS.keys())})
 
@@ -4292,6 +4300,29 @@ async def api_client_detail(request: web.Request):
         "payments": pays_out,
         "bonus_log": bonus_out,
     })
+
+
+@ROUTES.get("/api/clients/insights")
+async def api_clients_insights(request: web.Request):
+    """Mijozlar tahlili: YesPOS + Chinor + qarz daftari. ?days=90"""
+    from database.channel_db import db as _db
+    auth, err = await _need_admin(request, _db, "clients_view")
+    if err is not None:
+        return err
+    try:
+        days = min(730, max(7, int(request.query.get("days", "90"))))
+    except (TypeError, ValueError):
+        days = 90
+    from bot import insights
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(None, insights.client_insights, days)
+    summary = await loop.run_in_executor(None, insights.business_summary, days)
+    counts = {}
+    for r in rows:
+        counts[r["segment"]] = counts.get(r["segment"], 0) + 1
+    return web.json_response({"ok": True, "days": days, "items": rows,
+                              "segments": insights.SEGMENTS, "counts": counts,
+                              "summary": summary})
 
 
 @ROUTES.get("/api/clients/top")

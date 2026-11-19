@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('chinor', {
   clientBonus: (payload) => ipcRenderer.invoke('data:clientBonus', payload),
   clientDetail: (client_id) => ipcRenderer.invoke('data:clientDetail', { client_id }),
   clientsTop: (days) => ipcRenderer.invoke('data:clientsTop', { days }),
+  clientsInsights: (days) => ipcRenderer.invoke('data:clientsInsights', { days }),
   // Moliya / ombor / kategoriya / AI / eksport
   cashMovements: (from, to, limit) => ipcRenderer.invoke('data:cashMovements', { from, to, limit }),
   lowStock: (threshold) => ipcRenderer.invoke('data:lowStock', { threshold }),
