@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import timedelta
 
 from aiogram import Bot, Dispatcher
@@ -20,9 +21,20 @@ from handlers import (
     ai_analytics, auth_setup, client_ai, discussion, kabinet, kanal_aniq, qarz,
 )
 
+# BOT_LOG_FILE berilsa (Windows server) — log UTF-8 da, 20 MB dan aylanib
+# (5 ta nusxa) yoziladi. Ilgari PowerShell `*>>` UTF-16 da, 100 belgida
+# bo'lib yozardi va fayl cheksiz o'sardi (11.2026: 92 MB).
+_log_file = os.getenv("BOT_LOG_FILE", "").strip()
+if _log_file:
+    from logging.handlers import RotatingFileHandler
+    _handlers = [RotatingFileHandler(_log_file, maxBytes=20 * 1024 * 1024,
+                                     backupCount=5, encoding="utf-8")]
+else:
+    _handlers = None
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=_handlers,
 )
 logger = logging.getLogger(__name__)
 

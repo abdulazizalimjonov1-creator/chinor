@@ -112,6 +112,20 @@ function openModal(id) { $(id).classList.remove('hidden'); }
 function closeModal(id) { $(id).classList.add('hidden'); }
 function anyModalOpen() { return !!document.querySelector('.modal-overlay:not(.hidden)'); }
 function focusScan() { const s = $('scanInput'); if (s) setTimeout(() => s.focus(), 0); }
+function isEditable(el) {
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                  || el.tagName === 'SELECT' || el.isContentEditable);
+}
+// Kassa ekranida matn maydonidan tashqari joy bosilsa (tugma, ro'yxat, savat
+// qatori) fokus qidiruvga qaytadi — keyingi skaner o'qishi yo'qolmasin.
+function stickyScanFocus(e) {
+  if ($('kassaScreen').classList.contains('hidden')) return;
+  if (!$('lockScreen').classList.contains('hidden')) return;
+  if (!$('receiptsScreen').classList.contains('hidden')) return;
+  if (anyModalOpen() || isEditable(e.target)) return;
+  if (String(window.getSelection && window.getSelection()) !== '') return;  // matn belgilanayotgan bo'lsa
+  focusScan();
+}
 
 // ── Holatni qo'llash ──────────────────────────────────────────────────
 function applyState(st) {
@@ -127,6 +141,12 @@ function applyState(st) {
   }
   $('loginScreen').classList.add('hidden');
   $('kassaScreen').classList.remove('hidden');
+  // Fonda yangi katalog keldi (har 5 daqiqada) — ekrandagi ro'yxatni ham yangilaymiz.
+  // Ilgari faqat «⟳ Sinxron» tugmasida yangilanardi: narx/qoldiq eskicha ko'rinardi.
+  if (st.catalogSyncedAt && window._catalogSeen && st.catalogSyncedAt !== window._catalogSeen) {
+    loadCatalog().catch(() => {}); loadClients().catch(() => {});
+  }
+  if (st.catalogSyncedAt) window._catalogSeen = st.catalogSyncedAt;
 
   const net = $('netBadge');
   if (st.online) { net.textContent = '● Online'; net.className = 'badge badge-on'; }
@@ -2368,6 +2388,8 @@ function wireEvents() {
     }
     renderList(val);
   });
+  document.addEventListener('click', (e) => setTimeout(() => stickyScanFocus(e), 0));
+  window.addEventListener('focus', () => stickyScanFocus({ target: document.body }));
   scan.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const val = e.target.value.trim();
@@ -2430,6 +2452,13 @@ function wireEvents() {
       e.preventDefault();
       if (bindTarget) clearBindTarget(); else toggleBindMode();
       return;
+    }
+
+    // Fokus qidiruvdan qochgan bo'lsa (tugma/ro'yxat bosilgan) — skaner yoki
+    // klaviaturadan kelgan belgini yo'qotmaslik uchun fokusni qaytaramiz.
+    if (!isEditable(document.activeElement) && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace')) {
+      $('scanInput').focus();
     }
 
     // Tezkor tugmalar (modal/cheklar yopiq)

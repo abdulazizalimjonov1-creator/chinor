@@ -29,6 +29,7 @@ class Store {
       printerName: '',         // belgilangan printer (bo'sh = standart)
       cashier: null,           // {id, name}
       authHash: '',            // offlayn login uchun (login+parol xeshi)
+      authCreds: '',           // safeStorage bilan shifrlangan login+parol (token eskirsa o'zi qayta kirish uchun)
       loggedOut: false,        // foydalanuvchi chiqib ketganmi (yumshoq logout)
       usdRate: 12500,
       deviceId: crypto.randomUUID(),
@@ -101,6 +102,7 @@ class Store {
     this.save();
   }
   setAuthHash(hash) { this.data.authHash = hash || ''; this.save(); }
+  setAuthCreds(enc) { this.data.authCreds = enc || ''; this.save(); }
   // Yumshoq chiqish — token/cashier/authHash saqlanadi (offlayn qayta kirish uchun)
   logout() { this.data.loggedOut = true; this.save(); }
   restoreSession() { this.data.loggedOut = false; this.save(); }

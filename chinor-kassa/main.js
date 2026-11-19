@@ -1,12 +1,64 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, safeStorage } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
-const api = require('./lib/api');
+const rawApi = require('./lib/api');
+
+// ── Token eskirsa — o'zi qayta kirish ────────────────────────────────
+// Server sessiyasi o'chsa (uzoq ishlatilmagan, server ko'chgan va h.k.) har
+// so'rov 401 olardi va kassa JIM qolardi: katalog 2,5 oy yangilanmay turgan
+// (2026-09-06 → 11-19). Endi login+parol OS xotirasida (macOS Keychain /
+// Windows DPAPI) shifrlangan saqlanadi va 401 da yangi token olinadi.
+function saveCreds(login, password) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return;
+    store.setAuthCreds(safeStorage.encryptString(JSON.stringify({ login, password })).toString('base64'));
+  } catch (_) {}
+}
+let reauthing = null;
+async function reauth() {
+  if (!store.data.authCreds) return false;
+  if (!reauthing) {
+    reauthing = (async () => {
+      try {
+        const { login, password } = JSON.parse(
+          safeStorage.decryptString(Buffer.from(store.data.authCreds, 'base64')));
+        const { ok, data } = await rawApi.login(store.data.serverUrl, login, password, store.data.deviceId);
+        if (!ok || !data.ok) return false;
+        store.setSession(data.session_token, data.cashier, data.usd_rate);
+        return true;
+      } catch (_) { return false; }
+    })().finally(() => { setTimeout(() => { reauthing = null; }, 0); });
+  }
+  return reauthing;
+}
+// api.X(base, token, ...) — 401 bo'lsa bir marta qayta kirib, yangi token bilan takrorlaydi
+const api = new Proxy(rawApi, {
+  get(t, k) {
+    const fn = t[k];
+    if (typeof fn !== 'function' || k === 'login' || k === 'health') return fn;
+    return async (...args) => {
+      let r = await fn(...args);
+      if (r && r.status === 401) {
+        if (await reauth()) {
+          args[1] = store.data.token;
+          r = await fn(...args);
+        } else if (store && !store.data.loggedOut) {
+          // Saqlangan login yo'q (eski versiyadan) — jim qolmay, kirish oynasini
+          // ochamiz. Bir marta kirilgach login saqlanadi va keyin o'zi yangilanadi.
+          status.lastError = "Sessiya tugagan — iltimos, qayta kiring";
+          store.logout();
+          pushState();
+        }
+      }
+      return r;
+    };
+  },
+});
 const { Store } = require('./lib/store');
 
 // Logo (chek chop etish uchun base64)
@@ -625,6 +677,7 @@ function wireIpc() {
         store.setKassaNo(Number(data.kassa_no));
       }
       store.setAuthHash(credHash(login, password));   // offlayn kirish uchun eslab qolamiz
+      saveCreds(login, password);                      // token eskirsa o'zi qayta kirish uchun
       await doSync({ force: true });
       botAnnounceStart().catch(() => {});   // operator bog'langan bo'lsa "ishga tushdi" xabari
       return { ok: true, state: snapshot() };
