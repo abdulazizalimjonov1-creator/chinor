@@ -1674,7 +1674,7 @@ async function renderInsights(c, mode) {
     </div>
     <div class="filters" id="grpBar" style="margin-bottom:10px;${st._sel.size ? '' : 'display:none'}">
       <div class="filter" style="flex:1;min-width:260px"><label>Tanlangan ${st._sel.size} ta hisobni bitta mijozga birlashtirish (egasining ismi)</label>
-        <input type="text" id="grpOwner" maxlength="80" placeholder="Masalan: Elbek aka prorab"></div>
+        <input type="text" id="grpOwner" maxlength="80" placeholder="Masalan: Ali aka usta"></div>
       <button class="btn-soft" id="grpGo">Birlashtirish</button>
       <button class="btn-soft ghost" id="grpClear">Bekor qilish</button>
     </div>

@@ -16,7 +16,7 @@ o'sha nomga ikki yo'l bilan bog'lanadi:
 
 Ikkinchi yo'l bilan topilsa, bog'lanish BIR MARTA yozib qo'yiladi — keyingi
 safar qidirilmaydi. Bitta odamning kassada bir nechta nomi bo'lishi mumkin
-(«Daler aka», «Daler aka metro»), shuning uchun natija har doim RO'YXAT.
+(«Ali aka», «Ali aka do'kon»), shuning uchun natija har doim RO'YXAT.
 
 MAXFIYLIK: mijoz faqat O'ZIGA bog'langan nomlarning chekini va qarzini
 ko'radi. Nom so'rov parametridan OLINMAYDI — aks holda boshqa nomni yozib
@@ -428,7 +428,7 @@ async def api_debt_client_save(request: web.Request):
 async def api_debt_group(request: web.Request):
     """Bir odamning bir nechta hisobini bitta egaga biriktiradi.
 
-    Body: {"names": [...], "owner": "Elbek aka prorab"}; owner bo'sh — ajratadi.
+    Body: {"names": [...], "owner": "Ali aka usta"}; owner bo'sh — ajratadi.
     Hisoblar o'z nomi bilan alohida yuritiladi, tizimda bitta mijoz bo'lib
     ko'rinadi, bot xabari hisob nomi bilan egasiga boradi."""
     from database.channel_db import db as _db_pos

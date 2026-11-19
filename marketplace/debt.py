@@ -439,7 +439,7 @@ def bind_phone(conn, phone: str, chat_id: str) -> List[str]:
 
 
 def _digits9(phone: str) -> str:
-    """«+998 94 686 77 33» → «946867733». Taqqoslash shu ko'rinishda."""
+    """«+998 90 123 45 67» → «901234567». Taqqoslash shu ko'rinishda."""
     d = "".join(ch for ch in (phone or "") if ch.isdigit())
     return d[-9:] if len(d) >= 9 else d
 

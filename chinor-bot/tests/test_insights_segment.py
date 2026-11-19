@@ -12,7 +12,7 @@ if "database._helpers" not in sys.modules:
     sys.modules["database._helpers"] = types.SimpleNamespace(
         DB_PATH="", now_local=lambda: datetime(2026, 11, 19, 12, 0))
 
-from bot.insights import _segment  # noqa: E402
+from bot.insights import _segment, _alias, alias_question, unalias  # noqa: E402
 
 
 def c(**k):
@@ -37,6 +37,12 @@ def test():
     assert _segment(c(revenue=35e6, debt_now=21e6, debt_taken=40e6, debt_paid=45e6), 10e6, 90, "") == "watch"
     # Oddiy, qarzsiz, o'rtacha savdo → yaxshi
     assert _segment(c(revenue=2e6), 10e6, 90, "") == "good"
+    # Tashqi AI'ga ism ketmaydi: taxallus ↔ ism ikki tomonga to'g'ri
+    a = {}
+    for n in ["Ali aka usta", "Vali aka do'kon"] + [f"X{i}" for i in range(9)]:
+        _alias(n, a)
+    assert alias_question("VALI AKA do'kon qarzi?", a) == "Mijoz#02 qarzi?"
+    assert unalias("Mijoz#10 va Mijoz#01", a) == "X7 va Ali aka usta"
     print("OK")
 
 
