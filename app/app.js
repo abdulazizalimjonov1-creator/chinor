@@ -902,6 +902,7 @@
         let _prodPage = 0;
         let _prodQuery = '';
         let _prodLoading = false;
+        let _prodSeq = 0;       // har yangi ro'yxat so'rovi raqami — eski javob yangisini bosmasin
         let _prevScreen = null;
         let _searchTimer = null;
 
@@ -967,7 +968,11 @@
         };
 
         async function loadProducts(reset) {
-            if (_prodLoading) return;
+            // Surish (davomini yuklash) takrorlanmasin; lekin YANGI qidiruv/ro'yxat
+            // hech qachon tashlab yuborilmaydi — ilgari sahifa ochilib yuklanayotgan
+            // paytda qidiruv yozilsa, so'rov yutilib, oddiy ro'yxat qolib ketardi.
+            if (_prodLoading && !reset) return;
+            const my = ++_prodSeq;
             _prodLoading = true;
             // 'qayta' — tovarni tahrirlab qaytdik: sahifa raqami saqlanadi va
             // shu paytgacha ochilgan hamma tovar BITTA so'rovda qayta olinadi
@@ -987,6 +992,7 @@
                     par.limit = String(Math.min(500, (_prodPage + 1) * 20));
                 const qs = new URLSearchParams(par).toString();
                 const { ok, status, data } = await apiFetch('/api/products?' + qs);
+                if (my !== _prodSeq) return;    // bu orada yangi qidiruv boshlandi
                 if (!ok || !data.ok) {
                     productsStatus.textContent =
                         (status === 401)
@@ -1013,6 +1019,7 @@
                 productsMore.style.display = data.has_more ? 'block' : 'none';
                 if (qayta) prodScrollTikla();
             } catch (err) {
+                if (my !== _prodSeq) return;
                 productsStatus.textContent =
                     'Tarmoq xatosi. API: ' + API_BASE_URL + ' — ' + (err.message || err);
             }
@@ -5337,14 +5344,17 @@
         };
         window.goBackFromPOS = function () { showScreen('screenAdmin'); };
 
+        let _posSeq = 0;
         async function loadPOS(reset) {
-            if (_posLoading) return;
+            if (_posLoading && !reset) return;   // yangi qidiruv yutilmasin (loadProducts dagi kabi)
+            const my = ++_posSeq;
             _posLoading = true;
             if (reset) { _posPage = 0; posList.innerHTML = ''; posMore.style.display='none'; }
             posStatus.textContent = 'Yuklanmoqda...';
             try {
                 const qs = new URLSearchParams({page:String(_posPage), q:_posQuery}).toString();
                 const { ok, status, data } = await apiFetch('/api/products?' + qs);
+                if (my !== _posSeq) return;
                 if (!ok || !data.ok) {
                     posStatus.textContent = (status===401)?'🔒 Qaytadan kiring.':('Xato: '+(data.error||status));
                     _posLoading = false; return;
@@ -5354,6 +5364,7 @@
                     (_posQuery ? 'Topilmadi.' : 'Mahsulot yo\'q.');
                 posMore.style.display = data.has_more ? 'block' : 'none';
             } catch (err) {
+                if (my !== _posSeq) return;
                 posStatus.textContent = 'Tarmoq xatosi: ' + (err.message||err);
             }
             _posLoading = false;

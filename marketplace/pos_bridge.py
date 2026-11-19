@@ -67,21 +67,11 @@ def _norm(x: str) -> str:
     return _re.sub(r"\s+", " ", (x or "").lower().replace("’", "'")).strip()
 
 
-def _similar(a: str, b: str) -> float:
-    import difflib
-    return difflib.SequenceMatcher(None, _norm(a), _norm(b)).ratio()
-
-
-# Bog'lanmagan qatorni sku bo'yicha YesPOS tovariga ULASH uchun nomlar kamida
-# shuncha o'xshash bo'lishi kerak. Ulangandan keyin nom qanchalik o'zgarmasin,
-# bog'lanish `yespos_id` orqali saqlanadi.
-LINK_SIMILARITY = 0.5
 NEW_ID_FROM = 800001       # sku'si band bo'lgan YANGI YesPOS tovarlari uchun
 NEW_ID_TO = 899999         # (YesPOS 5 xonali, Chinor qo'lda 900001+)
 
 
-def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None,
-         force: bool = False) -> dict:
+def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None) -> dict:
     """Nima o'zgarishini hisoblaydi — hech narsa yozmaydi.
 
     Bog'lash kaliti — `products.yespos_id` (YesPOS'ning o'zgarmas ichki id'si).
@@ -90,9 +80,12 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None,
     va narxi ustidan yozilib ketardi. Endi:
       • ulangan qator (yespos_id bor) — faqat o'sha YesPOS tovaridan yangilanadi;
         YesPOS'da yo'qolsa (sotilmay qoldi/o'chdi) — tegilmaydi;
-      • ulanmagan qator — sku bo'yicha topiladi va nomi o'xshash bo'lsagina
-        ulanadi; o'xshamasa — TO'QNASHUV: qatorga tegilmaydi, YesPOS tovari
-        yangi qator bo'lib qo'shiladi.
+      • ulanmagan qator — BIRINCHI marta sku bo'yicha ulanadi, nomi farq
+        qilsa ham (YesPOS'da qayta nomlangan bo'ladi — 11.2026 da «nomi
+        o'xshamasa boshqa tovar» qoidasi termos, choynak kabi qayta nomlangan
+        tovarlarni ajratib, eski qatorni muzlatib qo'ygan edi);
+      • o'sha xato bilan yaratilgan dublikat (800001+) asl qatorga
+        birlashtiriladi (`merges`).
     """
     known_barcodes = known_barcodes or {}
     conn = sqlite3.connect(f"file:{pos_db_path}?mode=ro", uri=True)
@@ -113,27 +106,31 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None,
     #    ular o'z YesPOS tovarini "band" qiladi, sku bo'yicha ikkinchi marta
     #    boshqa qatorga ulanib qolmasin.
     pairs = []          # (chinor qatori, sku, mp)
-    claimed = set()
-    new_links, clashes = [], []
+    claimed = {}        # yid -> uni egallagan Chinor id
+    new_links, merges = [], []
     for r in local:
         yid = int(r["yespos_id"] or 0)
         if yid and yid in by_yid:
             sku, m = by_yid[yid]
             pairs.append((r, sku, m))
-            claimed.add(yid)
+            claimed[yid] = int(r["id"])
     for r in local:
         if int(r["yespos_id"] or 0):
             continue
         m = mp_rows.get(str(r["id"]))
-        if not m or m["yespos_id"] in claimed:
+        if not m:
             continue
-        sim = _similar(r["name"], m["name"])
-        if sim < LINK_SIMILARITY and not force:
-            clashes.append((r["id"], r["name"], m["name"], sim))
-            continue
+        owner = claimed.get(m["yespos_id"])
+        if owner is not None:
+            if not (NEW_ID_FROM <= owner <= NEW_ID_TO):
+                continue        # boshqa asl qatorga ulangan — tegilmaydi
+            # Dublikat (avtomatik yaratilgan) — asl qatorga birlashtiramiz
+            pairs = [x for x in pairs if int(x[0]["id"]) != owner]
+            merges.append((int(r["id"]), owner, m["yespos_id"]))
+        else:
+            new_links.append((r["id"], m["yespos_id"]))
         pairs.append((r, str(r["id"]), m))
-        claimed.add(m["yespos_id"])
-        new_links.append((r["id"], m["yespos_id"]))
+        claimed[m["yespos_id"]] = int(r["id"])
 
     # Shtrix-kod: YesPOS sku bo'yicha saqlanadi. Ustidan hech qachon yozilmaydi.
     sku_of = {r["id"]: sku for r, sku, _ in pairs}
@@ -200,7 +197,7 @@ def plan(pos_db_path: str, mp_rows: dict, known_barcodes: dict = None,
         "matched": len(pairs),
         "name_changes": name_changes,
         "new_links": new_links,
-        "clashes": clashes,
+        "merges": merges,
         "local_total": len(local),
         "mp_total": len(mp_rows),
         "only_local": sorted(set(int(r["id"]) for r in local) - set(sku_of)),
@@ -267,6 +264,29 @@ def apply(pos_db_path: str, mp_rows: dict, p: dict) -> int:
                 "VALUES (?, ?, '', ?, 0, 0, ?, 'dona', 1, ?, 0, ?)",
                 (pid, name, round(price, 2), stock, created, yid),
             )
+            touched += 1
+        # Xato ajratilgan dublikat → asl qator: tannarx/optom (Excel importi
+        # dublikatga yozgan bo'lishi mumkin), shtrix-kod va rasm ko'chadi.
+        for orig, dup, yid in p.get("merges") or []:
+            d = conn.execute("SELECT cost_price, wholesale_price, barcode, image_url "
+                             "FROM products WHERE id = ?", (dup,)).fetchone()
+            if d is None:
+                continue
+            try:
+                conn.execute("UPDATE OR IGNORE product_barcodes SET product_id = ? "
+                             "WHERE product_id = ?", (orig, dup))
+                conn.execute("DELETE FROM product_barcodes WHERE product_id = ?", (dup,))
+            except sqlite3.OperationalError:
+                pass        # eski baza — jadval yo'q
+            conn.execute(
+                "UPDATE products SET yespos_id = ?, "
+                "cost_price = CASE WHEN ? > 0 THEN ? ELSE cost_price END, "
+                "wholesale_price = CASE WHEN ? > 0 THEN ? ELSE wholesale_price END, "
+                "barcode = CASE WHEN COALESCE(barcode,'') = '' THEN ? ELSE barcode END, "
+                "image_url = CASE WHEN COALESCE(image_url,'') = '' THEN ? ELSE image_url END "
+                "WHERE id = ?",
+                (yid, d[0] or 0, d[0] or 0, d[1] or 0, d[1] or 0, d[2] or "", d[3] or "", orig))
+            conn.execute("DELETE FROM products WHERE id = ?", (dup,))
             touched += 1
         for pid, yid in p.get("new_links") or []:
             conn.execute("UPDATE products SET yespos_id = ? WHERE id = ?", (yid, pid))
@@ -355,8 +375,6 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="YesPOS → Chinor POS ko'prigi")
     ap.add_argument("--apply", action="store_true", help="haqiqatan yozish")
     ap.add_argument("--pos-db", default=config.POS_DB)
-    ap.add_argument("--force", action="store_true",
-                    help="nomi o'xshamasa ham sku bo'yicha ulash (faqat qo'lda, tekshirib)")
     args = ap.parse_args(argv)
 
     if not os.path.exists(args.pos_db):
@@ -369,19 +387,13 @@ def main(argv=None) -> int:
             print("Marketplace bazasida qoldiq surati yo'q. Avval: python -m marketplace.sync all")
             return 1
 
-        p = plan(args.pos_db, mp_rows, db.get_barcodes(), force=args.force)
+        p = plan(args.pos_db, mp_rows, db.get_barcodes())
         _report(p, args.pos_db, day)
 
-        # TO'QNASHUV: bir xil raqam ostida BUTUNLAY boshqa nomli tovar
-        # (2026-10-20: Chinor 16877 «parol», YesPOS 16877 «Gel sovun idish»).
-        # Endi sinxron to'xtamaydi: Chinor qatoriga tegilmaydi, YesPOS tovari
-        # yangi qator bo'lib qo'shiladi. Bir xil tovar ekani aniq bo'lsa —
-        # qo'lda `--force` bilan ulanadi.
-        clash = p["clashes"]
-        if clash:
-            print(f"\n  ⚠ ID TO'QNASHUVI: {len(clash)} ta — tegilmaydi (nomlar o'xshamaydi)")
-            for pid, old, new, r in clash[:20]:
-                print(f"    [{pid}] «{old}» ≠ «{new}»  (o'xshashlik {r:.2f})")
+        if p["merges"]:
+            print(f"\n  Dublikat birlashtiriladi: {len(p['merges'])} ta (asl ← 800001+)")
+            for orig, dup, _y in p["merges"][:20]:
+                print(f"    [{orig}] ← [{dup}]")
         if p["new_links"]:
             print(f"  YesPOS'ga yangi ulangan: {len(p['new_links']):,}")
 
@@ -395,7 +407,8 @@ def main(argv=None) -> int:
         # ishlaganda o'zgarishsiz aylanishlar ko'p bo'ladi — har biriga nusxa
         # olish bekorga disk yeydi.
         if not (p["qty_changes"] or p["price_changes"] or p["barcode_restore"]
-                or p["new_products"] or p["name_changes"] or p["new_links"]):
+                or p["new_products"] or p["name_changes"] or p["new_links"]
+                or p["merges"]):
             print("\n✓ O'zgarish yo'q — bazaga tegilmadi.")
             return 0
         n = apply(args.pos_db, mp_rows, p)
