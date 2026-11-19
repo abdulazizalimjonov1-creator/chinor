@@ -180,6 +180,7 @@ def collect() -> list:
                             or ((row["phone2"] if row else "") or ""))
             e["tovarlar"] = (_tovarlar(c, e["msg_id"])
                              if e["tur"] != "tolov" else [])
+            e["hisob"] = _hisob_qatori(c, e["mijoz"], e["chat_id"])
 
         _set(c, "watch_receipt", yangi_chek)
         _set(c, "watch_payment", yangi_tolov)
@@ -187,7 +188,37 @@ def collect() -> list:
     return out
 
 
+def _hisob_qatori(conn, name: str, chat_id: str) -> str:
+    """Bir odamning bir nechta hisobi bo'lsa (har uy/obyekt alohida) — xabar
+    qaysi hisob haqida ekanini ko'rsatuvchi qator. Bitta hisobda — bo'sh."""
+    try:
+        many = bool(chat_id) and len(D_client_by_chat(conn, chat_id)) > 1
+        if not many:
+            r = conn.execute("SELECT COALESCE(owner,'') FROM debt_clients WHERE name = ?",
+                             (name,)).fetchone()
+            many = bool(r and r[0])
+        if not many:
+            return ""
+        first = conn.execute("SELECT MIN(day) FROM receipts WHERE client = ?",
+                             (name,)).fetchone()[0] or ""
+        sana = f" · ochilgan {first[8:10]}.{first[5:7]}.{first[:4]}" if len(first) >= 10 else ""
+        return f"🏠 Hisob: «{name}»{sana}"
+    except Exception:
+        return ""
+
+
+def D_client_by_chat(conn, chat_id):
+    D, _ = _mk()
+    return D.client_by_chat(conn, chat_id)
+
+
 def _mijoz_matni(e: dict) -> str:
+    """Hisob qatori (bo'lsa) + xabar matni."""
+    matn = _mijoz_matni_asl(e)
+    return (html.escape(e["hisob"]) + "\n\n" + matn) if e.get("hisob") else matn
+
+
+def _mijoz_matni_asl(e: dict) -> str:
     if e["tur"] == "tolov":
         return (f"✅ <b>To'lovingiz qabul qilindi</b>\n\n"
                 f"💵 Summa: <b>{_pul(e['summa'])}</b> so'm"
@@ -274,6 +305,7 @@ def _userbot_matni(e: dict, bot_nomi: str = "") -> str:
     qoldiq = float(e.get("qoldiq") or 0)
     usul = (e.get("izoh") or "").strip()
     satrlar = ["Assalomu alaykum! Chinor do'konidan xabar.", "",
+               *([e["hisob"], ""] if e.get("hisob") else []),
                f"✅ To'lovingiz qabul qilindi: {_pul(e['summa'])} so'm"
                + (f" ({usul})" if usul else "")]
     if qoldiq > 0:

@@ -424,6 +424,34 @@ async def api_debt_client_save(request: web.Request):
     return web.json_response({"ok": True, "debt": debt_now})
 
 
+@DEBT_ROUTES.post("/api/debt/group")
+async def api_debt_group(request: web.Request):
+    """Bir odamning bir nechta hisobini bitta egaga biriktiradi.
+
+    Body: {"names": [...], "owner": "Elbek aka prorab"}; owner bo'sh — ajratadi.
+    Hisoblar o'z nomi bilan alohida yuritiladi, tizimda bitta mijoz bo'lib
+    ko'rinadi, bot xabari hisob nomi bilan egasiga boradi."""
+    from database.channel_db import db as _db_pos
+    from bot.web_api import _need_admin, _err, _read_json
+
+    auth, err = await _need_admin(request, _db_pos, "clients_add")
+    if err is not None:
+        return err
+    body = await _read_json(request)
+    names = [str(n) for n in (body.get("names") or []) if str(n).strip()]
+    owner = str(body.get("owner") or "").strip()
+    if not names:
+        return _err("Hisob tanlanmadi")
+    if owner and len(owner) > 80:
+        return _err("Nom juda uzun")
+
+    D = _debt()
+    with _mdb() as mdb:
+        D.ensure_schema(mdb.conn)
+        done = D.set_owner(mdb.conn, names, owner)
+    return web.json_response({"ok": True, "names": done, "owner": owner})
+
+
 @DEBT_ROUTES.post("/api/debt/move")
 async def api_debt_move(request: web.Request):
     """Qo'lda harakat: to'lov / qarz / tuzatish.

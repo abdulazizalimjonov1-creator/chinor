@@ -425,7 +425,7 @@ function renderModuleMenu(mod) {
     bindTiles(c, {
       list: () => { renderClients._filter = ''; openTab('cli:list', 'Mijozlar', renderClients); },
       top: () => openTab('cli:top', 'Mijozlar tahlili', renderTopClients),
-      qarz: () => { renderClients._filter = 'qarz'; openTab('cli:list', 'Mijozlar', renderClients); },
+      qarz: () => openTab('cli:qarz', 'Qarzdorlar', renderDebtors),
     });
   } else if (mod === 'xodimlar') {
     c.innerHTML = tilesHtml([
@@ -1607,10 +1607,11 @@ function drawClientCard(c, cid) {
 // o'stiryapti, kim kelmay qo'ydi.
 const SEG_PILL = { gold: 'gold', good: 'green', risk: 'red', watch: 'gold', sleep: 'gray', new: 'blue', idle: 'gray' };
 const SEG_ORDER = ['gold', 'good', 'risk', 'watch', 'sleep', 'new', 'idle'];
-async function renderTopClients(c) {
-  const st = renderTopClients;
-  if (st._days == null) st._days = 90;
-  if (st._seg == null) st._seg = '';
+async function renderTopClients(c) { return renderInsights(c, 'all'); }
+async function renderDebtors(c) { return renderInsights(c, 'qarz'); }
+// mode: 'all' — mijozlar tahlili; 'qarz' — faqat qarzi borlar, qarz bo'yicha
+async function renderInsights(c, mode) {
+  const st = renderInsights[mode] || (renderInsights[mode] = { _days: 90, _seg: '', _sel: new Set(), _open: new Set() });
   c.innerHTML = `<div class="loading">Yuklanyapti…</div>`;
   const r = await api.clientsInsights(st._days);
   if (!r.ok) {
@@ -1618,45 +1619,80 @@ async function renderTopClients(c) {
     c.innerHTML = `<div class="err-box">Server xatosi: ${esc(r.error || '')}</div>`;
     return;
   }
-  const all = r.items || [];
   const seg = r.segments || {};
-  const cnt = r.counts || {};
   const sm = r.summary || {};
   const y = (sm.yespos || {}).current || {};
+  let all = r.items || [];
+  if (mode === 'qarz') all = all.filter((x) => (x.debt_now || 0) > 0).sort((a, b) => b.debt_now - a.debt_now);
+  const cnt = {};
+  all.forEach((x) => { cnt[x.segment] = (cnt[x.segment] || 0) + 1; });
   let items = st._seg ? all.filter((x) => x.segment === st._seg) : all;
-  if (st._seg === 'risk' || st._seg === 'watch') items = [...items].sort((a, b) => b.debt_change - a.debt_change);
+  if (mode !== 'qarz' && (st._seg === 'risk' || st._seg === 'watch')) items = [...items].sort((a, b) => b.debt_change - a.debt_change);
   const maxRev = Math.max(1, ...items.map((x) => x.revenue || 0));
   const pct = (a, b) => (b ? Math.round(((a - b) / b) * 100) : 0);
   const dRev = pct(sm.total_revenue || 0, sm.total_revenue_prev || 0);
   const chips = [[30, '30 kun'], [90, '90 kun'], [180, '6 oy'], [365, '1 yil']];
   const change = (v) => v > 0 ? `<span class="debt-pos">+${money(v)}</span>`
     : v < 0 ? `<span style="color:var(--green)">−${money(-v)}</span>` : '<span class="muted">0</span>';
+  const tm = r.top_month || [];
+  const oy = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust',
+    'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr'][new Date().getMonth()];
+  const medal = ['🥇', '🥈', '🥉'];
+  const sumDebt = all.reduce((a, x) => a + (x.debt_now || 0), 0);
+
+  const accRows = (x) => (x.accounts || []).map((a) => `
+    <tr class="acc-row"><td></td>
+      <td colspan="2" style="padding-left:26px">🏠 <b>${esc(a.name)}</b>
+        <small class="muted"> · ochilgan ${esc(a.opened || '—')} · oxirgi ${esc(a.last_at || '—')}</small></td>
+      <td class="num">${money(a.revenue)}</td><td class="num muted">—</td><td class="num">${int(a.checks)}</td>
+      <td colspan="3"></td><td class="num">${change(a.debt_change)}</td>
+      <td class="num${a.debt_now > 0 ? ' debt-pos' : ''}">${money(a.debt_now)}</td>
+      <td><button class="btn-soft ghost" data-ungroup="${esc(a.name)}" title="Bu hisobni guruhdan chiqarish">Ajratish</button></td>
+    </tr>`).join('');
 
   c.innerHTML = `
     <div class="rc-chips">${chips.map(([k, l]) =>
       `<button class="rc-chip${st._days === k ? ' active' : ''}" data-d="${k}">${l}</button>`).join('')}</div>
-    <div class="sum-chips" style="margin:14px 0">
+    ${tm.length ? `<div class="card" style="margin:14px 0 0"><div class="card-title">🏆 ${esc(oy)} oyining top mijozlari</div>
+      <div class="sum-chips">${tm.map((t, i) => `<div class="sum-chip"><div class="v">${medal[i] || ''} ${esc(t.name)}</div>
+        <div class="l">${money(t.revenue)} savdo · ${money(t.profit)} foyda · ${int(t.checks)} chek${t.accounts > 1 ? ` · ${t.accounts} hisob` : ''}${t.debt_now > 0 ? ` · qarz ${money(t.debt_now)}` : ''}</div></div>`).join('')}</div></div>` : ''}
+    <div class="sum-chips" style="margin:14px 0">${mode === 'qarz' ? `
+      <div class="sum-chip"><div class="v debt-pos">${money(sumDebt)}</div><div class="l">Jami qarz · ${int(all.length)} qarzdor</div></div>
+      <div class="sum-chip"><div class="v">${money(y.debt)}</div><div class="l">Davrda qarzga sotilgan</div></div>
+      <div class="sum-chip"><div class="v">${money(sm.debt_paid_period)}</div><div class="l">Davrda to'langan</div></div>` : `
       <div class="sum-chip"><div class="v">${money(sm.total_revenue)}</div>
         <div class="l">Savdo (YesPOS + Chinor) · ${dRev >= 0 ? '▲' : '▼'} ${Math.abs(dRev)}% oldingi davrga</div></div>
       <div class="sum-chip"><div class="v">${money(y.profit)}</div><div class="l">Taxminiy foyda (YesPOS)</div></div>
       <div class="sum-chip"><div class="v">${money(y.debt)}</div><div class="l">Qarzga sotilgan</div></div>
       <div class="sum-chip"><div class="v">${money(sm.debt_paid_period)}</div><div class="l">Qarz to'lovlari</div></div>
-      <div class="sum-chip"><div class="v debt-pos">${money(sm.debt_total)}</div><div class="l">Hozirgi qarz · ${int(sm.debtors)} qarzdor</div></div>
+      <div class="sum-chip"><div class="v debt-pos">${money(sm.debt_total)}</div><div class="l">Hozirgi qarz · ${int(sm.debtors)} qarzdor</div></div>`}
     </div>
     <div class="rc-chips" style="margin-bottom:12px">
       <button class="rc-chip${!st._seg ? ' active' : ''}" data-s="">Hammasi (${int(all.length)})</button>
       ${SEG_ORDER.filter((k) => cnt[k]).map((k) =>
         `<button class="rc-chip${st._seg === k ? ' active' : ''}" data-s="${k}">${esc(seg[k] || k)} (${int(cnt[k])})</button>`).join('')}
     </div>
-    <div class="np-hint" style="margin-bottom:10px">⚠️ Xavfli — ko'p oladi, lekin qarzi o'sib boryapti va kam to'layapti.
-      🟡 Kuzatish — qarzi o'smoqda. 😴 Uxlab qolgan — 45 kundan beri kelmagan. Foyda joriy tannarx bo'yicha taxminiy.</div>
+    <div class="filters" id="grpBar" style="margin-bottom:10px;${st._sel.size ? '' : 'display:none'}">
+      <div class="filter" style="flex:1;min-width:260px"><label>Tanlangan ${st._sel.size} ta hisobni bitta mijozga birlashtirish (egasining ismi)</label>
+        <input type="text" id="grpOwner" maxlength="80" placeholder="Masalan: Elbek aka prorab"></div>
+      <button class="btn-soft" id="grpGo">Birlashtirish</button>
+      <button class="btn-soft ghost" id="grpClear">Bekor qilish</button>
+    </div>
+    <div class="np-hint" style="margin-bottom:10px">Bir odamning bir nechta hisobi bo'lsa (har uy/obyekt alohida) — ularni belgilab
+      birlashtiring: hisoblar alohida yuritiladi, bu yerda bitta mijoz bo'lib ko'rinadi, bot xabari esa hisob nomi va
+      ochilgan sanasi bilan egasiga boradi. 📁 qatorni bosing — hisoblari ochiladi.</div>
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Mijoz</th><th>Holat</th><th style="min-width:180px">Savdo</th><th class="num">Foyda</th>
+      <thead><tr><th style="width:34px"></th><th>Mijoz</th><th>Holat</th><th style="min-width:170px">Savdo</th><th class="num">Foyda</th>
         <th class="num">Cheklar</th><th class="num">O'rtacha chek</th><th class="num">Qarzga olgan</th>
         <th class="num">To'lagan</th><th class="num">Qarz o'zgarishi</th><th class="num">Hozirgi qarz</th><th>Oxirgi xarid</th></tr></thead>
-      <tbody>${items.length ? items.map((x) => `
-        <tr>
-          <td><b>${esc(x.name || '—')}</b><br><small class="muted">${esc((x.sources || []).join(' + '))}</small></td>
+      <tbody>${items.length ? items.map((x) => {
+        const grp = (x.accounts || []).length > 0;
+        const open = grp && st._open.has(x.name);
+        return `
+        <tr${grp ? ` class="grp-row" data-grp="${esc(x.name)}" style="cursor:pointer"` : ''}>
+          <td>${grp ? '' : `<input type="checkbox" data-sel="${esc(x.name)}"${st._sel.has(x.name) ? ' checked' : ''}>`}</td>
+          <td><b>${grp ? (open ? '📂 ' : '📁 ') : ''}${esc(x.name || '—')}</b>${grp ? ` <span class="pill blue">${x.accounts.length} hisob</span>` : ''}
+            <br><small class="muted">${esc((x.sources || []).join(' + '))}</small></td>
           <td><span class="pill ${SEG_PILL[x.segment] || 'gray'}">${esc(x.segment_label || '')}</span></td>
           <td><div class="paybar-track"><div class="paybar-fill" style="width:${Math.max(0, (x.revenue / maxRev) * 100)}%"></div></div>
             <b>${money(x.revenue)}</b></td>
@@ -1668,16 +1704,42 @@ async function renderTopClients(c) {
           <td class="num">${change(x.debt_change)}</td>
           <td class="num${(x.debt_now || 0) > 0 ? ' debt-pos' : ''}"><b>${money(x.debt_now)}</b></td>
           <td>${esc(x.last_at || '')}</td>
-        </tr>`).join('')
-        : `<tr><td colspan="11"><div class="chart-empty">Bu davrda mijozli savdo yo'q.</div></td></tr>`}</tbody>
+        </tr>${open ? accRows(x) : ''}`;
+      }).join('')
+        : `<tr><td colspan="12"><div class="chart-empty">${mode === 'qarz' ? 'Qarzdor yo\'q' : 'Bu davrda mijozli savdo yo\'q.'}</div></td></tr>`}</tbody>
     </table></div>`;
 
-  c.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => {
-    st._days = Number(b.dataset.d); renderTopClients(c);
+  const again = () => renderInsights(c, mode);
+  c.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => { st._days = Number(b.dataset.d); again(); }));
+  c.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => { st._seg = b.dataset.s; again(); }));
+  c.querySelectorAll('[data-sel]').forEach((cb) => cb.addEventListener('change', () => {
+    if (cb.checked) st._sel.add(cb.dataset.sel); else st._sel.delete(cb.dataset.sel);
+    const bar = document.getElementById('grpBar');
+    bar.style.display = st._sel.size ? '' : 'none';
+    bar.querySelector('label').textContent = `Tanlangan ${st._sel.size} ta hisobni bitta mijozga birlashtirish (egasining ismi)`;
   }));
-  c.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => {
-    st._seg = b.dataset.s; renderTopClients(c);
+  c.querySelectorAll('.grp-row').forEach((row) => row.addEventListener('click', () => {
+    const n = row.dataset.grp;
+    if (st._open.has(n)) st._open.delete(n); else st._open.add(n);
+    again();
   }));
+  c.querySelectorAll('[data-ungroup]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const res = await api.debtGroup([b.dataset.ungroup], '');
+    if (!res.ok) return toast('⚠️ ' + (res.error || 'Xato'), 4000);
+    toast(`«${b.dataset.ungroup}» guruhdan chiqarildi`); again();
+  }));
+  const go = document.getElementById('grpGo');
+  if (go) go.addEventListener('click', async () => {
+    const owner = document.getElementById('grpOwner').value.trim();
+    if (!owner) return toast('⚠️ Egasining ismini yozing', 4000);
+    const res = await api.debtGroup([...st._sel], owner);
+    if (!res.ok) return toast('⚠️ ' + (res.error || 'Xato'), 4000);
+    toast(`${res.names.length} ta hisob «${owner}» ga birlashtirildi`);
+    st._sel.clear(); again();
+  });
+  const clr = document.getElementById('grpClear');
+  if (clr) clr.addEventListener('click', () => { st._sel.clear(); again(); });
 }
 
 // ── XODIMLAR: boshqaruv + CRM (KPI) ─────────────────────────────────────────

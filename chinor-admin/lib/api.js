@@ -138,6 +138,8 @@ module.exports = {
   clientsTop: (base, token, days = 30) =>
     req(base, `/api/clients/top?days=${Number(days) || 0}`, { token, timeout: 20000 }),
   // YesPOS + Chinor + qarz daftari birlashgan mijozlar tahlili (segmentlar)
+  debtGroup: (base, token, names, owner) =>
+    req(base, '/api/debt/group', { method: 'POST', token, body: { names, owner: owner || '' }, timeout: 20000 }),
   clientsInsights: (base, token, days = 90) =>
     req(base, `/api/clients/insights?days=${Number(days) || 90}`, { token, timeout: 30000 }),
   // ── Tovar suratlari ─────────────────────────────────────────────────────────

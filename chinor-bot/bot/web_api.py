@@ -4317,12 +4317,13 @@ async def api_clients_insights(request: web.Request):
     loop = asyncio.get_running_loop()
     rows = await loop.run_in_executor(None, insights.client_insights, days)
     summary = await loop.run_in_executor(None, insights.business_summary, days)
+    top_month = await loop.run_in_executor(None, insights.top_of_month, 3)
     counts = {}
     for r in rows:
         counts[r["segment"]] = counts.get(r["segment"], 0) + 1
     return web.json_response({"ok": True, "days": days, "items": rows,
                               "segments": insights.SEGMENTS, "counts": counts,
-                              "summary": summary})
+                              "summary": summary, "top_month": top_month})
 
 
 @ROUTES.get("/api/clients/top")

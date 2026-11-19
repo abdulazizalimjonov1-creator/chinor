@@ -68,6 +68,12 @@ _MOVE_SIGN = {"payment": -1.0, "charge": 1.0, "adjust": 1.0}
 
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
+    # owner — bir odamning bir nechta hisobi (har uy/obyekt alohida hisob):
+    # hisob o'z nomi bilan alohida yuritiladi, tizimda esa egasi bo'yicha
+    # bitta mijoz bo'lib ko'rinadi, bot xabari esa egasiga boradi.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(debt_clients)")}
+    if "owner" not in cols:
+        conn.execute("ALTER TABLE debt_clients ADD COLUMN owner TEXT DEFAULT ''")
     conn.commit()
 
 
@@ -331,7 +337,7 @@ def upsert_client(conn, name: str, **fields) -> None:
 
     allowed = {"phone", "phone2", "chat_id", "note", "credit_limit", "opening",
                "outside_debt", "outside_note", "sync_open", "remind_open",
-               "registered_at"}
+               "registered_at", "owner"}
     bad = set(fields) - allowed
     if bad:
         raise ValueError(f"Noma'lum maydon: {', '.join(sorted(bad))}")
@@ -362,6 +368,41 @@ def add_move(conn, client: str, kind: str, amount: float, at: str = "",
          note, author, ts.isoformat(timespec="seconds")),
     )
     return int(cur.lastrowid)
+
+
+def owners(conn) -> Dict[str, str]:
+    """{hisob nomi: egasi} — faqat guruhlangan hisoblar."""
+    return {r[0]: r[1] for r in conn.execute(
+        "SELECT name, owner FROM debt_clients WHERE COALESCE(owner,'') <> ''")}
+
+
+def set_owner(conn, names: List[str], owner: str) -> List[str]:
+    """Hisoblarni bitta egaga biriktiradi (owner='' — ajratadi).
+
+    Telegram (chat_id) va telefon guruh ichida tarqatiladi: hisoblardan
+    birortasi botga bog'langan bo'lsa, qolganlari bo'yicha xabar ham o'sha
+    odamga boradi."""
+    owner = (owner or "").strip()
+    names = [n for n in dict.fromkeys(n.strip() for n in names) if n]
+    for n in names:
+        upsert_client(conn, n, owner=owner)
+    if owner:
+        group = [r[0] for r in conn.execute(
+            "SELECT name FROM debt_clients WHERE owner = ?", (owner,))]
+        rows = conn.execute(
+            f"SELECT chat_id, phone FROM debt_clients WHERE name IN ({','.join('?' * len(group))})",
+            group).fetchall()
+        chat = next((r[0] for r in rows if r[0]), "")
+        phone = next((r[1] for r in rows if r[1]), "")
+        for n in group:
+            if chat:
+                conn.execute("UPDATE debt_clients SET chat_id = ? WHERE name = ? "
+                             "AND COALESCE(chat_id,'') = ''", (chat, n))
+            if phone:
+                conn.execute("UPDATE debt_clients SET phone = ? WHERE name = ? "
+                             "AND COALESCE(phone,'') = ''", (phone, n))
+    conn.commit()
+    return names
 
 
 def client_by_chat(conn, chat_id: str) -> List[str]:

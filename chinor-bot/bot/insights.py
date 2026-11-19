@@ -34,8 +34,8 @@ def _segment(c: dict, top_revenue: float, days: int, today: str) -> str:
         return "new"
     if c["last_at"] and c["last_at"] < _since(45) and c["checks_all"] >= 3:
         return "sleep"         # avval kelardi, endi kelmayapti
-    if debt > 0 and grow > 0:
-        return "watch"
+    if debt > 0 and (grow > 0 or debt > rev * 0.5):
+        return "watch"         # qarzi o'smoqda yoki savdosining yarmidan katta
     if rev > 0 and rev >= top_revenue and debt <= rev * 0.2:
         return "gold"
     return "good" if rev > 0 else "idle"
@@ -48,9 +48,16 @@ SEGMENTS = {
 }
 
 
-def client_insights(days: int = 90) -> list:
-    """Har mijoz: savdo, foyda, cheklar, qarz va uning o'zgarishi, segment."""
-    since = _since(days)
+_SUMS = ("revenue", "profit", "cost_known", "checks", "returns", "debt_taken",
+         "debt_paid", "debt_now", "checks_all")
+
+
+def client_insights(days: int = 90, since: str = "") -> list:
+    """Har mijoz: savdo, foyda, cheklar, qarz va uning o'zgarishi, segment.
+
+    Bir egaga biriktirilgan hisoblar (debt_clients.owner) bitta qatorga
+    yig'iladi; `accounts` ichida har hisob alohida (nomi, ochilgan sanasi)."""
+    since = since or _since(days)
     costs = _product_costs()
     by = {}
 
@@ -101,6 +108,7 @@ def client_insights(days: int = 90) -> list:
         D.ensure_schema(c)
         for name, d in D.all_debts(c).items():
             get(name)["debt_now"] = float(d or 0)
+        own = {_norm(k): v.strip() for k, v in D.owners(c).items()}
 
     # Chinor kassasi (pos.db) — oz, lekin bor
     pos = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
@@ -118,6 +126,33 @@ def client_insights(days: int = 90) -> list:
         pos.close()
 
     rows = [x for k, x in by.items() if k and (x["revenue"] or x["debt_now"] > 0)]
+
+    # Bir egaga biriktirilgan hisoblarni bitta mijozga yig'amiz
+    groups = {}
+    for x in rows:
+        owner = own.get(_norm(x["name"]))
+        if not owner:
+            groups[("", _norm(x["name"]))] = x
+            continue
+        g = groups.get(("o", _norm(owner)))
+        if g is None:
+            g = groups[("o", _norm(owner))] = {
+                "name": owner, "first_at": "", "last_at": "", "sources": set(),
+                "accounts": [], **{k: 0 for k in _SUMS}}
+        for k in _SUMS:
+            g[k] += x[k]
+        g["first_at"] = min(filter(None, (g["first_at"], x["first_at"])), default="")
+        g["last_at"] = max(g["last_at"], x["last_at"])
+        g["sources"] |= x["sources"]
+        g["accounts"].append({"name": x["name"], "opened": (x["first_at"] or "")[:10],
+                              "last_at": (x["last_at"] or "")[:10],
+                              "revenue": round(x["revenue"]), "checks": x["checks"],
+                              "debt_now": round(x["debt_now"]),
+                              "debt_change": round(x["debt_taken"] - x["debt_paid"])})
+    rows = list(groups.values())
+    for g in rows:
+        if g.get("accounts"):
+            g["accounts"].sort(key=lambda a: a["opened"] or "9")
     revs = sorted((x["revenue"] for x in rows if x["revenue"] > 0), reverse=True)
     top20 = revs[max(0, len(revs) // 5 - 1)] if revs else 0
     today = now_local().strftime("%Y-%m-%d")
@@ -134,6 +169,16 @@ def client_insights(days: int = 90) -> list:
         x["first_at"] = (x["first_at"] or "")[:10]
     rows.sort(key=lambda x: x["revenue"], reverse=True)
     return rows
+
+
+def top_of_month(limit: int = 3) -> list:
+    """Joriy kalendar oyining eng ko'p savdo qilgan mijozlari (guruhlangan)."""
+    start = now_local().strftime("%Y-%m-01 00:00:00")
+    rows = client_insights(31, since=start)
+    return [{"name": x["name"], "revenue": x["revenue"], "profit": x["profit"],
+             "checks": x["checks"], "debt_now": x["debt_now"],
+             "accounts": len(x.get("accounts") or []) or 1}
+            for x in rows if x["revenue"] > 0][:limit]
 
 
 def business_summary(days: int = 30) -> dict:

@@ -33,6 +33,8 @@ def test():
     assert _segment(c(revenue=2e6, last_at="2026-09-30"), 10e6, 90, "") == "sleep"
     # Davr ichida birinchi marta kelgan → yangi
     assert _segment(c(revenue=1e6, first_at="2026-11-01"), 10e6, 90, "") == "new"
+    # Qarzi kamaygan, lekin savdosining yarmidan katta → kuzatish (yaxshi emas)
+    assert _segment(c(revenue=35e6, debt_now=21e6, debt_taken=40e6, debt_paid=45e6), 10e6, 90, "") == "watch"
     # Oddiy, qarzsiz, o'rtacha savdo → yaxshi
     assert _segment(c(revenue=2e6), 10e6, 90, "") == "good"
     print("OK")
