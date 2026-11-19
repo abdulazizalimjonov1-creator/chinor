@@ -258,12 +258,43 @@ def business_summary(days: int = 30) -> dict:
     }
 
 
+def _alias(name: str, aliases) -> str:
+    if aliases is None:
+        return name
+    for k, v in aliases.items():
+        if v == name:
+            return k
+    k = f"Mijoz#{len(aliases) + 1:02d}"
+    aliases[k] = name
+    return k
+
+
+def alias_question(q: str, aliases: dict) -> str:
+    """Admin savolidagi haqiqiy ismlarni taxallusga almashtiradi (uzunidan boshlab)."""
+    for k, v in sorted(aliases.items(), key=lambda kv: -len(kv[1])):
+        if v and len(v) >= 3:
+            q = re.sub(re.escape(v), k, q, flags=re.I)
+    return q
+
+
+def unalias(text: str, aliases: dict) -> str:
+    """AI javobidagi taxalluslarni haqiqiy ismlarga qaytaradi (#10 dan oldin #1 bo'lmasin)."""
+    for k in sorted(aliases, key=len, reverse=True):
+        text = text.replace(k, aliases[k])
+    return text
+
+
 def _m(v) -> str:
     return f"{round(v or 0):,}".replace(",", " ")
 
 
-def ai_context_text(days: int = 30, client_days: int = 90) -> str:
-    """AI uchun matn: umumiy raqamlar + mijozlar segmentlari (YesPOS + Chinor)."""
+def ai_context_text(days: int = 30, client_days: int = 90, aliases: dict = None) -> str:
+    """AI uchun matn: umumiy raqamlar + mijozlar segmentlari (YesPOS + Chinor).
+
+    `aliases` (dict) berilsa — mijoz ismlari tashqi AI'ga «Mijoz#07» bo'lib
+    ketadi va lug'atga {taxallus: haqiqiy ism} yoziladi; javobni ko'rsatishdan
+    oldin `unalias()` bilan qaytariladi. Tashqi AI xizmatlari (ayniqsa bepul
+    modellar) so'rovni saqlashi mumkin — mijoz ismi va qarzi ularda qolmasin."""
     s = business_summary(days)
     y, yp, ch = s["yespos"]["current"], s["yespos"]["previous"], s["chinor"]["current"]
     L = [f"=== UMUMIY (oxirgi {days} kun, oldingi {days} kun bilan) — YesPOS + Chinor kassa ===",
@@ -289,7 +320,7 @@ def ai_context_text(days: int = 30, client_days: int = 90) -> str:
             continue
         L.append(f"-- {SEGMENTS[seg]} ({sum(1 for x in rows if x['segment'] == seg)} ta) --")
         for x in part:
-            L.append(f"• {x['name']}: savdo {_m(x['revenue'])}, foyda {_m(x['profit'])}, "
+            L.append(f"• {_alias(x['name'], aliases)}: savdo {_m(x['revenue'])}, foyda {_m(x['profit'])}, "
                      f"{x['checks']} chek, qarz {_m(x['debt_now'])} "
                      f"(davrda olgan {_m(x['debt_taken'])}, to'lagan {_m(x['debt_paid'])}), "
                      f"oxirgi xarid {x['last_at'][:10] or '-'}")

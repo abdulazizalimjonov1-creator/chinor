@@ -327,7 +327,7 @@ def parse(text: str) -> Optional[Receipt]:
 # «ОПЛАТА» xabari
 #     ОПЛАТА
 #     Дата : 15:24:22 10-08-2026
-#     Клиент : Daler aka metro
+#     Клиент : Ali aka do'kon
 #     Общий долг: 6,732,402.22
 #     Оплаченный:
 #         Click : 3,000,000.00

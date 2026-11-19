@@ -3017,13 +3017,20 @@ async def api_ai_analyze(request: web.Request):
     ctx = await _db.gather_ai_context()
     # YesPOS + Chinor + qarz daftari — asosiy savdo YesPOS'da, gather_ai_context
     # esa faqat Chinor bazasini ko'radi (u kam ishlatiladi).
+    # Mijoz ismlari tashqi AI'ga taxallus bo'lib ketadi (Mijoz#07) — ism va
+    # qarz tashqi xizmatda qolmasin; javob bu yerda haqiqiy ismga qaytariladi.
+    aliases = {}
     try:
         from bot import insights
         ctx["extra_text"] = await asyncio.get_running_loop().run_in_executor(
-            None, insights.ai_context_text)
+            None, lambda: insights.ai_context_text(aliases=aliases))
+        question = insights.alias_question(question, aliases)
     except Exception as e:
         logger.warning(f"[ai] birlashgan kontekst yig'ilmadi: {e}")
     answer = await analyze(question, ctx, timeout=60.0)
+    if aliases:
+        from bot import insights
+        answer = insights.unalias(answer, aliases)
     return web.json_response({"ok": True, "answer": answer,
                               "presets": list(QUICK_QUESTIONS.keys())})
 
@@ -3815,7 +3822,7 @@ async def api_recent_sales(request: web.Request):
 # ─── Foydalanuvchilar (admin) ──────────────────────────────────────────────
 
 def _digits9(phone: str) -> str:
-    """«+998 94 686 77 33» → «946867733»."""
+    """«+998 90 123 45 67» → «901234567»."""
     d = "".join(ch for ch in (phone or "") if ch.isdigit())
     return d[-9:] if len(d) >= 9 else d
 
@@ -3825,7 +3832,7 @@ def _kassa_debts() -> dict:
 
     Qaytaradi: {"by_phone": {9 raqam: [nomlar]}, "by_name": {nom: qarz}}.
     Telefon bo'yicha RO'YXAT saqlanadi: bitta raqamga bir nechta mijoz
-    yozilgan bo'lishi mumkin (do'konda «Elbek aka Prarab» va «Elbek aka
+    yozilgan bo'lishi mumkin (do'konda «Ali aka usta» va «Ali aka
     yengi dom» aynan shunday) — bunday paytda taxmin qilib bo'lmaydi.
 
     Xato bo'lsa bo'sh — mijozlar ro'yxati baribir ochilishi kerak.
@@ -3865,7 +3872,7 @@ def _match_kassa(kassa: dict, phone: str, name: str):
       2. telefon, lekin faqat o'sha raqamda YAGONA mijoz bo'lsa.
 
     Bir raqamga ikki mijoz yozilgan bo'lsa TAXMIN QILINMAYDI: do'konda
-    «Elbek aka Prarab» (21 mln) va «Elbek aka yengi dom» (3,6 mln) bitta
+    «Ali aka usta» (21 mln) va «Ali aka yangi uy» (3,6 mln) bitta
     raqamda — taxmin qilinsa, birovning qarzi ikkinchisiga yozilardi.
     """
     nm = (name or "").strip()

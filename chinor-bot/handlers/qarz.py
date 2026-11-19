@@ -17,7 +17,7 @@ TANLOV QAYERDA TURADI. Xotirada, admin bo'yicha (`_HOLAT`). Bot qayta
 ishga tushsa tanlov yo'qoladi — shuning uchun eski tugma bosilsa
 «qaytadan oching» deyiladi, jim qolmaydi.
 
-NOM O'RNIGA KALIT. Mijoz nomi uzun ('Daler aka metro'), Telegram esa
+NOM O'RNIGA KALIT. Mijoz nomi uzun ('Ali aka do'kon'), Telegram esa
 callback_data uchun 64 bayt beradi. Shuning uchun nomlar jadvalga
 yoziladi va tugmada faqat kalit raqami ketadi.
 """
