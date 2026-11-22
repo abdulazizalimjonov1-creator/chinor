@@ -115,7 +115,7 @@ def shop(monkeypatch):
     monkeypatch.setattr(web_api, "_authenticate", admin)
 
     conn = _db._conn()
-    for table in ("sales", "payments", "cash_movements", "products"):
+    for table in ("sales", "orders", "payments", "cash_movements", "products"):
         conn.execute(f"DELETE FROM {table}")
     conn.execute("DELETE FROM clients WHERE COALESCE(is_internal,0)=0")
     conn.commit()

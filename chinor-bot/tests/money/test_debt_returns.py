@@ -119,3 +119,70 @@ def test_return_without_found_receipt_is_still_allowed(shop):
     r = shop.refund([(p, 2, 10000)], orig_receipt_no="9-99")
     assert r["total"] == -20000
     assert shop.qty(p) == 3
+
+
+def test_debt_return_without_client_records_no_cash(shop):
+    p = shop.product(qty=5)
+    r = shop.refund([(p, 1, 10000)], method="debt")
+    assert r["paid_total"] == 0 and r["warning"]
+    assert shop.one("SELECT paid_cash FROM sales WHERE id=?", r["id"]) == 0
+    assert shop.qty(p) == 6
+
+
+def test_debt_return_for_deleted_client_records_no_cash(shop):
+    p, c = shop.product(qty=5), shop.client(debt=50000)
+    shop.run(shop.db.delete_client(c))
+    r = shop.refund([(p, 1, 10000)], method="debt", client_id=c)
+    assert r["paid_total"] == 0 and r["warning"]
+
+
+def order(shop, pid, cid, qty):
+    oid, _ = shop.run(shop.db.create_order(
+        cid, [{"product_id": pid, "qty": qty, "price": 10000}]))
+    return oid
+
+
+def test_cancel_order_restores_stock_and_debt(shop):
+    p, c = shop.product(qty=10), shop.client()
+    oid = order(shop, p, c, 3)
+    assert shop.qty(p) == 7 and shop.debt(c) == 30000
+    shop.run(shop.db.cancel_order(oid))
+    assert shop.qty(p) == 10 and shop.debt(c) == 0
+
+
+def test_cancel_oversold_order_restores_only_what_was_taken(shop):
+    p, c = shop.product(qty=2), shop.client()
+    oid = order(shop, p, c, 5)
+    assert shop.qty(p) == 0
+    shop.run(shop.db.cancel_order(oid))
+    assert shop.qty(p) == 2
+
+
+def test_cancel_twice_restores_once(shop):
+    p, c = shop.product(qty=2), shop.client()
+    oid = order(shop, p, c, 1)
+    shop.run(shop.db.cancel_order(oid))
+    shop.run(shop.db.cancel_order(oid))
+    assert shop.qty(p) == 2 and shop.debt(c) == 0
+
+
+def test_cancel_old_order_without_stock_field(shop):
+    import json
+    p, c = shop.product(qty=10), shop.client()
+    oid = order(shop, p, c, 3)
+    items = json.loads(shop.one("SELECT items FROM orders WHERE id=?", oid))
+    del items[0]["stock_taken"]
+    shop.db._conn().execute("UPDATE orders SET items=? WHERE id=?",
+                            (json.dumps(items), oid))
+    shop.db._conn().commit()
+    shop.run(shop.db.cancel_order(oid))
+    assert shop.qty(p) == 10
+
+
+def test_return_of_delivered_oversold_order_keeps_stock_consistent(shop):
+    p, c = shop.product(qty=2), shop.client()
+    oid = order(shop, p, c, 5)
+    o = shop.run(shop.db.get_order(oid))
+    shop.run(shop.db.record_order_sale(o))
+    shop.refund([(p, 5, 10000)], orig_receipt_no=f"B-{oid}")
+    assert shop.qty(p) == 2

@@ -525,10 +525,11 @@ class SalesMixin:
         paid_cash_usd = paid_card_usd = paid_other_usd = 0.0
         paid_total = 0.0
         paid_total_usd = 0.0
-        if method == "debt" and client_id:
+        if method == "debt":
             # Pul berilmaydi — mijoz qarzidan ayiramiz (manfiy = kamaytirish).
-            # Kassadan naqd chiqmaydi, paid_* = 0.
-            await self.add_debt(client_id, amount_sum=total_sum, amount_usd=total_usd)
+            # Kassadan naqd chiqmaydi, paid_* = 0 (mijoz topilmasa ham).
+            if client_id:
+                await self.add_debt(client_id, amount_sum=total_sum, amount_usd=total_usd)
         elif method == "card":
             paid_card, paid_card_usd = total_sum, total_usd
             paid_total, paid_total_usd = total_sum, total_usd
@@ -540,10 +541,11 @@ class SalesMixin:
             paid_total, paid_total_usd = total_sum, total_usd
 
         client_name = ""
-        if client_id:
-            c = await self.get_client_by_id(client_id)
-            if c:
-                client_name = c.get("shop_name", "")
+        c = await self.get_client_by_id(client_id) if client_id else None
+        if c:
+            client_name = c.get("shop_name", "")
+        warning = "Mijoz topilmadi: qarz kamaytirilmadi" \
+            if method == "debt" and not c else ""
 
         # Asl chek raqamini source'ga belgilab qo'yamiz (alohida ustunsiz)
         src = source or ""
@@ -585,7 +587,7 @@ class SalesMixin:
             "paid_currency": "sum", "is_nasiya": False, "client_id": client_id,
             "client_name": client_name, "created_at": created, "source": src,
             "receipt_no": receipt_no, "is_internal": False, "is_return": True,
-            "orig_receipt_no": orig_receipt_no,
+            "orig_receipt_no": orig_receipt_no, "warning": warning,
         }
 
     async def _send_client_receipt(self, client_id: int, sale: dict) -> None:

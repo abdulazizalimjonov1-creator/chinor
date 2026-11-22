@@ -3555,8 +3555,11 @@ async def api_sync_sales(request: web.Request):
                     receipt_no=receipt_no,
                     orig_receipt_no=orig_receipt_no,
                 )
-                results.append({"local_id": local_id, "ok": True,
-                                "server_id": ret["id"]})
+                row = {"local_id": local_id, "ok": True, "server_id": ret["id"]}
+                if ret.get("warning"):
+                    row["warning"] = ret["warning"]
+                    logger.warning(f"[sync/sales] {source} {receipt_no}: {ret['warning']}")
+                results.append(row)
                 continue
 
             # Savdo turi: «Chinor» ichki rasxod / qarzga (nasiya) / oddiy

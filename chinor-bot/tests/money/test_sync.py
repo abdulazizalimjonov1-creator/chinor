@@ -137,6 +137,13 @@ def test_client_deleted_while_offline(shop):
     assert shop.one("SELECT client_id FROM sales") == 0
 
 
+def test_synced_debt_return_without_client_warns_and_takes_no_cash(shop):
+    p = shop.product(qty=5)
+    r = shop.sync_sales(sale(p, is_return=True, return_method="debt"))[0]
+    assert r["ok"] and r["warning"]
+    assert shop.one("SELECT paid_cash FROM sales") == 0
+
+
 def test_same_local_id_at_other_time_is_a_new_movement(shop):
     t = {"local_id": "t1", "type": "cash_in", "amount": 5000,
          "created_at": "2026-11-22 10:00:00"}

@@ -36,7 +36,9 @@ class OrdersMixin:
                 "cost_price": p.get("cost_price", 0) if p else 0
             })
             if p:
-                await self.change_qty(it["product_id"], -it["qty"])
+                # Bekor qilinganda faqat haqiqatan ayirilgan miqdor tiklanadi
+                applied = await self.change_qty(it["product_id"], -it["qty"])
+                order_items[-1]["stock_taken"] = abs(applied)
         await self.add_debt(client_id, total)
 
         with self._lock:
@@ -117,7 +119,10 @@ class OrdersMixin:
         # 1) Ombor qoldig'ini tiklaymiz
         for it in o.get("items", []):
             try:
-                await self.change_qty(it["product_id"], abs(float(it.get("qty") or 0)))
+                # Eski buyurtmalarda stock_taken yo'q — to'liq miqdor tiklanadi
+                restore = abs(float(it.get("stock_taken", it.get("qty") or 0)))
+                if restore > 0:
+                    await self.change_qty(it["product_id"], restore)
             except Exception:
                 pass
         # 2) Yaratilishda qo'shilgan qarzni qaytaramiz
@@ -172,6 +177,7 @@ class OrdersMixin:
                 "price_usd": round(sum_to_usd(price_sum, rate), 4),
                 "total_usd": round(sum_to_usd(line_sum, rate), 4),
                 "cost_price_usd": cost_usd or round(sum_to_usd(cost_sum, rate), 4),
+                "stock_taken": abs(float(it.get("stock_taken", qty))),
             })
         if not sale_items:
             return None
