@@ -1,8 +1,4 @@
-"""Qarz to'lovi va qaytarish.
-
-`xfail` = hozirgi kodda ISBOTLANGAN xato. Tuzatilganda test «kutilmaganda o'tdi»
-deb qizaradi (strict) — o'shanda belgini olib tashlash kerak.
-"""
+"""Qarz to'lovi va qaytarish."""
 
 import pytest
 
@@ -25,14 +21,12 @@ def test_payment_for_unknown_client_writes_nothing(shop):
     assert shop.count("payments") == 0
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: debt_usd=0 bo'lsa, to'lov butun so'm qarzni o'chiradi")
 def test_payment_on_som_only_debt_keeps_remainder(shop):
     c = shop.client(debt=100000, debt_usd=0)
     shop.run(shop.db.add_payment(c, 10000))
     assert shop.debt(c) == pytest.approx(90000, abs=1)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: kurs o'zgarsa, to'lovda so'm qarz USD orqali qayta hisoblanadi")
 def test_payment_after_rate_change_is_plain_som_math(shop):
     c = shop.client(debt=100000)
     shop.db.set_usd_rate(15000)
@@ -75,7 +69,6 @@ def test_return_to_debt_reduces_debt_and_takes_no_cash(shop):
     assert shop.debt(c) == 20000
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: 1-1 qaytarilgani 1-10 chekining qaytarishini ham kamaytiradi (LIKE)")
 def test_return_of_one_receipt_does_not_block_similar_number(shop):
     p = shop.product(qty=10)
     shop.sale([(p, 2, 10000)], paid_cash=20000, receipt_no="1-10")
@@ -85,7 +78,6 @@ def test_return_of_one_receipt_does_not_block_similar_number(shop):
     assert r["total"] == -20000
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: asl chekda bo'lmagan tovarni ham qaytarib, pul berish mumkin")
 def test_cannot_return_product_not_on_receipt(shop):
     sold, other = shop.product(), shop.product(qty=5)
     shop.sale([(sold, 1, 10000)], paid_cash=10000, receipt_no="1-1")
@@ -94,9 +86,36 @@ def test_cannot_return_product_not_on_receipt(shop):
     assert shop.qty(other) == 5
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: qoldiqdan ko'p sotilsa kamomad yo'qoladi, qaytarishda ortiqcha qoldiq paydo bo'ladi")
 def test_oversold_then_returned_stock_is_consistent(shop):
     p = shop.product(qty=2)
     shop.sale([(p, 5, 10000)], paid_cash=50000, receipt_no="1-1")
     shop.refund([(p, 5, 10000)], orig_receipt_no="1-1")
     assert shop.qty(p) == 2
+
+
+def test_partial_returns_after_oversell_restore_only_what_was_taken(shop):
+    p = shop.product(qty=2)
+    shop.sale([(p, 5, 10000)], paid_cash=50000, receipt_no="1-1")
+    shop.refund([(p, 3, 10000)], orig_receipt_no="1-1")
+    shop.refund([(p, 2, 10000)], orig_receipt_no="1-1")
+    assert shop.qty(p) == 2
+
+
+def test_old_receipt_without_stock_field_still_restores(shop):
+    import json
+    p = shop.product(qty=10)
+    sid = shop.sale([(p, 3, 10000)], paid_cash=30000, receipt_no="1-1")["id"]
+    items = json.loads(shop.one("SELECT items FROM sales WHERE id=?", sid))
+    del items[0]["stock_taken"]
+    shop.db._conn().execute("UPDATE sales SET items=? WHERE id=?",
+                            (json.dumps(items), sid))
+    shop.db._conn().commit()
+    shop.refund([(p, 3, 10000)], orig_receipt_no="1-1")
+    assert shop.qty(p) == 10
+
+
+def test_return_without_found_receipt_is_still_allowed(shop):
+    p = shop.product(qty=1)
+    r = shop.refund([(p, 2, 10000)], orig_receipt_no="9-99")
+    assert r["total"] == -20000
+    assert shop.qty(p) == 3

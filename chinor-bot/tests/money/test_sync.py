@@ -94,7 +94,6 @@ def test_cash_out_txn(shop):
     assert shop.one("SELECT direction FROM cash_movements") == "out"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: qayta yuborilgan qarz to'lovi ikki marta yechiladi")
 def test_retried_debt_payment_is_not_counted_twice(shop):
     c = shop.client(debt=50000)
     t = {"local_id": "t1", "source": "Kassa-1", "type": "debt_payment",
@@ -104,7 +103,6 @@ def test_retried_debt_payment_is_not_counted_twice(shop):
     assert shop.debt(c) == pytest.approx(30000, abs=1)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: qayta yuborilgan naqd kirim/chiqim ikki marta yoziladi")
 def test_retried_cash_movement_is_not_counted_twice(shop):
     t = {"local_id": "t1", "source": "Kassa-1", "type": "cash_out", "amount": 5000}
     shop.sync_txns(t)
@@ -112,15 +110,43 @@ def test_retried_cash_movement_is_not_counted_twice(shop):
     assert shop.count("cash_movements") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: mijozsiz nasiya to'langan naqd sotuv bo'lib yoziladi")
-def test_nasiya_without_client_is_not_recorded_as_cash(shop):
-    p = shop.product()
-    r = shop.sync_sales(sale(p, is_nasiya=True))
-    assert not r[0]["ok"]
+def test_nasiya_without_client_is_kept_but_not_recorded_as_cash(shop):
+    p = shop.product(qty=10)
+    r = shop.sync_sales(sale(p, is_nasiya=True))[0]
+    # Rad etilsa kassa cheksiz qayta yuboradi — sotuv saqlanadi, pul yozilmaydi.
+    assert r["ok"] and r["warning"]
+    assert shop.one("SELECT paid_total FROM sales") == 0
+    assert shop.one("SELECT is_nasiya FROM sales") == 1
+    assert shop.qty(p) == 9
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: mijozsiz aralash to'lovning qarz qismi izsiz yo'qoladi")
-def test_split_debt_without_client_is_rejected(shop):
+def test_split_debt_without_client_keeps_only_paid_part(shop):
     p = shop.product()
-    r = shop.sync_sales(sale(p, payment="split", paid_cash=4000, debt_sum=6000))
-    assert not r[0]["ok"]
+    r = shop.sync_sales(sale(p, payment="split", paid_cash=4000, debt_sum=6000))[0]
+    assert r["ok"] and r["warning"]
+    assert shop.one("SELECT paid_total FROM sales") == 4000
+    assert shop.one("SELECT total FROM sales") == 10000
+
+
+def test_client_deleted_while_offline(shop):
+    p, c = shop.product(), shop.client()
+    shop.run(shop.db.delete_client(c))
+    r = shop.sync_sales(sale(p, is_nasiya=True, client_id=c))[0]
+    assert r["ok"] and r["warning"]
+    assert shop.one("SELECT paid_total FROM sales") == 0
+    assert shop.one("SELECT client_id FROM sales") == 0
+
+
+def test_same_local_id_at_other_time_is_a_new_movement(shop):
+    t = {"local_id": "t1", "type": "cash_in", "amount": 5000,
+         "created_at": "2026-11-22 10:00:00"}
+    shop.sync_txns(t, {**t, "created_at": "2026-11-22 11:00:00"})
+    assert shop.count("cash_movements") == 2
+
+
+def test_migration_runs_twice_safely(shop):
+    from database.channel_db import ChannelDB
+    ChannelDB()._persistent._really_close()
+    c = shop.client(debt=1000)
+    assert shop.sync_txns({"local_id": "m1", "type": "debt_payment",
+                           "amount": 500, "client_id": c})[0]["ok"]

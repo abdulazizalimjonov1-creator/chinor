@@ -517,9 +517,11 @@ class ClientsMixin:
             await self._refresh_client(c)
 
     async def add_payment(self, cid: int, amount: float,
-                          currency: str = "sum", note: str = "") -> dict:
+                          currency: str = "sum", note: str = "",
+                          sync_key: str = "") -> dict:
         """Mijozdan to'lov qabul qilish. currency='sum' yoki 'usd'.
-        Qarz USD da kamaytiriladi (ikkala kesh ham yangilanadi)."""
+        Qarz SO'MDA kamaytiriladi (kanonik); debt_usd faqat ko'rsatkich keshi.
+        sync_key — oflayn kassa qayta yuborganda to'lov ikki marta yozilmasin."""
         c = await self.get_client_by_id(cid)
         if not c:
             return {}
@@ -531,22 +533,35 @@ class ClientsMixin:
         else:
             amount_sum = float(amount)
             amount_usd = round(sum_to_usd(amount_sum, rate), 4)
-        new_debt_usd = max(0.0, float(c.get("debt_usd", 0) or 0) - amount_usd)
-        new_debt_sum = round(usd_to_sum(new_debt_usd, rate), 2)
         created = _now()
         with self._lock:
             conn = self._conn()
             try:
+                if sync_key:
+                    dup = conn.execute(
+                        "SELECT * FROM payments WHERE sync_key=?", (sync_key,)
+                    ).fetchone()
+                    if dup:
+                        return {**dict(dup), "duplicate": True}
+                row = conn.execute(
+                    "SELECT debt, debt_usd FROM clients WHERE id=?", (cid,)
+                ).fetchone()
+                # Juda eski yozuvda qarz faqat USDda bo'lishi mumkin
+                cur_debt = float(row["debt"] or 0) or \
+                    usd_to_sum(float(row["debt_usd"] or 0), rate)
+                new_debt_sum = max(0.0, round(cur_debt - amount_sum, 2))
+                new_debt_usd = round(sum_to_usd(new_debt_sum, rate), 4)
                 conn.execute(
                     "UPDATE clients SET debt=?, debt_usd=? WHERE id=?",
                     (new_debt_sum, new_debt_usd, cid)
                 )
                 cur = conn.execute(
                     "INSERT INTO payments(client_id, client_tg_id, shop_name, "
-                    "amount, amount_usd, currency, usd_rate, note, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    "amount, amount_usd, currency, usd_rate, note, created_at, "
+                    "sync_key) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (cid, c["telegram_id"], c["shop_name"],
-                     amount_sum, amount_usd, currency, rate, note, created)
+                     amount_sum, amount_usd, currency, rate, note, created,
+                     sync_key)
                 )
                 pid = cur.lastrowid
                 conn.commit()

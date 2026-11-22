@@ -347,6 +347,16 @@ class BaseDB:
                  WHERE COALESCE(debt_usd, 0) = 0 AND COALESCE(debt, 0) > 0
             """, (cur_rate,))
 
+        # ── Oflayn kassa qayta yuborganda pul ikki marta yozilmasin ──────────
+        for table in ("payments", "cash_movements"):
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if "sync_key" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN sync_key TEXT DEFAULT ''")
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_sync_key "
+                f"ON {table}(sync_key) WHERE sync_key <> ''"
+            )
+
         # ── Ko'p shtrix-kod: bitta tovarga bir nechta kod ────────────────────
         # products.barcode (asosiy kod) saqlanib qoladi — eski kod/kassa
         # versiyalari buzilmasin; qo'shimcha kodlar shu jadvalda turadi.

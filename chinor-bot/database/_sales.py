@@ -136,7 +136,10 @@ class SalesMixin:
                 "cost_price_usd": cost_usd,
             })
             if p:
-                await self.change_qty(it["product_id"], -it["qty"])
+                # Qoldiq 0 dan pastga tushmaydi: qaytarishda faqat haqiqatan
+                # ayirilgan miqdor tiklanishi uchun uni chekda saqlaymiz.
+                applied = await self.change_qty(it["product_id"], -it["qty"])
+                sale_items[-1]["stock_taken"] = abs(applied)
 
         # Chegirma + jami (override) hisobi
         if is_internal:
@@ -311,9 +314,10 @@ class SalesMixin:
                                 category: str = "", note: str = "",
                                 recipient: str = "", cashier_id: int = 0,
                                 cashier_name: str = "", source: str = "",
-                                created_at: str = "") -> dict:
+                                created_at: str = "", sync_key: str = "") -> dict:
         """Naqd kassa harakati (sotuvga bog'liq emas).
         direction='in' — kassaga pul qo'shildi; 'out' — kassadan pul olindi.
+        sync_key — oflayn kassa qayta yuborganda ikki marta yozilmasin.
         Telegram kanaliga ham log yuboradi."""
         direction = "out" if str(direction).lower() == "out" else "in"
         amount = abs(float(amount or 0))
@@ -321,12 +325,18 @@ class SalesMixin:
         with self._lock:
             conn = self._conn()
             try:
+                if sync_key:
+                    dup = conn.execute(
+                        "SELECT * FROM cash_movements WHERE sync_key=?", (sync_key,)
+                    ).fetchone()
+                    if dup:
+                        return {**dict(dup), "duplicate": True}
                 cur = conn.execute(
                     "INSERT INTO cash_movements(direction, amount, category, note, "
-                    "recipient, cashier_id, cashier_name, source, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    "recipient, cashier_id, cashier_name, source, created_at, "
+                    "sync_key) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (direction, amount, category, note, recipient,
-                     cashier_id, cashier_name, source, created)
+                     cashier_id, cashier_name, source, created, sync_key)
                 )
                 mid_id = cur.lastrowid
                 conn.commit()
@@ -420,28 +430,42 @@ class SalesMixin:
         # qaytariladigan miqdor "sotilgan − avval qaytarilgan" dan oshmaydi.
         sold_map = {}
         prior_returned = {}
+        stock_taken = {}     # sotuvda qoldiqdan haqiqatan ayirilgan miqdor
+        stock_restored = {}  # avvalgi qaytarishlarda tiklangan miqdor
         if orig_receipt_no:
+            orig_tag = f"qaytarish←{orig_receipt_no}"
             with self._lock:
                 conn = self._conn()
                 try:
-                    r0 = conn.execute(
+                    # Eski terminallarda chek raqami to'qnashgan bo'lishi mumkin —
+                    # haqli qaytarish rad etilmasligi uchun hammasi hisoblanadi.
+                    rows0 = conn.execute(
                         "SELECT items FROM sales WHERE receipt_no=? "
-                        "AND COALESCE(is_return,0)=0 ORDER BY id LIMIT 1",
+                        "AND COALESCE(is_return,0)=0 ORDER BY id",
                         (orig_receipt_no,)
-                    ).fetchone()
-                    if r0 and r0["items"]:
-                        for it0 in json.loads(r0["items"]):
+                    ).fetchall()
+                    for r0 in rows0:
+                        for it0 in json.loads(r0["items"] or "[]"):
                             k = int(it0.get("product_id") or 0)
-                            sold_map[k] = sold_map.get(k, 0.0) + abs(float(it0.get("qty") or 0))
+                            q0 = abs(float(it0.get("qty") or 0))
+                            sold_map[k] = sold_map.get(k, 0.0) + q0
+                            stock_taken[k] = stock_taken.get(k, 0.0) + \
+                                abs(float(it0.get("stock_taken", q0)))
                     rrows = conn.execute(
-                        "SELECT items FROM sales WHERE COALESCE(is_return,0)=1 "
-                        "AND source LIKE ?",
-                        (f"%qaytarish←{orig_receipt_no}%",)
+                        "SELECT items, source FROM sales "
+                        "WHERE COALESCE(is_return,0)=1 AND source LIKE ?",
+                        (f"%{orig_tag}%",)
                     ).fetchall()
                     for rr in rrows:
+                        # Aniq moslik: «1-1» qidirilganda «1-10» sanalmasin
+                        if not (rr["source"] or "").endswith(orig_tag):
+                            continue
                         for itr in json.loads(rr["items"] or "[]"):
                             k = int(itr.get("product_id") or 0)
-                            prior_returned[k] = prior_returned.get(k, 0.0) + abs(float(itr.get("qty") or 0))
+                            qr = abs(float(itr.get("qty") or 0))
+                            prior_returned[k] = prior_returned.get(k, 0.0) + qr
+                            stock_restored[k] = stock_restored.get(k, 0.0) + \
+                                abs(float(itr.get("stock_restored", qr)))
                 finally:
                     conn.close()
 
@@ -453,10 +477,17 @@ class SalesMixin:
             qty = abs(float(it.get("qty") or 0))
             # Asl chek topilgan bo'lsa — qolgan miqdordan oshirmaymiz
             pidk = int(pid or 0)
+            # Asl chek topilib, tovar unda bo'lmasa — qaytarilmaydi. Chek
+            # topilmasa (eski, tozalangan) avvalgidek ruxsat beriladi.
+            if sold_map and pidk not in sold_map:
+                continue
+            restore = qty
             if orig_receipt_no and pidk in sold_map:
                 allowed = sold_map[pidk] - prior_returned.get(pidk, 0.0)
                 if qty > allowed:
                     qty = max(0.0, allowed)
+                restore = min(qty, max(0.0, stock_taken.get(pidk, 0.0)
+                                       - stock_restored.get(pidk, 0.0)))
             if qty <= 0:
                 continue
             p = await self.get_product_any(pid)
@@ -480,10 +511,10 @@ class SalesMixin:
                 "product_id": pid, "name": name, "qty": -qty, "unit": unit,
                 "price": price_sum, "total": line_sum, "cost_price": cost_sum,
                 "price_usd": price_usd, "total_usd": line_usd,
-                "cost_price_usd": cost_usd,
+                "cost_price_usd": cost_usd, "stock_restored": restore,
             })
-            if p:
-                await self.change_qty(pid, qty)   # qoldiqni tiklaymiz (+)
+            if p and restore > 0:
+                await self.change_qty(pid, restore)   # qoldiqni tiklaymiz (+)
 
         total_usd = subtotal_usd
         total_sum = subtotal_sum

@@ -3561,6 +3561,7 @@ async def api_sync_sales(request: web.Request):
 
             # Savdo turi: «Chinor» ichki rasxod / qarzga (nasiya) / oddiy
             client = await _db.get_client_by_id(client_id) if client_id else None
+            warning = ""
             if is_internal or (client and client.get("is_internal")):
                 is_internal = True
                 is_nasiya = False
@@ -3568,9 +3569,14 @@ async def api_sync_sales(request: web.Request):
                     client = await _db.get_internal_client()
                     if client:
                         client_id = client["id"]
-            elif is_nasiya and not client_id:
-                # Nasiya uchun mijoz shart — bo'lmasa oddiy savdo sifatida yoziladi
-                is_nasiya = False
+            elif not client:
+                # Mijoz yo'q yoki oflayn paytda o'chirilgan. Sotuv baribir bo'lgan:
+                # rad etilsa kassa uni cheksiz qayta yuboradi, naqd deb yozilsa
+                # olinmagan pul hisobotga kiradi. To'lanmagan qism to'lanmagan qoladi.
+                client_id = 0
+                if is_nasiya or split_debt > 0:
+                    warning = "Mijoz topilmadi: qarz hech kimga yozilmadi"
+                    logger.warning(f"[sync/sales] {source} {receipt_no}: {warning}")
 
             # Kassada yumaloqlangan/o'zgartirilgan yakuniy jami bo'lsa — o'sha,
             # bo'lmasa item narxlaridan hisoblangan jami.
@@ -3613,8 +3619,10 @@ async def api_sync_sales(request: web.Request):
                 receipt_no=receipt_no,
                 **kw,
             )
-            results.append({"local_id": local_id, "ok": True,
-                            "server_id": sale["id"]})
+            row = {"local_id": local_id, "ok": True, "server_id": sale["id"]}
+            if warning:
+                row["warning"] = warning
+            results.append(row)
         except Exception as e:
             logger.warning(f"[sync/sales] local_id={local_id} xato: {e}")
             results.append({"local_id": local_id, "ok": False, "error": str(e)})
@@ -3631,8 +3639,8 @@ async def api_sync_cash_txns(request: web.Request):
       • cash_in / cash_out — naqd kirim/chiqim (cash_movements jadvali + Telegram log)
     Har biri: {local_id, type, method, amount, client_id?, note, category?,
                recipient?, by?, created_at}.
-    Qaytaradi: har bir local_id uchun {ok, server_id|error}. Dublikatsizlik
-    kassa tomonida ta'minlanadi (faqat YUBORILMAGANLARI qayta yuboriladi)."""
+    Qaytaradi: har bir local_id uchun {ok, server_id|error}. Javob kassaga
+    yetmay qayta yuborilsa, local_id + created_at bo'yicha qayta yozilmaydi."""
     from database.channel_db import db as _db
     auth = await _authenticate(request, _db)
     if not auth or auth["role"] != "admin":
@@ -3658,6 +3666,7 @@ async def api_sync_cash_txns(request: web.Request):
             created_at = (t.get("created_at") or "").strip()
             source = (t.get("source") or "").strip()[:80]
             by = (t.get("by") or "").strip()[:80] or cashier_name
+            sync_key = f"{local_id}|{created_at}" if local_id else ""
 
             if ttype == "debt_payment":
                 try:
@@ -3675,7 +3684,8 @@ async def api_sync_cash_txns(request: web.Request):
                 full_note = f"Kassa to'lovi ({method})"
                 if note:
                     full_note += f" — {note}"
-                pay = await _db.add_payment(client_id, amount, "sum", full_note)
+                pay = await _db.add_payment(client_id, amount, "sum", full_note,
+                                            sync_key=sync_key)
                 if not pay:
                     results.append({"local_id": local_id, "ok": False,
                                     "error": "Mijoz topilmadi"})
@@ -3694,6 +3704,7 @@ async def api_sync_cash_txns(request: web.Request):
                     cashier_name=by,
                     source=source,
                     created_at=created_at,
+                    sync_key=sync_key,
                 )
                 results.append({"local_id": local_id, "ok": True,
                                 "server_id": mv.get("id")})

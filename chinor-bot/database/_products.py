@@ -536,7 +536,8 @@ class ProductsMixin:
             finally:
                 conn.close()
 
-    async def change_qty(self, pid: int, delta: float):
+    async def change_qty(self, pid: int, delta: float) -> float:
+        """Qoldiqni o'zgartiradi (0 dan pastga tushmaydi); haqiqiy o'zgarishni qaytaradi."""
         new_qty = 0
         prev_qty = 0
         with self._lock:
@@ -546,7 +547,7 @@ class ProductsMixin:
                     "SELECT qty FROM products WHERE id=?", (pid,)
                 ).fetchone()
                 if not r:
-                    return
+                    return 0.0
                 prev_qty = r["qty"]
                 new_qty = max(0.0, prev_qty + delta)
                 conn.execute("UPDATE products SET qty=? WHERE id=?", (new_qty, pid))
@@ -564,6 +565,7 @@ class ProductsMixin:
                     await self._low_stock_alert(p)
                 except Exception as e:
                     print(f"[Past qoldiq xato] {e}")
+        return new_qty - prev_qty
 
     async def deactivate_product(self, pid: int):
         with self._lock:
