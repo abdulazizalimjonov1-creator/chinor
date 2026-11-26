@@ -67,6 +67,10 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <!-- Sayt rejimi: Electron preload yo'q bo'lsa web-bridge.js window.chinor beradi -->
+  <script>window.module = window.module || { exports: {} };</script>
+  <script src="../lib/api.js"></script>
+  <script src="web-bridge.js"></script>
   <script src="barcode.js"></script>
   <script src="app.js"></script>
 </body>
