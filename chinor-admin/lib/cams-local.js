@@ -546,7 +546,9 @@ class CamEngine {
       const t = Object.assign({}, cam, { main_path: main, sub_path: '', url: '' });
       const r = await tryUrl(ff, this.rtspUrl(t, 'full'), 7000);
       if (!r.ok) {
-        if (/parol|\b401\b|Unauthorized/i.test(r.error)) authFail = true;
+        // 401 da boshqa yo'llarni sinamaymiz: parol baribir bir xil, har xato
+        // urinish esa Hikvision'ni ~30 daqiqaga bloklaydi (to'g'ri parolga ham 401).
+        if (/parol|\b401\b|Unauthorized/i.test(r.error)) { authFail = true; break; }
         last = r.error || last;
         continue;
       }
@@ -557,7 +559,7 @@ class CamEngine {
       }
       return { ok: true, main_path: main, sub_path: subOk ? sub : '', jpeg: r.jpeg.toString('base64') };
     }
-    if (authFail) return { ok: false, error: 'Login yoki parol noto\'g\'ri (kamera 401 qaytardi)' };
+    if (authFail) return { ok: false, error: 'Login yoki parol noto\'g\'ri. Parol to\'g\'ri bo\'lsa — kamera ko\'p xato urinishdan keyin ~30 daqiqaga bloklangan, keyin bir marta qayta urinib ko\'ring' };
     return { ok: false, error: maskUrl(last || 'kamera javob bermadi') };
   }
 }
@@ -658,7 +660,9 @@ class Worker {
     if (this.dead) return;
     clearTimeout(this.retryT);
     // Kimdir ko'rib turgan bo'lsa — qayta ulanamiz; aks holda reaper o'chiradi.
-    const wait = this.frameAt && Date.now() - this.frameAt < 30000 ? 1000 : this.backoff;
+    let wait = this.frameAt && Date.now() - this.frameAt < 30000 ? 1000 : this.backoff;
+    // Parol xato: tez-tez urinish kamerani bloklab qo'yadi — 5 daqiqada bir.
+    if (/parol/.test(this.error)) wait = 5 * 60 * 1000;
     this.backoff = Math.min(15000, this.backoff * 2);
     this.pending = true;
     this.retryT = setTimeout(() => {
