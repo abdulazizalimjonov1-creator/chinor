@@ -74,6 +74,18 @@ contextBridge.exposeInMainWorld('chinor', {
   labelRead: (pid, files) => ipcRenderer.invoke('data:labelRead', { pid, files }),
   // Kameralar
   getCams: () => ipcRenderer.invoke('data:cams'),
+  // Lokal kameralar — kompyuterning o'zidan (internetsiz)
+  camsInfo: () => ipcRenderer.invoke('cams:info'),
+  camsStatus: () => ipcRenderer.invoke('cams:status'),
+  camSave: (cam) => ipcRenderer.invoke('cams:save', cam),
+  camDelete: (id) => ipcRenderer.invoke('cams:delete', id),
+  camsReorder: (ids) => ipcRenderer.invoke('cams:reorder', ids),
+  camProbe: (body) => ipcRenderer.invoke('cams:probe', body),
+  camsDiscover: (subnet) => ipcRenderer.invoke('cams:discover', subnet),
+  camsImport: (password) => ipcRenderer.invoke('cams:import', { password }),
+  ffDownload: () => ipcRenderer.invoke('cams:ffDownload'),
+  ffPick: () => ipcRenderer.invoke('cams:ffPick'),
+  onFfProgress: (cb) => ipcRenderer.on('cams:ffProgress', (_e, p) => cb(p)),
   // Xodimlar boshqaruvi + KPI
   getStaff: () => ipcRenderer.invoke('data:staff'),
   staffAdd: (payload) => ipcRenderer.invoke('data:staffAdd', payload),

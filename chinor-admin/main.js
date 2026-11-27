@@ -1,14 +1,16 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const api = require('./lib/api');
 const { Store } = require('./lib/store');
+const { CamEngine } = require('./lib/cams-local');
 
 let win = null;
 let store = null;
+let cams = null;      // lokal kamera dvigateli (internetsiz ishlaydi)
 
 // Yangilanish holati — renderer'dagi tugma shu obyektni ko'rsatadi.
 const updateState = { available: false, version: '', downloading: false, downloaded: false, progress: 0 };
@@ -56,12 +58,23 @@ function createWindow() {
 
 app.whenReady().then(() => {
   store = new Store(dataFile(), app.isPackaged);
+  cams = new CamEngine({
+    dataDir: app.getPath('userData'),
+    resourcesPath: app.isPackaged ? process.resourcesPath : '',
+    appDir: __dirname,
+    safeStorage,
+  });
+  cams.start().catch(() => {});
+  cams.ffmpeg().catch(() => {});
   createWindow();
   setupUpdater();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+// Ilova yopilganda ffmpeg jarayonlari osilib qolmasin
+app.on('before-quit', () => { if (cams) cams.stopAll(); });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -207,8 +220,46 @@ ipcMain.handle('data:label', withAuth((base, token, arg) => api.label(base, toke
 ipcMain.handle('data:labelSave', withAuth((base, token, arg) => api.labelSave(base, token, arg)));
 ipcMain.handle('data:labelRead', withAuth((base, token, arg) =>
   api.labelRead(base, token, arg.pid, arg.files)));
-// Kameralar — ro'yxat + oqim tokeni (tasvirni renderer to'g'ridan oladi)
+// Kameralar — eski usul (server orqali). Endi faqat ro'yxatni ko'chirib olish uchun.
 ipcMain.handle('data:cams', withAuth((base, token) => api.cams(base, token)));
+
+// ── 📹 Lokal kameralar (lib/cams-local.js) ───────────────────────────────
+// Tasvir kameradan to'g'ridan-to'g'ri, lokal tarmoq orqali olinadi —
+// internet uzilsa ham ishlaydi. Login ham shart emas.
+ipcMain.handle('cams:info', async () => {
+  await cams.start();
+  const ff = await cams.ffmpeg();
+  return { ok: true, base: cams.base(), token: cams.token, cams: cams.list(),
+           ffmpeg: ff, subnets: cams.subnets() };
+});
+ipcMain.handle('cams:status', () => cams.statusAll());
+ipcMain.handle('cams:save', (_e, body) => cams.save(body));
+ipcMain.handle('cams:delete', (_e, id) => cams.remove(id));
+ipcMain.handle('cams:reorder', (_e, ids) => cams.reorder(ids));
+ipcMain.handle('cams:probe', (_e, body) => cams.probe(body || {}));
+ipcMain.handle('cams:discover', (_e, subnet) => cams.discover(subnet || ''));
+ipcMain.handle('cams:ffDownload', () => cams.downloadFfmpeg((pct) => {
+  if (win && !win.isDestroyed()) win.webContents.send('cams:ffProgress', pct);
+}));
+ipcMain.handle('cams:ffPick', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'ffmpeg faylini tanlang',
+    properties: ['openFile'],
+    filters: process.platform === 'win32' ? [{ name: 'ffmpeg', extensions: ['exe'] }] : [],
+  });
+  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+  const ff = await cams.setFfmpegPath(filePaths[0]);
+  return ff ? { ok: true, path: ff } : { ok: false, error: 'Bu fayl ffmpeg emas yoki ishga tushmadi' };
+});
+// Mini App'da (serverda) qo'shilgan kameralarni shu kompyuterga ko'chirish.
+// Yangi server parollar bilan beradi; eskisida parolni bir marta yozish kerak.
+ipcMain.handle('cams:import', withAuth(async (base, token, arg) => {
+  let r = await api.camsExport(base, token);
+  if (r.status === 404 || r.status === 405) r = await api.cams(base, token);
+  if (!r.ok || !r.data || r.data.ok === false) return r;
+  const res = cams.importFrom(r.data.cams || [], (arg && arg.password) || '');
+  return { ok: true, status: 200, data: Object.assign({ ok: true }, res) };
+}));
 
 ipcMain.handle('data:staff', withAuth((base, token) => api.staff(base, token)));
 ipcMain.handle('data:staffAdd', withAuth((base, token, arg) => api.staffAdd(base, token, arg)));

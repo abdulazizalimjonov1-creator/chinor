@@ -435,7 +435,7 @@ table.tbl tr:hover td { background: #f7faf6; }
 .kpi-row.active td { background: #eaf4ec; }
 
 /* ═══════ Rasmsiz tovarlar ═══════ */
-.np-head { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.card.np-head { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .np-check { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
 .np-check input { width: 18px; height: 18px; accent-color: var(--brand); }
 .np-hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
@@ -479,6 +479,47 @@ table.tbl tr:hover td { background: #f7faf6; }
   justify-content: center; color: #8ca394; font-size: 13px;
 }
 .cam-name { padding: 10px 12px; font-size: 14px; font-weight: 600; }
+
+/* Lokal kameralar: boshqaruv paneli, forma, izlash */
+.cam-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.cam-bar-l { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.cam-bar-r { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cam-bar-r .btn-soft { padding: 9px 14px; }
+.cam-cols { width: auto; padding: 8px 10px; font-size: 14px; }
+.cam-net { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.cam-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2fb45a; margin-right: 6px; flex-shrink: 0; }
+.cam-dot.off { background: #d9534f; }
+.cam-name { display: flex; align-items: center; gap: 2px; }
+.cam-name small { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12px; }
+.cam-state { padding: 10px; text-align: center; background: rgba(8,14,10,.62); color: #e8efe9; font-weight: 600; }
+.cam-edit {
+  position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 50%;
+  border: 0; background: rgba(0,0,0,.45); color: #fff; cursor: pointer; font-size: 14px;
+  opacity: 0; transition: opacity .15s;
+}
+.cam-card:hover .cam-edit { opacity: 1; }
+.cam-off { margin-top: 16px; }
+.cam-off-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.cam-off-row:last-child { border-bottom: 0; }
+.cam-off-row small { color: var(--muted); margin-left: 6px; }
+.cam-off-row .btn-soft { padding: 7px 14px; font-size: 13px; }
+.cam-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 20px; background: #fdf1dc; color: #a26a00; font-size: 11.5px; font-weight: 600; }
+.cam-tag.ok { background: #e3f4e7; color: var(--brand-d); }
+.cam-ff { display: flex; flex-direction: column; gap: 10px; }
+.cam-ff-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cf-body { display: grid; grid-template-columns: 1fr 280px; gap: 18px; }
+.cf-prev { display: flex; flex-direction: column; gap: 10px; padding-top: 28px; }
+.cf-prev-img { aspect-ratio: 16/9; background: #0d1410; border-radius: 10px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; color: #8ca394; font-size: 12.5px; text-align: center; }
+.cf-prev-img img { width: 100%; height: 100%; object-fit: cover; }
+.cf-adv { margin-top: 12px; font-size: 13px; }
+.cf-adv summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.cf-chk { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; cursor: pointer; }
+.cs-hint { font-size: 12.5px; color: var(--muted); margin: 10px 0; line-height: 1.5; }
+.cs-list { max-height: 340px; overflow-y: auto; }
+.login-cams { margin-top: 14px; width: 100%; background: none; border: 1.5px dashed var(--line); border-radius: 11px;
+  padding: 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.login-cams:hover { border-color: var(--brand); color: var(--brand-d); }
 
 /* To'liq ekran */
 .cam-ov { position: fixed; inset: 0; z-index: 9999; background: #000; display: none; flex-direction: column; }

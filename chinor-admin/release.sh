@@ -18,6 +18,24 @@ cd "$(dirname "$0")"
 
 VER=$(node -p "require('./package.json').version")
 
+# ── ffmpeg: kameralar kompyuterning o'zidan ochilishi uchun ──────────────
+# Ilova kamerani lokal tarmoqdan (RTSP) ffmpeg bilan o'qiydi — internet
+# uzilsa ham ishlaydi. ffmpeg o'rnatuvchiga qo'shib yuboriladi (resources/
+# ffmpeg/), shunda do'kondagi kompyuterga hech narsa alohida o'rnatilmaydi.
+FFVER="b6.0"
+for PLAT in win32-x64 darwin-arm64 darwin-x64; do
+  EXE=ffmpeg; [ "${PLAT%%-*}" = "win32" ] && EXE=ffmpeg.exe
+  DST="vendor/ffmpeg/$PLAT/$EXE"
+  if [ ! -s "$DST" ]; then
+    echo "▶ ffmpeg ($PLAT) yuklanmoqda..."
+    mkdir -p "vendor/ffmpeg/$PLAT"
+    curl -fL --retry 3 -o "$DST.gz" \
+      "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFVER/ffmpeg-$PLAT.gz"
+    gunzip -f "$DST.gz"
+    chmod +x "$DST"
+  fi
+done
+
 echo "▶ v$VER — macOS build (.app + .zip) yig'ilmoqda..."
 npx electron-builder --mac --publish never
 

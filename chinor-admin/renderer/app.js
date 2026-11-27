@@ -205,8 +205,21 @@ async function boot() {
     const r = await api.getStats();
     if (r.ok) { enterApp(); return; }
     if (r.authRequired) { /* login kerak */ }
+    else {
+      // Internet yo'q (server javob bermadi), lekin avval kirilgan — dasturni
+      // ochamiz: kameralar lokal tarmoqdan ishlaydi, qolgan bo'limlar internet
+      // qaytgach o'zi ishlaydi.
+      enterApp('kameralar');
+      toast('📡 Internet yo\'q — kameralar lokal tarmoqdan ishlayapti', 5000);
+      return;
+    }
   }
   showLogin();
+}
+
+// Login oynasidan to'g'ridan-to'g'ri kameralarga (internetsiz, loginsiz).
+function camsOffline() {
+  enterApp('kameralar');
 }
 
 function showLogin() {
@@ -234,14 +247,14 @@ async function doLogin() {
   enterApp();
 }
 
-function enterApp() {
+function enterApp(mod) {
   $('loginScreen').classList.add('hidden');
   $('app').classList.remove('hidden');
   const name = (S.admin && S.admin.name) || 'Admin';
   $('adminName').textContent = name;
   $('adminAva').textContent = (name[0] || 'A').toUpperCase();
   renderNav();
-  selectModule('hisobotlar');
+  selectModule(typeof mod === 'string' && mod ? mod : 'hisobotlar');
 }
 
 async function doLogout() {
@@ -3121,6 +3134,7 @@ function openNewProductModal(c, prefill, onCreated) {
 
 // ── Hodisalar ────────────────────────────────────────────────────────────────
 $('loginBtn').addEventListener('click', doLogin);
+if ($('camsOfflineBtn')) $('camsOfflineBtn').addEventListener('click', camsOffline);
 $('passInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('loginInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('passInput').focus(); });
 $('logoutBtn').addEventListener('click', doLogout);
@@ -3384,99 +3398,395 @@ async function npClean(c) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 📹 KAMERALAR — do'kondagi IP kameralar katta ekranda
+// 📹 KAMERALAR — kamera KOMPYUTERNING O'ZIDAN ochiladi (internetsiz)
 // ════════════════════════════════════════════════════════════════════════════
-// Tasvirni SERVER beradi (bot/api_cams.py): kameralar do'kon tarmog'ida,
-// admin kompyuter esa boshqa joyda bo'lishi mumkin. Server RTSP ni JPEG
-// kadrlarga aylantiradi — to'rda 1 kadr/s (trafik kam), to'liq ekranda
-// uzluksiz MJPEG. Ovoz ALOHIDA oqim (<audio>), chunki rasmdan ovoz chiqmaydi.
-// Kameralarni QO'SHISH/SOZLASH Mini App'da qoladi: parol kiritish va
-// tarmoqni skanerlash o'sha yerda, bu yerda faqat ko'rish.
-const CAMS = { list: [], token: '', timer: null, full: 0, profile: 'full',
-               z: { k: 1, x: 0, y: 0 }, audio: null, hiT: null };
+// Ilgari tasvir internetdagi server orqali kelardi — internet uzilsa kamera
+// ham ko'rinmay qolardi. Endi main process (lib/cams-local.js) kamerani
+// lokal tarmoqdan, RTSP orqali o'zi ochadi va 127.0.0.1 da beradi:
+//   • internet kerak emas — switch/kabel ishlasa bas;
+//   • kamera o'chib-yonsa, kabel chiqib-tushsa — o'zi qayta ulanadi;
+//   • kameralar ro'yxati shu kompyuterda: xohlagancha qo'shish, tahrirlash,
+//     tarmoqdan izlab topish, Mini App'dagilarini ko'chirib olish mumkin.
+// To'rda har kamera kichik oqimda (3 kadr/s), to'liq ekranda asosiy oqim
+// (12 kadr/s), yaqinlashtirilganda — to'liq aniqlik.
+const CAMS = { list: [], base: '', token: '', timer: null, full: 0, profile: 'full',
+               z: { k: 1, x: 0, y: 0 }, audio: null, hiT: null, st: {}, ff: '',
+               imgs: new Set(), cols: (() => { try { return Number(localStorage.getItem('camCols')) || 0; } catch (_) { return 0; } })() };
 
 function camUrl(id, file, profile) {
-  return srvUrl('/api/cams/' + id + '/' + file) +
+  return CAMS.base + '/cam/' + id + '/' + file +
          '?t=' + encodeURIComponent(CAMS.token) + '&p=' + (profile || 'grid');
 }
 
+function camKorinadi(x) { return x.enabled && x.ready; }
+
 async function renderCams(c) {
+  camGridStop();
   c.innerHTML = `<div class="loading">Kameralar yuklanyapti…</div>`;
-  const r = await api.getCams();
-  if (!r.ok) {
-    if (r.authRequired) return doLogout();
-    c.innerHTML = `<div class="err-box">Kameralar ochilmadi: ${esc(r.error || '')}</div>`;
+  const r = await api.camsInfo();
+  if (!r || !r.ok) {
+    c.innerHTML = `<div class="err-box">Kamera moduli ishga tushmadi: ${esc((r && r.error) || '')}</div>`;
     return;
   }
-  CAMS.list = (r.cams || []).filter((x) => x.enabled && (x.main_path || x.sub_path));
-  CAMS.token = r.token || '';
-  const yoq = r.ffmpeg === false
-    ? `<div class="err-box">⚠️ Serverda <b>ffmpeg</b> o'rnatilmagan — tasvir ko'rsatib bo'lmaydi.</div>` : '';
-  if (!CAMS.list.length) {
-    c.innerHTML = yoq + `<div class="card"><div class="card-title">Kamera yo'q</div>
-      <div class="chart-empty">Kameralar ro'yxati bo'sh. Ularni telefondagi Mini App'ning
-      «📹 Kameralar → ⚙️ Sozlash» bo'limidan qo'shasiz (parol va tarmoqni skanerlash
-      o'sha yerda).</div></div>`;
-    return;
-  }
-  c.innerHTML = yoq + `
-    <div class="filters" style="align-items:flex-end">
-      <div class="filter"><label>Jonli</label><div class="cam-count">${int(CAMS.list.length)} ta kamera</div></div>
-      <button class="btn-soft ghost" id="camReload">🔄 Yangilash</button>
+  CAMS.base = r.base; CAMS.token = r.token; CAMS.ff = r.ffmpeg || '';
+  CAMS.all = r.cams || [];
+  CAMS.list = CAMS.all.filter(camKorinadi);
+  CAMS.subnets = r.subnets || [];
+  const tarmoq = CAMS.subnets.length
+    ? CAMS.subnets.map((s) => esc(s.ip)).join(', ')
+    : 'tarmoq topilmadi';
+
+  const ffBox = CAMS.ff ? '' : `
+    <div class="err-box cam-ff">
+      <div><b>⚠️ ffmpeg topilmadi.</b> Kamerani ochish uchun shu kichik dastur kerak (bir marta).</div>
+      <div class="cam-ff-acts">
+        <button class="btn-soft" id="ffDl">⬇ Yuklab olish (~30 MB, internet kerak)</button>
+        <button class="btn-soft ghost" id="ffPick">📂 Kompyuterdan tanlash</button>
+        <span id="ffMsg"></span>
+      </div>
+    </div>`;
+
+  const sozlanmagan = CAMS.all.filter((x) => !x.ready || !x.enabled);
+  const cols = CAMS.cols;
+  c.innerHTML = ffBox + `
+    <div class="cam-bar">
+      <div class="cam-bar-l">
+        <div class="cam-count">${int(CAMS.list.length)} ta kamera</div>
+        <div class="cam-net" title="Tasvir shu kompyuterning lokal tarmog'idan olinadi — internet kerak emas">
+          <span class="cam-dot"></span> Lokal tarmoq · ${tarmoq}</div>
+      </div>
+      <div class="cam-bar-r">
+        <select id="camCols" class="np-inp cam-cols" title="Bir qatorda nechta">
+          ${[[0, 'Avto'], [1, '1×'], [2, '2×'], [3, '3×'], [4, '4×'], [5, '5×'], [6, '6×']].map(([v, l]) =>
+            `<option value="${v}"${v === cols ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <button class="btn-soft" id="camAdd">➕ Kamera qo'shish</button>
+        <button class="btn-soft ghost" id="camScan">🔍 Tarmoqdan izlash</button>
+        <button class="btn-soft ghost" id="camImp" title="Mini App'da qo'shilgan kameralarni shu kompyuterga ko'chirish">⇩ Serverdan</button>
+        <button class="btn-soft ghost" id="camReload">🔄</button>
+      </div>
     </div>
-    <div class="cam-grid" id="camGrid">
+    ${CAMS.list.length ? `
+    <div class="cam-grid" id="camGrid"${cols ? ` style="grid-template-columns:repeat(${cols},1fr)"` : ''}>
       ${CAMS.list.map((x) => `
         <div class="cam-card" data-cam="${x.id}">
           <div class="cam-shot"><img id="camShot${x.id}" alt="">
-            <div class="cam-state" id="camSt${x.id}">ulanmoqda…</div></div>
-          <div class="cam-name">${esc(x.name)}</div>
+            <div class="cam-state" id="camSt${x.id}">ulanmoqda…</div>
+            <button class="cam-edit" data-edit="${x.id}" title="Sozlash">⚙️</button></div>
+          <div class="cam-name"><span class="cam-dot" id="camDot${x.id}"></span>${esc(x.name)}
+            <small>${esc(x.host)}</small></div>
         </div>`).join('')}
-    </div>`;
-  document.getElementById('camReload').addEventListener('click', () => renderCams(c));
+    </div>` : `
+    <div class="card"><div class="card-title">Kamera yo'q</div>
+      <div class="chart-empty">«🔍 Tarmoqdan izlash» ni bosing — switch'ga ulangan kameralar
+      o'zi topiladi. Yoki «➕ Kamera qo'shish» bilan IP manzilini qo'lda kiriting.
+      Mini App'da kameralar qo'shilgan bo'lsa — «⇩ Serverdan» bilan ko'chirib oling.</div></div>`}
+    ${sozlanmagan.length ? `
+    <div class="card cam-off">
+      <div class="card-title">O'chirilgan / sozlanmagan (${sozlanmagan.length})</div>
+      ${sozlanmagan.map((x) => `
+        <div class="cam-off-row">
+          <span><b>${esc(x.name)}</b> <small>${esc(x.host)}</small>
+            ${!x.ready ? '<span class="cam-tag">oqim yo\'li aniqlanmagan</span>' : ''}
+            ${!x.enabled ? '<span class="cam-tag">o\'chirilgan</span>' : ''}</span>
+          <button class="btn-soft ghost" data-edit="${x.id}">Sozlash</button>
+        </div>`).join('')}
+    </div>` : ''}`;
+
+  const re = (id) => document.getElementById(id);
+  re('camReload').addEventListener('click', () => renderCams(c));
+  re('camAdd').addEventListener('click', () => camForm(null, c));
+  re('camScan').addEventListener('click', () => camScan(c));
+  re('camImp').addEventListener('click', () => camImport(c));
+  re('camCols').addEventListener('change', (e) => {
+    CAMS.cols = Number(e.target.value) || 0;
+    try { localStorage.setItem('camCols', String(CAMS.cols)); } catch (_) {}
+    const g = re('camGrid');
+    if (g) g.style.gridTemplateColumns = CAMS.cols ? `repeat(${CAMS.cols},1fr)` : '';
+  });
+  if (re('ffDl')) re('ffDl').addEventListener('click', () => camFfDownload(c));
+  if (re('ffPick')) re('ffPick').addEventListener('click', async () => {
+    const p = await api.ffPick();
+    if (p.ok) { toast('✓ ffmpeg ulandi'); renderCams(c); }
+    else if (!p.canceled) re('ffMsg').textContent = p.error || '';
+  });
+  c.querySelectorAll('[data-edit]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    camForm(CAMS.all.find((x) => x.id === Number(el.dataset.edit)), c);
+  }));
   c.querySelectorAll('[data-cam]').forEach((el) =>
     el.addEventListener('click', () => camOpen(Number(el.dataset.cam))));
-  camTick();
-  clearInterval(CAMS.timer);
-  CAMS.timer = setInterval(camTick, 2500);
+  if (!CAMS.ff || !CAMS.list.length) return;
+  camGridStart();
 }
 
-// Kadrlarni yangilash. To'r ekrandan ketgan bo'lsa (boshqa bo'lim ochilgan) —
-// taymer o'zini o'chiradi, aks holda server bekorga 20 kamerani dekodlab turadi.
-function camTick() {
+// To'r: har kamera uzluksiz MJPEG. Holatni main process aytib turadi —
+// kamera uzilib qayta ulansa, <img> ham yangidan ochiladi.
+function camGridStart() {
+  CAMS.list.forEach((x) => camGridImg(x.id));
+  clearInterval(CAMS.timer);
+  CAMS.timer = setInterval(camTick, 2000);
+}
+
+function camGridImg(id) {
+  const img = document.getElementById('camShot' + id);
+  if (!img) return;
+  img.onload = () => { img.classList.add('on'); };
+  img.src = camUrl(id, 'live.mjpg', 'grid') + '&_=' + Date.now();
+  CAMS.imgs.add(img);
+}
+
+// Boshqa bo'limga o'tilganda oqimlar YOPILADI — <img> DOM'dan olib
+// tashlansa ham ulanish ochiq qolishi mumkin, shuning uchun src tozalanadi.
+function camGridStop() {
+  clearInterval(CAMS.timer); CAMS.timer = null;
+  CAMS.imgs.forEach((img) => { img.src = ''; });
+  CAMS.imgs.clear();
+}
+
+async function camTick() {
   const grid = document.getElementById('camGrid');
-  if (!grid || !grid.isConnected) { clearInterval(CAMS.timer); CAMS.timer = null; return; }
-  if (CAMS.full) return;                      // to'liq ekranda — to'r kutib turadi
-  const t = Date.now();
+  if (!grid || !grid.isConnected) { camGridStop(); return; }
+  if (CAMS.full) return;
+  let st;
+  try { st = await api.camsStatus(); } catch (_) { return; }
   CAMS.list.forEach((x) => {
-    const img = document.getElementById('camShot' + x.id);
-    if (!img) return;
-    img.onload = () => {
-      const st = document.getElementById('camSt' + x.id);
-      if (st) st.style.display = 'none';
-      img.classList.add('on');
-    };
-    img.onerror = () => {
-      const st = document.getElementById('camSt' + x.id);
-      if (st) { st.style.display = 'block'; st.textContent = 'ulanmadi'; }
-      camTokenYangila();
-    };
-    img.src = camUrl(x.id, 'snap.jpg', 'grid') + '&_=' + t;
+    const s = st[x.id] || {};
+    const old = CAMS.st[x.id] || {};
+    const lbl = document.getElementById('camSt' + x.id);
+    const dot = document.getElementById('camDot' + x.id);
+    if (dot) dot.className = 'cam-dot' + (s.live ? '' : ' off');
+    if (lbl) {
+      lbl.style.display = s.live ? 'none' : 'flex';
+      if (!s.live) lbl.textContent = s.error ? '⚠ ' + s.error : 'ulanmoqda…';
+    }
+    // Kamera qaytib keldi — rasm "muzlab" qolmasin, oqimni yangidan ochamiz.
+    if (s.live && old.live === false) camGridImg(x.id);
+    CAMS.st[x.id] = s;
   });
 }
 
-// Oqim tokeni server XOTIRASIDA turadi — bot qayta ishga tushsa yo'qoladi.
-let _camTokAt = 0;
-async function camTokenYangila() {
-  if (Date.now() - _camTokAt < 15000) return;
-  _camTokAt = Date.now();
-  const r = await api.getCams();
-  if (r.ok && r.token) CAMS.token = r.token;
+async function camFfDownload(c) {
+  const btn = document.getElementById('ffDl');
+  const msg = document.getElementById('ffMsg');
+  btn.disabled = true; btn.textContent = 'Yuklanmoqda…';
+  api.onFfProgress((p) => { if (btn.isConnected) btn.textContent = `Yuklanmoqda… ${p}%`; });
+  const r = await api.ffDownload();
+  if (r.ok) { toast('✓ ffmpeg o\'rnatildi — endi internet kerak emas'); renderCams(c); return; }
+  btn.disabled = false; btn.textContent = '⬇ Qayta urinish';
+  msg.textContent = r.error || 'Xatolik';
+}
+
+// ── Kamera qo'shish / tahrirlash ────────────────────────────────────────────
+function camForm(cam, c, prefill) {
+  const edit = !!cam;
+  const v = Object.assign({ name: '', host: '', port: 554, username: 'admin', channel: 1,
+                            main_path: '', sub_path: '', url: '', enabled: true }, prefill || {}, cam || {});
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal wide">
+      <div class="np-head"><span>${edit ? '⚙️ Kamerani sozlash' : '➕ Yangi kamera'}</span><button class="np-x" id="cfX">✕</button></div>
+      <div class="np-body cf-body">
+        <div class="cf-main">
+          <label class="np-l">Nomi</label>
+          <input id="cfName" class="np-inp" type="text" placeholder="Masalan: Kassa, Ombor, Kirish" value="${esc(v.name)}">
+          <div class="np-3">
+            <div><label class="np-l">IP manzil *</label>
+              <input id="cfHost" class="np-inp" type="text" placeholder="192.168.1.64" value="${esc(v.host)}"></div>
+            <div><label class="np-l">RTSP port</label>
+              <input id="cfPort" class="np-inp" type="number" min="1" max="65535" value="${int(v.port) || 554}"></div>
+            <div><label class="np-l" title="NVR/registrator bo'lsa — kamera raqami">Kanal (NVR)</label>
+              <input id="cfCh" class="np-inp" type="number" min="1" max="64" value="${int(v.channel) || 1}"></div>
+          </div>
+          <div class="np-2">
+            <div><label class="np-l">Login</label>
+              <input id="cfUser" class="np-inp" type="text" value="${esc(v.username)}" autocomplete="off"></div>
+            <div><label class="np-l">Parol</label>
+              <input id="cfPass" class="np-inp" type="password" autocomplete="new-password"
+                placeholder="${edit && cam.has_password ? '•••••• (o\'zgarmaydi)' : 'kamera paroli'}"></div>
+          </div>
+          <details class="cf-adv"${v.url || (v.main_path && !edit) ? ' open' : ''}>
+            <summary>Qo'shimcha: oqim yo'li / to'liq RTSP manzil</summary>
+            <div class="np-2">
+              <div><label class="np-l">Asosiy oqim yo'li</label>
+                <input id="cfMain" class="np-inp" type="text" placeholder="avtomatik aniqlanadi" value="${esc(v.main_path)}"></div>
+              <div><label class="np-l">Kichik oqim yo'li</label>
+                <input id="cfSub" class="np-inp" type="text" placeholder="ixtiyoriy" value="${esc(v.sub_path)}"></div>
+            </div>
+            <label class="np-l">yoki to'liq manzil (shunda yuqoridagilar e'tiborsiz)</label>
+            <input id="cfUrl" class="np-inp" type="text" placeholder="rtsp://admin:parol@192.168.1.64:554/..." value="${esc(v.url)}">
+          </details>
+          <label class="cf-chk"><input type="checkbox" id="cfOn"${v.enabled ? ' checked' : ''}> Ko'rsatilsin</label>
+          <div id="cfMsg" class="px-msg"></div>
+        </div>
+        <div class="cf-prev">
+          <div class="cf-prev-img" id="cfPrev">${edit && v.ready ? `<img src="${esc(camUrl(v.id, 'snap.jpg', 'grid'))}&_=${Date.now()}" alt="">` : '<span>Tekshirilgach shu yerda<br>kamera tasviri chiqadi</span>'}</div>
+          <button class="btn-soft ghost" id="cfTest">🔎 Aniqlash va tekshirish</button>
+        </div>
+      </div>
+      <div class="np-foot">
+        ${edit ? '<button class="btn-soft danger-txt" id="cfDel">O\'chirish</button><span style="flex:1"></span>' : ''}
+        <button class="btn-soft ghost" id="cfCancel">Bekor</button>
+        <button class="btn-soft" id="cfSave">Saqlash</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('cfX').addEventListener('click', close);
+  re('cfCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  (edit ? re('cfName') : (v.host ? re('cfPass') : re('cfHost'))).focus();
+  const msg = (t, err) => { const m = re('cfMsg'); m.className = 'px-msg' + (err ? ' err' : ' ok'); m.textContent = t; };
+  const form = () => ({
+    id: edit ? cam.id : 0,
+    name: re('cfName').value.trim(), host: re('cfHost').value.trim(),
+    port: Number(re('cfPort').value) || 554, channel: Number(re('cfCh').value) || 1,
+    username: re('cfUser').value.trim(), password: re('cfPass').value,
+    main_path: re('cfMain').value.trim(), sub_path: re('cfSub').value.trim(),
+    url: re('cfUrl').value.trim(), enabled: re('cfOn').checked,
+  });
+  let topildi = false;   // yo'l shu oynada aniqlandimi
+
+  async function tekshir() {
+    const f = form();
+    if (!f.host && !f.url) { msg('IP manzilni kiriting', true); return false; }
+    const btn = re('cfTest'); btn.disabled = true; btn.textContent = '⏳ Tekshirilmoqda…';
+    msg(f.url ? 'Manzil tekshirilmoqda…' : 'Kamera brendi aniqlanmoqda (10-40 soniya)…');
+    const r = await api.camProbe(f);
+    btn.disabled = false; btn.textContent = '🔎 Aniqlash va tekshirish';
+    if (!r.ok) { msg('❌ ' + (r.error || 'ulanmadi'), true); return false; }
+    if (r.main_path) { re('cfMain').value = r.main_path; re('cfSub').value = r.sub_path || ''; }
+    if (r.jpeg) re('cfPrev').innerHTML = `<img src="data:image/jpeg;base64,${r.jpeg}" alt="">`;
+    topildi = true;
+    msg('✅ Kamera ishlayapti' + (r.main_path ? ` · ${r.main_path}${r.sub_path ? ' (+ kichik oqim)' : ''}` : ''));
+    return true;
+  }
+  re('cfTest').addEventListener('click', tekshir);
+
+  re('cfSave').addEventListener('click', async () => {
+    let f = form();
+    if (!f.host && !f.url) { msg('IP manzilni kiriting', true); return; }
+    // Yangi kamera, yo'li noma'lum — avval o'zimiz aniqlaymiz.
+    if (!f.url && !f.main_path && !topildi) {
+      if (!(await tekshir())) return;
+      f = form();
+    }
+    const btn = re('cfSave'); btn.disabled = true;
+    const r = await api.camSave(f);
+    btn.disabled = false;
+    if (!r.ok) { msg(r.error || 'Xatolik', true); return; }
+    close();
+    toast(edit ? '✓ Saqlandi' : `✓ «${r.cam.name}» qo'shildi`);
+    renderCams(c);
+  });
+  if (edit) re('cfDel').addEventListener('click', async () => {
+    if (!window.confirm(`«${cam.name}» kamerasi ro'yxatdan o'chirilsinmi?`)) return;
+    await api.camDelete(cam.id);
+    close();
+    toast('✓ O\'chirildi');
+    renderCams(c);
+  });
+}
+
+// ── Tarmoqdan izlash ────────────────────────────────────────────────────────
+async function camScan(c) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  const def = (CAMS.subnets && CAMS.subnets[0] && CAMS.subnets[0].prefix) || '192.168.1';
+  ov.innerHTML = `
+    <div class="np-modal">
+      <div class="np-head"><span>🔍 Tarmoqdan kamera izlash</span><button class="np-x" id="csX">✕</button></div>
+      <div class="np-body">
+        <div class="np-2" style="align-items:end">
+          <div><label class="np-l">Tarmoq (oxirgi raqamsiz)</label>
+            <input id="csNet" class="np-inp" type="text" value="${esc(def)}"></div>
+          <div><button class="btn-soft" id="csGo" style="width:100%">Izlash</button></div>
+        </div>
+        <div class="cs-hint">Switch'ga ulangan, 554-port (RTSP) ochiq qurilmalar qidiriladi. Bu 5-10 soniya oladi.</div>
+        <div id="csRes"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('csX').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  const go = async () => {
+    const res = re('csRes');
+    res.innerHTML = '<div class="loading">Izlanmoqda…</div>';
+    re('csGo').disabled = true;
+    const r = await api.camsDiscover(re('csNet').value.trim());
+    re('csGo').disabled = false;
+    if (!r.ok) { res.innerHTML = `<div class="err-box">${esc(r.error || 'Xatolik')}</div>`; return; }
+    if (!r.found.length) {
+      res.innerHTML = `<div class="chart-empty">Kamera topilmadi. Kabel/switch'ni va tarmoq raqamini tekshiring
+        (kamera boshqa tarmoqda bo'lishi mumkin, masalan 192.168.0 yoki 192.168.1).</div>`;
+      return;
+    }
+    res.innerHTML = `<div class="cs-list">${r.found.map((f) => `
+      <div class="cam-off-row"><span><b>${esc(f.host)}</b>${f.added ? ' <span class="cam-tag ok">qo\'shilgan</span>' : ''}</span>
+        <button class="btn-soft${f.added ? ' ghost' : ''}" data-host="${esc(f.host)}">${f.added ? 'Yana qo\'shish' : 'Qo\'shish'}</button></div>`).join('')}</div>`;
+    res.querySelectorAll('[data-host]').forEach((b) => b.addEventListener('click', () => {
+      const h = b.dataset.host;
+      camForm(null, c, { host: h, name: 'Kamera ' + h.split('.').pop() });
+    }));
+  };
+  re('csGo').addEventListener('click', go);
+  go();
+}
+
+// ── Serverdan (Mini App'dan) ko'chirib olish ────────────────────────────────
+function camImport(c) {
+  const old = document.getElementById('npOverlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'npOverlay'; ov.className = 'np-overlay';
+  ov.innerHTML = `
+    <div class="np-modal">
+      <div class="np-head"><span>⇩ Mini App'dagi kameralarni ko'chirish</span><button class="np-x" id="ciX">✕</button></div>
+      <div class="np-body">
+        <div class="cs-hint">Telefondagi Mini App'da qo'shilgan kameralar shu kompyuterga bir marta ko'chiriladi
+          (internet faqat shu daqiqada kerak). Keyin ular serverga bog'liq bo'lmaydi.</div>
+        <label class="np-l">Kamera paroli (server bermasa — hammasiga shu qo'yiladi, ixtiyoriy)</label>
+        <input id="ciPass" class="np-inp" type="password" autocomplete="new-password">
+        <div id="ciMsg" class="px-msg"></div>
+      </div>
+      <div class="np-foot">
+        <button class="btn-soft ghost" id="ciCancel">Bekor</button>
+        <button class="btn-soft" id="ciGo">Ko'chirish</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const re = (id) => document.getElementById(id);
+  const close = () => ov.remove();
+  re('ciX').addEventListener('click', close);
+  re('ciCancel').addEventListener('click', close);
+  re('ciGo').addEventListener('click', async () => {
+    re('ciGo').disabled = true;
+    const r = await api.camsImport(re('ciPass').value);
+    re('ciGo').disabled = false;
+    const m = re('ciMsg');
+    if (!r.ok) {
+      m.className = 'px-msg err';
+      m.textContent = r.authRequired ? 'Serverga kirilmagan — avval login qiling (internet kerak)'
+        : (r.error || 'Server bilan aloqa yo\'q');
+      return;
+    }
+    close();
+    toast(`✓ ${int(r.added)} ta kamera ko'chirildi${r.skipped ? `, ${int(r.skipped)} tasi avvaldan bor` : ''}`);
+    renderCams(c);
+  });
 }
 
 // ── To'liq ekran ────────────────────────────────────────────────────────────
 function camOpen(id) {
   const cam = CAMS.list.find((x) => x.id === id);
   if (!cam) return;
+  // To'rdagi oqimlar to'xtaydi — kompyuter bekorga 20 kamerani dekodlamasin.
+  if (!CAMS.full) CAMS.imgs.forEach((img) => { img.src = ''; });
   CAMS.full = id;
   CAMS.profile = 'full';
   CAMS.z = { k: 1, x: 0, y: 0 };
@@ -3494,6 +3804,7 @@ function camOpen(id) {
     <div class="cam-ov-bar">
       <b>${esc(cam.name)}${kop ? ` <span class="cam-ov-num">${i + 1}/${CAMS.list.length}</span>` : ''}</b>
       <div class="cam-ov-acts">
+        <button id="camShotSave" title="Rasmga olish">📷</button>
         <button id="camSnd" title="Ovoz">🔇</button>
         <button id="camZOut" title="Uzoqlashtirish">−</button>
         <span class="cam-ov-zk" id="camZk">1.0×</span>
@@ -3513,10 +3824,10 @@ function camOpen(id) {
   ov.style.display = 'flex';
   const img = document.getElementById('camOvImg');
   img.onload = () => { const w = document.getElementById('camWait'); if (w) w.style.display = 'none'; };
-  img.onerror = () => camTokenYangila();
   img.src = camUrl(id, 'live.mjpg', CAMS.profile);
   document.getElementById('camX').addEventListener('click', camClose);
   document.getElementById('camSnd').addEventListener('click', camSound);
+  document.getElementById('camShotSave').addEventListener('click', camSnapSave);
   document.getElementById('camZIn').addEventListener('click', () => camZoom(1));
   document.getElementById('camZOut').addEventListener('click', () => camZoom(-1));
   if (kop) {
@@ -3524,8 +3835,46 @@ function camOpen(id) {
     document.getElementById('camNext').addEventListener('click', () => camGoto(1));
   }
   camBindZoom();
+  document.removeEventListener('keydown', camKey);
   document.addEventListener('keydown', camKey);
   camZApply();
+  camFullWatch(id);
+}
+
+// To'liq ekranda ham holatni kuzatamiz: kamera uzilsa — sababi ko'rinadi,
+// qaytsa — oqim yangidan ochiladi (rasm muzlab qolmaydi).
+function camFullWatch(id) {
+  clearInterval(CAMS.fullT);
+  let was = true;
+  CAMS.fullT = setInterval(async () => {
+    if (CAMS.full !== id) { clearInterval(CAMS.fullT); return; }
+    const st = (await api.camsStatus())[id] || {};
+    const w = document.getElementById('camWait');
+    if (w) {
+      w.style.display = st.live ? 'none' : 'block';
+      if (!st.live) w.textContent = st.error ? '⚠ ' + st.error + ' — qayta ulanmoqda…' : 'Ulanmoqda…';
+    }
+    if (st.live && !was) {
+      const img = document.getElementById('camOvImg');
+      if (img) img.src = camUrl(id, 'live.mjpg', CAMS.profile) + '&_=' + Date.now();
+    }
+    was = !!st.live;
+  }, 2000);
+}
+
+function camSnapSave() {
+  const img = document.getElementById('camOvImg');
+  if (!img || !img.naturalWidth) return;
+  const cv = document.createElement('canvas');
+  cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  cv.getContext('2d').drawImage(img, 0, 0);
+  const cam = CAMS.list.find((x) => x.id === CAMS.full) || { name: 'kamera' };
+  const a = document.createElement('a');
+  const t = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  a.download = `${cam.name}_${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}_${p(t.getHours())}-${p(t.getMinutes())}-${p(t.getSeconds())}.jpg`;
+  a.href = cv.toDataURL('image/jpeg', 0.92);
+  a.click();
 }
 
 function camKey(e) {
@@ -3542,7 +3891,7 @@ function camGoto(yon) {
   const i = CAMS.list.findIndex((x) => x.id === CAMS.full);
   const keyingi = CAMS.list[(i + yon + CAMS.list.length) % CAMS.list.length];
   const eski = document.getElementById('camOvImg');
-  if (eski) eski.src = '';            // oqimni uzamiz — server bekorga ishlamasin
+  if (eski) eski.src = '';
   camOpen(keyingi.id);
 }
 
@@ -3550,17 +3899,18 @@ function camClose() {
   CAMS.full = 0;
   camAudioStop();
   clearTimeout(CAMS.hiT);
+  clearInterval(CAMS.fullT);
   document.removeEventListener('keydown', camKey);
   const img = document.getElementById('camOvImg');
   if (img) img.src = '';
   const ov = document.getElementById('camOv');
   if (ov) { ov.style.display = 'none'; ov.innerHTML = ''; }
+  // To'r qaytadan jonlanadi
+  if (document.getElementById('camGrid')) CAMS.list.forEach((x) => camGridImg(x.id));
 }
 
 // ── Yaqinlashtirish ─────────────────────────────────────────────────────────
-// Raqamli zoom (kameraning o'zi burilmaydi): tasvir transform bilan
-// kattalashadi. 1.5× dan oshsa server 1920px oqimga o'tadi — aks holda
-// 960px kadr kattalashganda xira bo'lib qoladi.
+// Raqamli zoom: 1.5× dan oshsa to'liq aniqlikdagi oqimga o'tiladi.
 function camZApply() {
   const img = document.getElementById('camOvImg');
   if (!img) return;
@@ -3651,7 +4001,6 @@ async function camSound() {
   }
 }
 
-// Nega ovoz chiqmadi — serverning o'zi aytadi (503 javobida sabab bor).
 async function camAudioXato(url) {
   camAudioStop();
   let sabab = 'ovozni ochib bo\'lmadi';
@@ -3660,7 +4009,6 @@ async function camAudioXato(url) {
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       sabab = d.error || ('xato ' + r.status);
-      if (r.status === 401) { camTokenYangila(); sabab = 'ulanish yangilandi — qayta bosing'; }
     }
   } catch (_) {}
   const f = document.getElementById('camFoot');

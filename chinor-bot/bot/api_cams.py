@@ -40,6 +40,7 @@ Endpointlar:
   POST /api/admin/cams/delete       — o'chirish
   POST /api/admin/cams/discover     — tarmoqdan kameralarni topish
   POST /api/admin/cams/probe        — RTSP yo'lini avtomatik aniqlash
+  GET  /api/admin/cams/export       — parol bilan to'liq ro'yxat (admin kompyuteriga)
 """
 
 from __future__ import annotations
@@ -815,6 +816,26 @@ async def api_delete(request: web.Request):
         await w.stop()
     _exec(_db, "DELETE FROM cameras WHERE id=?", (cid,))
     return web.json_response({"ok": True})
+
+
+@CAM_ROUTES.get("/api/admin/cams/export")
+async def api_export(request: web.Request):
+    """Kameralarning TO'LIQ sozlamasi (parol bilan) — admin kompyuteriga
+    ko'chirib olish uchun. Kompyuter kamerani o'zi, lokal tarmoq orqali
+    ochadi va internet uzilsa ham ko'rsatishda davom etadi.
+    Ruxsat: 'cams' (qo'shish/tahrirlash huquqi bilan bir xil)."""
+    from database.channel_db import db as _db
+    from bot.web_api import _admin_guard
+    auth, err = await _admin_guard(request, _db, "cams")
+    if err is not None:
+        return err
+    out = []
+    for c in _rows(_db):
+        j = _cam_json(c)
+        j["password"] = c.get("password") or ""
+        out.append(j)
+    return web.json_response({"ok": True, "cams": out},
+                             headers={"Cache-Control": "no-store"})
 
 
 @CAM_ROUTES.post("/api/admin/cams/discover")

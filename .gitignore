@@ -88,3 +88,6 @@ site/tovarlar/
 site/img/
 site/assets/
 site/sitemap.xml
+
+# Admin ilova: o'ramga qo'shiladigan ffmpeg (release.sh yuklab oladi)
+chinor-admin/vendor/

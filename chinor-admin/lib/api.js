@@ -299,6 +299,9 @@ module.exports = {
   // unga header qo'yib bo'lmaydi (bot/api_cams.py).
   cams: (base, token) =>
     req(base, '/api/cams', { token, timeout: 20000 }),
+  // To'liq sozlama (parol bilan) — kompyuterga ko'chirib olish uchun.
+  camsExport: (base, token) =>
+    req(base, '/api/admin/cams/export', { token, timeout: 20000 }),
 
   // ── Xodimlar boshqaruvi + KPI ───────────────────────────────────────────────
   staff: (base, token) =>
