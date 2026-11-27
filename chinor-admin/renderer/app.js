@@ -3728,6 +3728,13 @@ async function camScan(c) {
           <div><button class="btn-soft" id="csGo" style="width:100%">Izlash</button></div>
         </div>
         <div class="cs-hint">Switch'ga ulangan, 554-port (RTSP) ochiq qurilmalar qidiriladi. Bu 5-10 soniya oladi.</div>
+        <div class="np-2">
+          <div><label class="np-l">Kamera logini</label>
+            <input id="csUser" class="np-inp" type="text" value="admin" autocomplete="off"></div>
+          <div><label class="np-l">Kamera paroli</label>
+            <input id="csPass" class="np-inp" type="password" autocomplete="new-password" placeholder="kameraning o'z paroli"></div>
+        </div>
+        <div class="cs-hint">Bu — kameraning (registratorning) paroli, Chinor paroli emas. Odatda hamma kamerada bir xil.</div>
         <div id="csRes"></div>
       </div>
     </div>`;
@@ -3748,13 +3755,56 @@ async function camScan(c) {
         (kamera boshqa tarmoqda bo'lishi mumkin, masalan 192.168.0 yoki 192.168.1).</div>`;
       return;
     }
-    res.innerHTML = `<div class="cs-list">${r.found.map((f) => `
-      <div class="cam-off-row"><span><b>${esc(f.host)}</b>${f.added ? ' <span class="cam-tag ok">qo\'shilgan</span>' : ''}</span>
-        <button class="btn-soft${f.added ? ' ghost' : ''}" data-host="${esc(f.host)}">${f.added ? 'Yana qo\'shish' : 'Qo\'shish'}</button></div>`).join('')}</div>`;
+    const yangi = r.found.filter((f) => !f.added);
+    res.innerHTML = `
+      <div class="cs-top"><span>Topildi: <b>${r.found.length}</b>${yangi.length < r.found.length ? `, qo'shilgan: ${r.found.length - yangi.length}` : ''}</span>
+        ${yangi.length ? `<button class="btn-soft" id="csAll">✓ Hammasini qo'shish (${yangi.length})</button>` : ''}</div>
+      <div class="cs-list">${r.found.map((f) => `
+      <div class="cam-off-row${f.added ? ' cs-ok' : ''}" data-row="${esc(f.host)}">
+        <span class="cs-thumb"></span>
+        <span class="cs-name"><b>${esc(f.host)}</b> <span class="cs-st">${f.added ? '<span class="cam-tag ok">✓ qo\'shilgan</span>' : ''}</span></span>
+        <button class="btn-soft ghost" data-host="${esc(f.host)}">${f.added ? 'Yana' : 'Qo\'lda'}</button></div>`).join('')}</div>`;
     res.querySelectorAll('[data-host]').forEach((b) => b.addEventListener('click', () => {
       const h = b.dataset.host;
-      camForm(null, c, { host: h, name: 'Kamera ' + h.split('.').pop() });
+      camForm(null, c, { host: h, name: 'Kamera ' + h.split('.').pop(), username: re('csUser').value.trim() });
     }));
+    if (re('csAll')) re('csAll').addEventListener('click', () => addAll(yangi.map((f) => f.host)));
+  };
+  // Bitta login/parol bilan hamma topilganini tekshirib qo'shadi:
+  // ishlagani yashil (rasmi bilan), ishlamagani qizil (sababi bilan).
+  const addAll = async (hosts) => {
+    const username = re('csUser').value.trim(), password = re('csPass').value;
+    if (!password) { re('csPass').focus(); toast('Kamera parolini yozing'); return; }
+    const btn = re('csAll'); btn.disabled = true;
+    let ok = 0, done = 0, q = hosts.slice();
+    const res = re('csRes');
+    const row = (h) => res.querySelector(`[data-row="${CSS.escape(h)}"]`);
+    const one = async () => {
+      while (q.length) {
+        const host = q.shift(), el = row(host);
+        el.querySelector('.cs-st').innerHTML = '<span class="cam-tag">⏳ tekshirilmoqda…</span>';
+        const p = await api.camProbe({ host, port: 554, username, password });
+        let err = p.ok ? '' : (p.error || 'ulanmadi');
+        if (p.ok) {
+          const s = await api.camSave({ name: 'Kamera ' + host.split('.').pop(), host, port: 554, username, password,
+                                         main_path: p.main_path || '', sub_path: p.sub_path || '', enabled: true });
+          if (!s.ok) err = s.error || 'saqlanmadi';
+        }
+        if (!err) {
+          ok++;
+          el.classList.add('cs-ok');
+          if (p.jpeg) el.querySelector('.cs-thumb').innerHTML = `<img src="data:image/jpeg;base64,${p.jpeg}" alt="">`;
+          el.querySelector('.cs-st').innerHTML = '<span class="cam-tag ok">✓ qo\'shildi</span>';
+        } else {
+          el.classList.add('cs-bad');
+          el.querySelector('.cs-st').innerHTML = `<span class="cam-tag bad">✕ ${esc(err)}</span>`;
+        }
+        btn.textContent = `⏳ ${++done}/${hosts.length}`;
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, one));
+    btn.textContent = `✓ ${ok} ta qo'shildi`;
+    if (ok) renderCams(c);   // orqadagi to'r yangilansin, oyna ochiq qoladi
   };
   re('csGo').addEventListener('click', go);
   go();
