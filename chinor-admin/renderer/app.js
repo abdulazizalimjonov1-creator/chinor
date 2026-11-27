@@ -218,7 +218,13 @@ async function boot() {
 }
 
 // Login oynasidan to'g'ridan-to'g'ri kameralarga (internetsiz, loginsiz).
+// Kassada turgan xodim uchun: FAQAT KO'RISH — boshqa bo'limlar yashirin,
+// kamera qo'shish/tahrirlash/o'chirish yo'q (buning uchun login kerak).
 function camsOffline() {
+  S.camsViewOnly = true;
+  S.perms = ['cams'];
+  S.glavniy = false;
+  S.admin = { name: 'Kassa (ko\'rish)' };
   enterApp('kameralar');
 }
 
@@ -240,6 +246,7 @@ async function doLogin() {
   const r = await api.login(server, login, pass);
   btn.disabled = false; btn.textContent = 'Kirish';
   if (!r.ok) { errEl.textContent = r.error || 'Kirish amalga oshmadi'; return; }
+  S.camsViewOnly = false;
   S.admin = r.admin; S.usdRate = r.usdRate || 12500;
   S.perms = Array.isArray(r.perms) ? r.perms : null;
   S.glavniy = !!r.glavniy;
@@ -258,6 +265,17 @@ function enterApp(mod) {
 }
 
 async function doLogout() {
+  if (S.camsViewOnly) {
+    // Kassa rejimidan chiqish — server sessiyasiga tegmaymiz
+    camGridStop(); camClose();
+    S.camsViewOnly = false;
+    const st = await api.getState();
+    S.perms = Array.isArray(st.perms) ? st.perms : null;
+    S.glavniy = !!st.glavniy;
+    S.admin = null; S.tabs = []; S.activeTab = '';
+    showLogin();
+    return;
+  }
   await api.logout();
   S.admin = null; S.tabs = []; S.activeTab = '';
   showLogin();
@@ -3446,7 +3464,8 @@ async function renderCams(c) {
       </div>
     </div>`;
 
-  const sozlanmagan = CAMS.all.filter((x) => !x.ready || !x.enabled);
+  const faqatKor = !!S.camsViewOnly;
+  const sozlanmagan = faqatKor ? [] : CAMS.all.filter((x) => !x.ready || !x.enabled);
   const cols = CAMS.cols;
   c.innerHTML = ffBox + `
     <div class="cam-bar">
@@ -3460,9 +3479,10 @@ async function renderCams(c) {
           ${[[0, 'Avto'], [1, '1×'], [2, '2×'], [3, '3×'], [4, '4×'], [5, '5×'], [6, '6×']].map(([v, l]) =>
             `<option value="${v}"${v === cols ? ' selected' : ''}>${l}</option>`).join('')}
         </select>
+        ${faqatKor ? `<span class="cam-tag" title="Kamera qo'shish va sozlash uchun login qiling">🔒 Faqat ko'rish</span>` : `
         <button class="btn-soft" id="camAdd">➕ Kamera qo'shish</button>
         <button class="btn-soft ghost" id="camScan">🔍 Tarmoqdan izlash</button>
-        <button class="btn-soft ghost" id="camImp" title="Mini App'da qo'shilgan kameralarni shu kompyuterga ko'chirish">⇩ Serverdan</button>
+        <button class="btn-soft ghost" id="camImp" title="Mini App'da qo'shilgan kameralarni shu kompyuterga ko'chirish">⇩ Serverdan</button>`}
         <button class="btn-soft ghost" id="camReload">🔄</button>
       </div>
     </div>
@@ -3472,15 +3492,16 @@ async function renderCams(c) {
         <div class="cam-card" data-cam="${x.id}">
           <div class="cam-shot"><img id="camShot${x.id}" alt="">
             <div class="cam-state" id="camSt${x.id}">ulanmoqda…</div>
-            <button class="cam-edit" data-edit="${x.id}" title="Sozlash">⚙️</button></div>
+            ${faqatKor ? '' : `<button class="cam-edit" data-edit="${x.id}" title="Sozlash">⚙️</button>`}</div>
           <div class="cam-name"><span class="cam-dot" id="camDot${x.id}"></span>${esc(x.name)}
             <small>${esc(x.host)}</small></div>
         </div>`).join('')}
     </div>` : `
     <div class="card"><div class="card-title">Kamera yo'q</div>
-      <div class="chart-empty">«🔍 Tarmoqdan izlash» ni bosing — switch'ga ulangan kameralar
+      ${faqatKor ? `<div class="chart-empty">Bu kompyuterga hali kamera qo'shilmagan. Admin login qilib
+      «Kameralar» bo'limidan qo'shadi — keyin bu yerda ko'rinadi.</div>` : `<div class="chart-empty">«🔍 Tarmoqdan izlash» ni bosing — switch'ga ulangan kameralar
       o'zi topiladi. Yoki «➕ Kamera qo'shish» bilan IP manzilini qo'lda kiriting.
-      Mini App'da kameralar qo'shilgan bo'lsa — «⇩ Serverdan» bilan ko'chirib oling.</div></div>`}
+      Mini App'da kameralar qo'shilgan bo'lsa — «⇩ Serverdan» bilan ko'chirib oling.</div>`}</div>`}
     ${sozlanmagan.length ? `
     <div class="card cam-off">
       <div class="card-title">O'chirilgan / sozlanmagan (${sozlanmagan.length})</div>
@@ -3495,9 +3516,9 @@ async function renderCams(c) {
 
   const re = (id) => document.getElementById(id);
   re('camReload').addEventListener('click', () => renderCams(c));
-  re('camAdd').addEventListener('click', () => camForm(null, c));
-  re('camScan').addEventListener('click', () => camScan(c));
-  re('camImp').addEventListener('click', () => camImport(c));
+  if (re('camAdd')) re('camAdd').addEventListener('click', () => camForm(null, c));
+  if (re('camScan')) re('camScan').addEventListener('click', () => camScan(c));
+  if (re('camImp')) re('camImp').addEventListener('click', () => camImport(c));
   re('camCols').addEventListener('change', (e) => {
     CAMS.cols = Number(e.target.value) || 0;
     try { localStorage.setItem('camCols', String(CAMS.cols)); } catch (_) {}
